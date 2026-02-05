@@ -23,6 +23,7 @@ Ratitude 利用 **C-struct 二进制流** 与 **COBS 编码** 取代传统字符
 ## 快速开始
 
 ```bash
+git submodule update --init --recursive
 rttd server --addr 127.0.0.1:19021 --log out.jsonl
 ```
 
