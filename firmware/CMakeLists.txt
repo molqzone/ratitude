@@ -5,6 +5,7 @@ project(librat C)
 add_library(librat STATIC
   src/rat_core.c
   src/rat_cobs.c
+  src/rat_rtt.c
 )
 
 target_include_directories(librat PUBLIC

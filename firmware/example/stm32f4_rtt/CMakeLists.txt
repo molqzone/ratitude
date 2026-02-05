@@ -47,6 +47,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     ${CMAKE_CURRENT_LIST_DIR}/../../src/rat_core.c
     ${CMAKE_CURRENT_LIST_DIR}/../../src/rat_cobs.c
+    ${CMAKE_CURRENT_LIST_DIR}/../../src/rat_rtt.c
 )
 
 # Add include paths

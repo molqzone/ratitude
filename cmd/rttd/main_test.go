@@ -1,18 +1,22 @@
 package main
 
 import (
-    "bytes"
-    "strings"
-    "testing"
+	"bytes"
+	"strings"
+	"testing"
 )
 
-func TestRun(t *testing.T) {
-    var buf bytes.Buffer
-    run(&buf)
+func TestRunHelp(t *testing.T) {
+	var out bytes.Buffer
+	var err bytes.Buffer
 
-    got := strings.TrimSpace(buf.String())
-    want := "hello world"
-    if got != want {
-        t.Fatalf("unexpected output: got %q want %q", got, want)
-    }
+	code := run([]string{"--help"}, &out, &err)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+
+	got := strings.TrimSpace(out.String())
+	if !strings.Contains(got, "rttd server") {
+		t.Fatalf("unexpected help output: %q", got)
+	}
 }
