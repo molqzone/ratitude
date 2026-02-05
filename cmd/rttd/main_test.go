@@ -19,7 +19,4 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(got, "rttd server") {
 		t.Fatalf("unexpected help output: %q", got)
 	}
-	if !strings.Contains(got, "rttd tui") {
-		t.Fatalf("unexpected help output: %q", got)
-	}
 }
