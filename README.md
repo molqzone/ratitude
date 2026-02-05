@@ -15,10 +15,11 @@ Ratitude 利用 **C-struct 二进制流** 与 **COBS 编码** 取代传统字符
 * **高性能二进制传输:** 直接传输 C 语言结构体 (Binary Struct)，相比 `printf` 格式化字符串，带宽利用率提升，且无精度丢失。
 * **Go Host 核心管道:** `transport`/`protocol`/`engine`/`logger` 组成单向数据流管道，完成 TCP 接收、COBS 解码、结构体解析与广播。
 * **JSONL 日志输出:** 内置 JSONL 写入器，便于对接脚本、数据分析或可视化工具。
+* **全屏 TUI Plot:** `rttd tui` 提供单曲线全屏绘图，适合 tmux 仪表盘拼接。
 * **广泛硬件兼容:** 基于标准 TCP 协议对接 OpenOCD、J-Link GDB Server 或 pyOCD。
 * **OpenOCD RTT 兼容:** 固件端提供 SEGGER RTT 控制块，便于 RTT 端口直读 COBS 帧。
 
-> 说明：TUI 与 MCP 仍在规划中，当前仅提供 `rttd server`。
+> 说明：MCP 仍在规划中，当前提供 `rttd server` 与 `rttd tui`。
 
 ## 快速开始
 
@@ -26,8 +27,16 @@ Ratitude 利用 **C-struct 二进制流** 与 **COBS 编码** 取代传统字符
 rttd server --addr 127.0.0.1:19021 --log out.jsonl
 ```
 
+### TUI 快速开始
+
+```bash
+rttd tui --addr 127.0.0.1:19021 --id 0x01 --stats
+```
+
 ### 常用参数
 
 * `--addr`：TCP 地址（默认 `127.0.0.1:19021`）
 * `--log`：JSONL 输出路径（默认 stdout）
 * `--text-id`：文本包 ID（默认 `0xFF`）
+* `--id`：TUI 采样包 ID（默认 `0x01`，payload 前 4 字节为 int32 LE）
+* `--stats`：输出 TUI 实际采样速率（stderr）

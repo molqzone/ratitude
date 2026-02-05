@@ -23,13 +23,27 @@ librat 仅使用 SEGGER RTT 控制块（符号名：`_SEGGER_RTT`），OpenOCD R
 arm-none-eabi-nm -S build/stm32f4_rtt/stm32f4_rtt.elf | rg _SEGGER_RTT
 ```
 
-2) 启动 OpenOCD RTT：
+2) 启动 OpenOCD RTT（建议缩短 polling 间隔）：
 
 ```
 openocd -f interface/cmsis-dap.cfg -f target/stm32f4x.cfg \
-  -c "init" -c "reset init" \
+  -c "transport select swd" -c "adapter speed 8000" \
+  -c "init" -c "reset run" \
   -c "rtt setup <addr> <size> \"SEGGER RTT\"" -c "rtt start" \
-  -c "rtt server start 19021 0"
+  -c "rtt polling_interval 1" \
+  -c "resume" -c "rtt server start 19021 0"
+```
+
+Windows 可用脚本（自动解析 `_SEGGER_RTT` 地址并设置 polling）：
+
+```
+powershell -ExecutionPolicy Bypass -File tools/openocd_rtt_server.ps1
+```
+
+如需保留 gdb/telnet/tcl 端口：
+
+```
+powershell -ExecutionPolicy Bypass -File tools/openocd_rtt_server.ps1 -DisableDebugPorts:$false
 ```
 
 3) Host 侧读取（默认端口 19021）：

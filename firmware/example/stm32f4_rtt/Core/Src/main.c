@@ -45,12 +45,13 @@
 /* USER CODE BEGIN PV */
 typedef struct
 {
+  int32_t value;
   uint32_t tick_ms;
-  uint32_t counter;
 } RatSample;
 
 static RatSample g_sample;
 static uint32_t g_last_tick;
+static int32_t g_step;
 
 /* USER CODE END PV */
 
@@ -98,8 +99,9 @@ int main(void)
   /* USER CODE BEGIN 2 */
   rat_init();
   g_sample.tick_ms = 0u;
-  g_sample.counter = 0u;
+  g_sample.value = -1000;
   g_last_tick = 0u;
+  g_step = 20;
 
   /* USER CODE END 2 */
 
@@ -108,11 +110,21 @@ int main(void)
   while (1)
   {
     uint32_t now = HAL_GetTick();
-    if ((now - g_last_tick) >= 1000u)
+    if ((now - g_last_tick) >= 20u)
     {
       g_last_tick = now;
       g_sample.tick_ms = now;
-      g_sample.counter += 1u;
+      g_sample.value += g_step;
+      if (g_sample.value >= 1000)
+      {
+        g_sample.value = 1000;
+        g_step = -g_step;
+      }
+      else if (g_sample.value <= -1000)
+      {
+        g_sample.value = -1000;
+        g_step = -g_step;
+      }
       RAT_EMIT(0x01u, g_sample);
     }
     /* USER CODE END WHILE */
