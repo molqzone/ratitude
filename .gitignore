@@ -1,4 +1,4 @@
-# Go build artifacts
+﻿# Go build artifacts
 *.exe
 *.exe~
 *.dll
@@ -10,6 +10,11 @@
 
 # Build output
 /bin/
+/build/
+
+# Runtime logs and captures
+*.log
+*.jsonl
 
 # OS files
 .DS_Store
