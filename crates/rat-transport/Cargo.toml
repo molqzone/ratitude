@@ -1,0 +1,9 @@
+[package]
+name = "rat-transport"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true

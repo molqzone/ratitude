@@ -1,0 +1,13 @@
+[package]
+name = "rat-logger"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+hex.workspace = true
+rat-engine = { path = "../rat-engine" }
+rat-protocol = { path = "../rat-protocol" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+time.workspace = true

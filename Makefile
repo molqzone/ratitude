@@ -1,9 +1,12 @@
-.PHONY: sync serve up
+﻿.PHONY: sync server foxglove up
 
 sync:
-	go run tools/rat-gen.go sync --config firmware/example/stm32f4_rtt/ratitude.toml
+	cargo run -p rttd -- sync --config firmware/example/stm32f4_rtt/ratitude.toml
 
-serve:
-	go run ./cmd/rttd
+server:
+	cargo run -p rttd -- server --config firmware/example/stm32f4_rtt/ratitude.toml
 
-up: sync serve
+foxglove:
+	cargo run -p rttd -- foxglove --config firmware/example/stm32f4_rtt/ratitude.toml
+
+up: sync foxglove

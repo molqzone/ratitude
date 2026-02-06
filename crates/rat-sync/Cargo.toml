@@ -1,0 +1,13 @@
+[package]
+name = "rat-sync"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rat-config = { path = "../rat-config" }
+regex.workspace = true
+thiserror.workspace = true
+tree-sitter.workspace = true
+tree-sitter-c.workspace = true
+walkdir.workspace = true
+toml.workspace = true
