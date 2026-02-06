@@ -32,3 +32,25 @@ rttd server --addr 127.0.0.1:19021 --log out.jsonl
 * `--addr`：TCP 地址（默认 `127.0.0.1:19021`）
 * `--log`：JSONL 输出路径（默认 stdout）
 * `--text-id`：文本包 ID（默认 `0xFF`）
+
+## Foxglove Bridge
+
+```bash
+rttd foxglove --addr 127.0.0.1:19021 --ws-addr 127.0.0.1:8765
+```
+
+### 常用参数
+
+* `--ws-addr`：WebSocket 监听地址（默认 `127.0.0.1:8765`）
+* `--topic`：Foxglove 主题名（默认 `ratitude/packet`）
+* `--schema-name`：Schema 名称（默认 `ratitude.Packet`）
+
+### Mock 测试
+
+```bash
+rttd foxglove --mock --mock-hz 50 --mock-id 0x01
+```
+
+* `--mock`：启用本地模拟数据源（不连接 TCP）
+* `--mock-hz`：模拟采样率（默认 50Hz）
+* `--mock-id`：模拟包 ID（默认 0x01）
