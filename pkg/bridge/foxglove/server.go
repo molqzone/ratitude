@@ -2,10 +2,14 @@ package foxglove
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -13,6 +17,12 @@ import (
 
 	"ratitude/pkg/engine"
 	"ratitude/pkg/protocol"
+)
+
+const (
+	markerTypeCube       = 1
+	markerActionAdd      = 0
+	imagePublishInterval = time.Second
 )
 
 type FoxglovePacket struct {
@@ -23,62 +33,221 @@ type FoxglovePacket struct {
 	Text       string `json:"text,omitempty"`
 }
 
+type MarkerMessage struct {
+	Header MarkerHeader `json:"header"`
+	NS     string       `json:"ns"`
+	ID     int32        `json:"id"`
+	Type   int32        `json:"type"`
+	Action int32        `json:"action"`
+	Pose   MarkerPose   `json:"pose"`
+	Scale  Vector3      `json:"scale"`
+	Color  ColorRGBA    `json:"color"`
+}
+
+type MarkerHeader struct {
+	FrameID string      `json:"frame_id"`
+	Stamp   MarkerStamp `json:"stamp"`
+}
+
+type MarkerStamp struct {
+	Sec  int64 `json:"sec"`
+	Nsec int64 `json:"nsec"`
+}
+
+type MarkerPose struct {
+	Position    Vector3     `json:"position"`
+	Orientation Quaternion3 `json:"orientation"`
+}
+
+type Vector3 struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	Z float64 `json:"z"`
+}
+
+type Quaternion3 struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	Z float64 `json:"z"`
+	W float64 `json:"w"`
+}
+
+type ColorRGBA struct {
+	R float64 `json:"r"`
+	G float64 `json:"g"`
+	B float64 `json:"b"`
+	A float64 `json:"a"`
+}
+
+type FrameTransformMessage struct {
+	Timestamp     FrameTime   `json:"timestamp"`
+	ParentFrameID string      `json:"parent_frame_id"`
+	ChildFrameID  string      `json:"child_frame_id"`
+	Translation   Vector3     `json:"translation"`
+	Rotation      Quaternion3 `json:"rotation"`
+}
+
+type FrameTransformsMessage struct {
+	Transforms []FrameTransformMessage `json:"transforms"`
+}
+
+type FrameTime struct {
+	Sec  uint32 `json:"sec"`
+	Nsec uint32 `json:"nsec"`
+}
+
+type CompressedImageMessage struct {
+	Timestamp FrameTime `json:"timestamp"`
+	FrameID   string    `json:"frame_id"`
+	Format    string    `json:"format"`
+	Data      string    `json:"data"`
+}
+
 type Server struct {
-	cfg     Config
-	hub     *engine.Hub
-	textID  uint8
-	clients map[*client]struct{}
-	mu      sync.RWMutex
-	ctx     context.Context
+	cfg          Config
+	hub          *engine.Hub
+	textID       uint8
+	quatID       uint8
+	clients      map[*client]struct{}
+	imageEnabled bool
+	imagePayload string
+	mu           sync.RWMutex
 }
 
 type client struct {
 	conn *websocket.Conn
 	send chan []byte
-	subs map[uint32]struct{}
+	subs map[uint32]uint64
 	mu   sync.RWMutex
 	once sync.Once
 }
 
-func NewServer(cfg Config, hub *engine.Hub, textID uint8) *Server {
+func NewServer(cfg Config, hub *engine.Hub, textID uint8, quatID uint8) *Server {
+	defaults := DefaultConfig()
 	if cfg.WSAddr == "" {
-		cfg.WSAddr = DefaultConfig().WSAddr
+		cfg.WSAddr = defaults.WSAddr
 	}
 	if cfg.Name == "" {
-		cfg.Name = DefaultConfig().Name
+		cfg.Name = defaults.Name
 	}
 	if cfg.Topic == "" {
-		cfg.Topic = DefaultConfig().Topic
+		cfg.Topic = defaults.Topic
 	}
 	if cfg.ChannelID == 0 {
-		cfg.ChannelID = DefaultConfig().ChannelID
+		cfg.ChannelID = defaults.ChannelID
 	}
 	if cfg.SchemaName == "" {
-		cfg.SchemaName = DefaultConfig().SchemaName
+		cfg.SchemaName = defaults.SchemaName
 	}
 	if cfg.SchemaEncoding == "" {
-		cfg.SchemaEncoding = DefaultConfig().SchemaEncoding
+		cfg.SchemaEncoding = defaults.SchemaEncoding
 	}
 	if cfg.Schema == "" {
-		cfg.Schema = DefaultConfig().Schema
+		cfg.Schema = defaults.Schema
 	}
 	if cfg.Encoding == "" {
-		cfg.Encoding = DefaultConfig().Encoding
+		cfg.Encoding = defaults.Encoding
+	}
+	if cfg.MarkerTopic == "" {
+		cfg.MarkerTopic = defaults.MarkerTopic
+	}
+	if cfg.MarkerChannelID == 0 {
+		cfg.MarkerChannelID = defaults.MarkerChannelID
+	}
+	if cfg.MarkerSchemaName == "" {
+		cfg.MarkerSchemaName = defaults.MarkerSchemaName
+	}
+	if cfg.MarkerSchemaEncoding == "" {
+		cfg.MarkerSchemaEncoding = defaults.MarkerSchemaEncoding
+	}
+	if cfg.MarkerSchema == "" {
+		cfg.MarkerSchema = defaults.MarkerSchema
+	}
+	if cfg.MarkerEncoding == "" {
+		cfg.MarkerEncoding = defaults.MarkerEncoding
+	}
+	if cfg.TransformTopic == "" {
+		cfg.TransformTopic = defaults.TransformTopic
+	}
+	if cfg.TransformChannelID == 0 {
+		cfg.TransformChannelID = defaults.TransformChannelID
+	}
+	if cfg.TransformSchemaName == "" {
+		cfg.TransformSchemaName = defaults.TransformSchemaName
+	}
+	if cfg.TransformSchemaEncoding == "" {
+		cfg.TransformSchemaEncoding = defaults.TransformSchemaEncoding
+	}
+	if cfg.TransformSchema == "" {
+		cfg.TransformSchema = defaults.TransformSchema
+	}
+	if cfg.TransformEncoding == "" {
+		cfg.TransformEncoding = defaults.TransformEncoding
+	}
+	if cfg.ImageTopic == "" {
+		cfg.ImageTopic = defaults.ImageTopic
+	}
+	if cfg.ImageChannelID == 0 {
+		cfg.ImageChannelID = defaults.ImageChannelID
+	}
+	if cfg.ImageSchemaName == "" {
+		cfg.ImageSchemaName = defaults.ImageSchemaName
+	}
+	if cfg.ImageSchemaEncoding == "" {
+		cfg.ImageSchemaEncoding = defaults.ImageSchemaEncoding
+	}
+	if cfg.ImageSchema == "" {
+		cfg.ImageSchema = defaults.ImageSchema
+	}
+	if cfg.ImageEncoding == "" {
+		cfg.ImageEncoding = defaults.ImageEncoding
+	}
+	if cfg.ImageFrameID == "" {
+		cfg.ImageFrameID = defaults.ImageFrameID
+	}
+	if cfg.ImageFormat == "" {
+		cfg.ImageFormat = defaults.ImageFormat
+	}
+	if cfg.ParentFrameID == "" {
+		cfg.ParentFrameID = defaults.ParentFrameID
+	}
+	if cfg.FrameID == "" {
+		cfg.FrameID = defaults.FrameID
+	}
+	if cfg.MarkerChannelID == cfg.ChannelID {
+		cfg.MarkerChannelID = cfg.ChannelID + 1
+	}
+	if cfg.TransformChannelID == cfg.ChannelID || cfg.TransformChannelID == cfg.MarkerChannelID {
+		cfg.TransformChannelID = maxUint64(cfg.ChannelID, cfg.MarkerChannelID) + 1
+	}
+	if cfg.ImageChannelID == cfg.ChannelID || cfg.ImageChannelID == cfg.MarkerChannelID || cfg.ImageChannelID == cfg.TransformChannelID {
+		cfg.ImageChannelID = maxUint64(cfg.TransformChannelID, maxUint64(cfg.ChannelID, cfg.MarkerChannelID)) + 1
 	}
 	if cfg.SendBuf <= 0 {
-		cfg.SendBuf = DefaultConfig().SendBuf
+		cfg.SendBuf = defaults.SendBuf
 	}
+
+	imageEnabled := false
+	imagePayload := ""
+	if cfg.ImagePath != "" {
+		if content, err := os.ReadFile(cfg.ImagePath); err == nil && len(content) > 0 {
+			imagePayload = base64.StdEncoding.EncodeToString(content)
+			imageEnabled = true
+		}
+	}
+
 	return &Server{
-		cfg:     cfg,
-		hub:     hub,
-		textID:  textID,
-		clients: make(map[*client]struct{}),
+		cfg:          cfg,
+		hub:          hub,
+		textID:       textID,
+		quatID:       quatID,
+		clients:      make(map[*client]struct{}),
+		imageEnabled: imageEnabled,
+		imagePayload: imagePayload,
 	}
 }
 
 func (s *Server) Run(ctx context.Context) error {
-	s.ctx = ctx
-
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleWS)
 
@@ -89,6 +258,9 @@ func (s *Server) Run(ctx context.Context) error {
 
 	sub := s.hub.Subscribe()
 	go s.broadcastLoop(ctx, sub)
+	if s.imageEnabled {
+		go s.imageLoop(ctx)
+	}
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -136,10 +308,22 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go c.writeLoop()
-	c.readLoop(s.cfg.ChannelID)
+	c.readLoop(s.supportedChannels())
 
 	c.close()
 	s.removeClient(c)
+}
+
+func (s *Server) supportedChannels() map[uint64]struct{} {
+	channels := map[uint64]struct{}{
+		s.cfg.ChannelID:          {},
+		s.cfg.MarkerChannelID:    {},
+		s.cfg.TransformChannelID: {},
+	}
+	if s.imageEnabled {
+		channels[s.cfg.ImageChannelID] = struct{}{}
+	}
+	return channels
 }
 
 func (s *Server) serverInfo() ServerInfoMsg {
@@ -153,19 +337,78 @@ func (s *Server) serverInfo() ServerInfoMsg {
 }
 
 func (s *Server) advertise() AdvertiseMsg {
-	return AdvertiseMsg{
-		Op: OpAdvertise,
-		Channels: []Channel{
-			{
-				ID:             s.cfg.ChannelID,
-				Topic:          s.cfg.Topic,
-				Encoding:       s.cfg.Encoding,
-				SchemaName:     s.cfg.SchemaName,
-				SchemaEncoding: s.cfg.SchemaEncoding,
-				Schema:         s.cfg.Schema,
-			},
+	channels := []Channel{
+		{
+			ID:             s.cfg.ChannelID,
+			Topic:          s.cfg.Topic,
+			Encoding:       s.cfg.Encoding,
+			SchemaName:     s.cfg.SchemaName,
+			SchemaEncoding: s.cfg.SchemaEncoding,
+			Schema:         s.cfg.Schema,
+		},
+		{
+			ID:             s.cfg.MarkerChannelID,
+			Topic:          s.cfg.MarkerTopic,
+			Encoding:       s.cfg.MarkerEncoding,
+			SchemaName:     s.cfg.MarkerSchemaName,
+			SchemaEncoding: s.cfg.MarkerSchemaEncoding,
+			Schema:         s.cfg.MarkerSchema,
+		},
+		{
+			ID:             s.cfg.TransformChannelID,
+			Topic:          s.cfg.TransformTopic,
+			Encoding:       s.cfg.TransformEncoding,
+			SchemaName:     s.cfg.TransformSchemaName,
+			SchemaEncoding: s.cfg.TransformSchemaEncoding,
+			Schema:         s.cfg.TransformSchema,
 		},
 	}
+	if s.imageEnabled {
+		channels = append(channels, Channel{
+			ID:             s.cfg.ImageChannelID,
+			Topic:          s.cfg.ImageTopic,
+			Encoding:       s.cfg.ImageEncoding,
+			SchemaName:     s.cfg.ImageSchemaName,
+			SchemaEncoding: s.cfg.ImageSchemaEncoding,
+			Schema:         s.cfg.ImageSchema,
+		})
+	}
+	return AdvertiseMsg{Op: OpAdvertise, Channels: channels}
+}
+
+func (s *Server) imageLoop(ctx context.Context) {
+	s.publishImage(time.Now())
+	ticker := time.NewTicker(imagePublishInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ts := <-ticker.C:
+			s.publishImage(ts)
+		}
+	}
+}
+
+func (s *Server) publishImage(ts time.Time) {
+	msg, ok := s.compressedImage(ts)
+	if !ok {
+		return
+	}
+	s.publishJSONToChannel(s.cfg.ImageChannelID, ts, msg)
+}
+
+func (s *Server) compressedImage(ts time.Time) (CompressedImageMessage, bool) {
+	if !s.imageEnabled || s.imagePayload == "" {
+		return CompressedImageMessage{}, false
+	}
+	return CompressedImageMessage{
+		Timestamp: FrameTime{Sec: uint32(ts.Unix()), Nsec: uint32(ts.Nanosecond())},
+		FrameID:   s.cfg.ImageFrameID,
+		Format:    s.cfg.ImageFormat,
+		Data:      s.imagePayload,
+	}, true
 }
 
 func (s *Server) broadcastLoop(ctx context.Context, sub <-chan protocol.RatPacket) {
@@ -200,8 +443,18 @@ func (s *Server) broadcastPacket(pkt protocol.RatPacket) {
 			rec.Data = nil
 		}
 	}
+	s.publishJSONToChannel(s.cfg.ChannelID, ts, rec)
 
-	payload, err := json.Marshal(rec)
+	if marker, ok := s.markerFromPacket(pkt, ts); ok {
+		s.publishJSONToChannel(s.cfg.MarkerChannelID, ts, marker)
+	}
+	if transform, ok := s.transformFromPacket(pkt, ts); ok {
+		s.publishJSONToChannel(s.cfg.TransformChannelID, ts, transform)
+	}
+}
+
+func (s *Server) publishJSONToChannel(channelID uint64, ts time.Time, message any) {
+	payload, err := json.Marshal(message)
 	if err != nil {
 		return
 	}
@@ -209,12 +462,91 @@ func (s *Server) broadcastPacket(pkt protocol.RatPacket) {
 	logTime := uint64(ts.UnixNano())
 	clients := s.snapshotClients()
 	for _, c := range clients {
-		subIDs := c.subIDs()
+		subIDs := c.subIDsForChannel(channelID)
 		for _, subID := range subIDs {
 			frame := EncodeMessageData(subID, logTime, payload)
 			c.trySend(frame)
 		}
 	}
+}
+
+func (s *Server) markerFromPacket(pkt protocol.RatPacket, ts time.Time) (MarkerMessage, bool) {
+	if pkt.ID != s.quatID {
+		return MarkerMessage{}, false
+	}
+
+	quat, ok := extractQuaternion(pkt)
+	if !ok {
+		return MarkerMessage{}, false
+	}
+
+	return MarkerMessage{
+		Header: MarkerHeader{
+			FrameID: s.cfg.FrameID,
+			Stamp: MarkerStamp{
+				Sec:  ts.Unix(),
+				Nsec: int64(ts.Nanosecond()),
+			},
+		},
+		NS:     "ratitude.imu",
+		ID:     1,
+		Type:   markerTypeCube,
+		Action: markerActionAdd,
+		Pose: MarkerPose{
+			Position: Vector3{X: 0, Y: 0, Z: 0},
+			Orientation: Quaternion3{
+				X: float64(quat.X),
+				Y: float64(quat.Y),
+				Z: float64(quat.Z),
+				W: float64(quat.W),
+			},
+		},
+		Scale: Vector3{X: 0.3, Y: 0.3, Z: 0.3},
+		Color: ColorRGBA{R: 1, G: 1, B: 1, A: 1},
+	}, true
+}
+
+func (s *Server) transformFromPacket(pkt protocol.RatPacket, ts time.Time) (FrameTransformsMessage, bool) {
+	if pkt.ID != s.quatID {
+		return FrameTransformsMessage{}, false
+	}
+
+	quat, ok := extractQuaternion(pkt)
+	if !ok {
+		return FrameTransformsMessage{}, false
+	}
+
+	transform := FrameTransformMessage{
+		Timestamp: FrameTime{
+			Sec:  uint32(ts.Unix()),
+			Nsec: uint32(ts.Nanosecond()),
+		},
+		ParentFrameID: s.cfg.ParentFrameID,
+		ChildFrameID:  s.cfg.FrameID,
+		Translation:   Vector3{X: 0, Y: 0, Z: 0},
+		Rotation: Quaternion3{
+			X: float64(quat.X),
+			Y: float64(quat.Y),
+			Z: float64(quat.Z),
+			W: float64(quat.W),
+		},
+	}
+	return FrameTransformsMessage{Transforms: []FrameTransformMessage{transform}}, true
+}
+
+func extractQuaternion(pkt protocol.RatPacket) (protocol.QuatPacket, bool) {
+	if quat, ok := pkt.Data.(protocol.QuatPacket); ok {
+		return quat, true
+	}
+	if len(pkt.Payload) < 16 {
+		return protocol.QuatPacket{}, false
+	}
+	return protocol.QuatPacket{
+		W: math.Float32frombits(binary.LittleEndian.Uint32(pkt.Payload[0:4])),
+		X: math.Float32frombits(binary.LittleEndian.Uint32(pkt.Payload[4:8])),
+		Y: math.Float32frombits(binary.LittleEndian.Uint32(pkt.Payload[8:12])),
+		Z: math.Float32frombits(binary.LittleEndian.Uint32(pkt.Payload[12:16])),
+	}, true
 }
 
 func (s *Server) addClient(c *client) {
@@ -246,11 +578,11 @@ func newClient(conn *websocket.Conn, sendBuf int) *client {
 	return &client{
 		conn: conn,
 		send: make(chan []byte, sendBuf),
-		subs: make(map[uint32]struct{}),
+		subs: make(map[uint32]uint64),
 	}
 }
 
-func (c *client) readLoop(channelID uint64) {
+func (c *client) readLoop(supportedChannels map[uint64]struct{}) {
 	for {
 		msgType, data, err := c.conn.ReadMessage()
 		if err != nil {
@@ -274,8 +606,8 @@ func (c *client) readLoop(channelID uint64) {
 				continue
 			}
 			for _, sub := range msg.Subscriptions {
-				if sub.ChannelID == channelID {
-					c.addSub(sub.ID)
+				if _, ok := supportedChannels[sub.ChannelID]; ok {
+					c.addSub(sub.ID, sub.ChannelID)
 				}
 			}
 		case OpUnsubscribe:
@@ -300,15 +632,18 @@ func (c *client) writeLoop() {
 }
 
 func (c *client) trySend(msg []byte) {
+	defer func() {
+		_ = recover()
+	}()
 	select {
 	case c.send <- msg:
 	default:
 	}
 }
 
-func (c *client) addSub(id uint32) {
+func (c *client) addSub(id uint32, channelID uint64) {
 	c.mu.Lock()
-	c.subs[id] = struct{}{}
+	c.subs[id] = channelID
 	c.mu.Unlock()
 }
 
@@ -318,11 +653,13 @@ func (c *client) removeSub(id uint32) {
 	c.mu.Unlock()
 }
 
-func (c *client) subIDs() []uint32 {
+func (c *client) subIDsForChannel(channelID uint64) []uint32 {
 	c.mu.RLock()
 	ids := make([]uint32, 0, len(c.subs))
-	for id := range c.subs {
-		ids = append(ids, id)
+	for id, ch := range c.subs {
+		if ch == channelID {
+			ids = append(ids, id)
+		}
 	}
 	c.mu.RUnlock()
 	return ids
@@ -337,4 +674,11 @@ func (c *client) close() {
 
 func formatID(id uint8) string {
 	return fmt.Sprintf("0x%02x", id)
+}
+
+func maxUint64(a uint64, b uint64) uint64 {
+	if a > b {
+		return a
+	}
+	return b
 }

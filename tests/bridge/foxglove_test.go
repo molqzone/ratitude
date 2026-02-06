@@ -68,3 +68,48 @@ func TestDefaultSchemaObject(t *testing.T) {
 		t.Fatalf("expected schema type object, got %v", parsed["type"])
 	}
 }
+
+func TestDefaultMarkerSchemaObject(t *testing.T) {
+	schema := foxglove.DefaultMarkerSchema
+	if strings.Contains(schema, "\"$ref\"") {
+		t.Fatalf("marker schema should not contain $ref")
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(schema), &parsed); err != nil {
+		t.Fatalf("marker schema should be valid json: %v", err)
+	}
+	if parsed["type"] != "object" {
+		t.Fatalf("expected marker schema type object, got %v", parsed["type"])
+	}
+}
+
+func TestDefaultFrameTransformSchemaObject(t *testing.T) {
+	schema := foxglove.DefaultFrameTransformSchema
+	if strings.Contains(schema, "\"$ref\"") {
+		t.Fatalf("transform schema should not contain $ref")
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(schema), &parsed); err != nil {
+		t.Fatalf("transform schema should be valid json: %v", err)
+	}
+	if parsed["type"] != "object" {
+		t.Fatalf("expected transform schema type object, got %v", parsed["type"])
+	}
+}
+
+func TestDefaultCompressedImageSchemaObject(t *testing.T) {
+	schema := foxglove.DefaultCompressedImageSchema
+	if strings.Contains(schema, "\"$ref\"") {
+		t.Fatalf("compressed image schema should not contain $ref")
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(schema), &parsed); err != nil {
+		t.Fatalf("compressed image schema should be valid json: %v", err)
+	}
+	if parsed["type"] != "object" {
+		t.Fatalf("expected compressed image schema type object, got %v", parsed["type"])
+	}
+}

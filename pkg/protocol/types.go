@@ -14,3 +14,11 @@ type RatPacket struct {
 type Parser interface {
 	Parse(id uint8, payload []byte) (any, error)
 }
+
+// QuatPacket mirrors MCU payload layout: struct { float w, x, y, z; }.
+type QuatPacket struct {
+	W float32 `json:"w"`
+	X float32 `json:"x"`
+	Y float32 `json:"y"`
+	Z float32 `json:"z"`
+}

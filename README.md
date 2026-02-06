@@ -1,56 +1,73 @@
 # Ratitude
 
-> **High-Performance Binary Telemetry Stack for Embedded Systems.**
+> **High-performance binary telemetry stack for embedded systems.**
 
-Ratitude 是一个高性能的嵌入式 **Realtime Transfer 协议栈**。它面向 RTT 二进制遥测场景，提供固件端 librat 与宿主端 Go Host（`rttd`）核心管道，实现从 TCP 数据流到结构化解码与日志输出的完整闭环。
+Ratitude provides a low-latency RTT telemetry pipeline:
 
----
+- Firmware-side `librat` emits binary C structs with COBS framing.
+- Host-side `rttd` receives streams, decodes packets, and routes data to logs or Foxglove.
 
-## 核心功能
+## Core capabilities
 
-Ratitude 利用 **C-struct 二进制流** 与 **COBS 编码** 取代传统字符串打印模式，将嵌入式调试从“文本日志”升级为“结构化数据流”。
+- Binary struct transport instead of printf text formatting.
+- COBS framing for reliable packet boundaries over byte streams.
+- Go host pipeline (`transport` -> `protocol` -> `engine` -> `logger`).
+- JSONL output for offline analysis.
+- OpenOCD RTT compatible transport path.
 
-### 主要特性
-
-* **高性能二进制传输:** 直接传输 C 语言结构体 (Binary Struct)，相比 `printf` 格式化字符串，带宽利用率提升，且无精度丢失。
-* **Go Host 核心管道:** `transport`/`protocol`/`engine`/`logger` 组成单向数据流管道，完成 TCP 接收、COBS 解码、结构体解析与广播。
-* **JSONL 日志输出:** 内置 JSONL 写入器，便于对接脚本、数据分析或可视化工具。
-* **广泛硬件兼容:** 基于标准 TCP 协议对接 OpenOCD、J-Link GDB Server 或 pyOCD。
-* **OpenOCD RTT 兼容:** 固件端提供 SEGGER RTT 控制块，便于 RTT 端口直读 COBS 帧。
-
-> 说明：MCP 仍在规划中，当前提供 `rttd server`。
-
-## 快速开始
+## Quick start
 
 ```bash
 git submodule update --init --recursive
 rttd server --addr 127.0.0.1:19021 --log out.jsonl
 ```
 
-### 常用参数
+### `rttd server` common flags
 
-* `--addr`：TCP 地址（默认 `127.0.0.1:19021`）
-* `--log`：JSONL 输出路径（默认 stdout）
-* `--text-id`：文本包 ID（默认 `0xFF`）
+- `--addr`: TCP source address (default `127.0.0.1:19021`)
+- `--log`: JSONL output file path (default stdout)
+- `--text-id`: text packet id (default `0xFF`)
 
-## Foxglove Bridge
+## Foxglove bridge
 
 ```bash
 rttd foxglove --addr 127.0.0.1:19021 --ws-addr 127.0.0.1:8765
 ```
 
-### 常用参数
+### `rttd foxglove` common flags
 
-* `--ws-addr`：WebSocket 监听地址（默认 `127.0.0.1:8765`）
-* `--topic`：Foxglove 主题名（默认 `ratitude/packet`）
-* `--schema-name`：Schema 名称（默认 `ratitude.Packet`）
+- `--ws-addr`: WebSocket listen address (default `127.0.0.1:8765`)
+- `--topic`: generic packet topic (default `ratitude/packet`)
+- `--schema-name`: generic packet schema name (default `ratitude.Packet`)
+- `--marker-topic`: marker topic for 3D panel (default `/visualization_marker`)
+- `--quat-id`: quaternion packet id (default `0x10`, payload is `struct { float w, x, y, z; }`)
+- `--parent-frame`: transform parent frame id (default `world`)
+- `--frame-id`: marker frame id / transform child frame id (default `base_link`)
+- `--image-path`: compressed image file used for image stream (default `D:/Repos/ratitude/demo.jpg`, set to empty to disable)
+- `--image-frame`: frame id for image stream (default `camera`)
+- `--image-format`: compressed image format tag (default `jpeg`)
 
-### Mock 测试
+### IMU-style tri-axis mock source
 
 ```bash
-rttd foxglove --mock --mock-hz 50 --mock-id 0x01
+rttd foxglove --mock --mock-hz 50 --mock-id 0x10
 ```
 
-* `--mock`：启用本地模拟数据源（不连接 TCP）
-* `--mock-hz`：模拟采样率（默认 50Hz）
-* `--mock-id`：模拟包 ID（默认 0x01）
+- `--mock`: generate local mock packets instead of TCP input (XYZ tri-axis sinusoidal motion)
+- `--mock-hz`: mock sample rate (default `50`)
+- `--mock-id`: mock packet id (default `0x10`)
+
+### IMU 3D visualization in Foxglove
+
+The bridge publishes four JSON channels:
+
+- `ratitude/packet`: normalized packet stream
+- `/visualization_marker`: white CUBE marker driven by quaternion packets
+- `/tf`: `foxglove.FrameTransforms` for frame tree (`world` -> `base_link`)
+- `/camera/image/compressed`: repeated `foxglove.CompressedImage` frames from `demo.jpg`
+
+Open Foxglove, connect to `ws://127.0.0.1:8765`, add a **3D Panel**, and subscribe to `/visualization_marker`.
+
+For the image stream, add an **Image Panel** and subscribe to `/camera/image/compressed`.
+
+The mock source rotates on roll/pitch/yaw together (not a single-axis spin).
