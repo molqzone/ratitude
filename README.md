@@ -41,11 +41,14 @@ rttd foxglove --addr 127.0.0.1:19021 --ws-addr 127.0.0.1:8765
 - `--schema-name`: generic packet schema name (default `ratitude.Packet`)
 - `--marker-topic`: marker topic for 3D panel (default `/visualization_marker`)
 - `--quat-id`: quaternion packet id (default `0x10`, payload is `struct { float w, x, y, z; }`)
+- `--temp-id`: temperature packet id (default `0x20`, payload is `struct { float celsius; }`)
 - `--parent-frame`: transform parent frame id (default `world`)
 - `--frame-id`: marker frame id / transform child frame id (default `base_link`)
 - `--image-path`: compressed image file used for image stream (default `D:/Repos/ratitude/demo.jpg`, set to empty to disable)
 - `--image-frame`: frame id for image stream (default `camera`)
 - `--image-format`: compressed image format tag (default `jpeg`)
+- `--log-topic`: Foxglove Log Panel topic (default `/ratitude/log`)
+- `--log-name`: source name in log records (default `ratitude`)
 
 ### IMU-style tri-axis mock source
 
@@ -55,18 +58,26 @@ rttd foxglove --mock --mock-hz 50 --mock-id 0x10
 
 - `--mock`: generate local mock packets instead of TCP input (XYZ tri-axis sinusoidal motion)
 - `--mock-hz`: mock sample rate (default `50`)
-- `--mock-id`: mock packet id (default `0x10`)
+- `--mock-id`: mock quaternion packet id (default `0x10`)
+- mock mode also emits `rat_info`-style text once per second on `--text-id` for Log Panel testing
+- mock mode emits temperature packets on `--temp-id` for Gauge panel testing
 
 ### IMU 3D visualization in Foxglove
 
-The bridge publishes four JSON channels:
+The bridge publishes six JSON channels:
 
 - `ratitude/packet`: normalized packet stream
+- `/ratitude/log`: `foxglove.Log` stream generated from `rat_info` text packets
+- `/ratitude/temperature`: temperature stream for Gauge panel (`value` in Celsius)
 - `/visualization_marker`: white CUBE marker driven by quaternion packets
 - `/tf`: `foxglove.FrameTransforms` for frame tree (`world` -> `base_link`)
 - `/camera/image/compressed`: repeated `foxglove.CompressedImage` frames from `demo.jpg`
 
 Open Foxglove, connect to `ws://127.0.0.1:8765`, add a **3D Panel**, and subscribe to `/visualization_marker`.
+
+For text logs, add a **Log Panel** and subscribe to `/ratitude/log`.
+
+For a temperature gauge mock, add a **Gauge Panel**, subscribe to `/ratitude/temperature`, and set message path to `value`.
 
 For the image stream, add an **Image Panel** and subscribe to `/camera/image/compressed`.
 

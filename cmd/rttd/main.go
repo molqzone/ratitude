@@ -129,6 +129,7 @@ func runFoxglove(args []string, stdout io.Writer, stderr io.Writer) int {
 	wsAddr := fs.String("ws-addr", defaults.WSAddr, "Foxglove WebSocket address")
 	textIDStr := fs.String("text-id", "0xFF", "packet id for text logs")
 	quatIDStr := fs.String("quat-id", "0x10", "packet id for quaternion marker packets")
+	tempIDStr := fs.String("temp-id", "0x20", "packet id for temperature gauge packets")
 	reconnect := fs.Duration("reconnect", 1*time.Second, "reconnect interval")
 	bufSize := fs.Int("buf", 256, "frame channel buffer size")
 	readerBuf := fs.Int("reader-buf", 64*1024, "transport read buffer size")
@@ -140,6 +141,8 @@ func runFoxglove(args []string, stdout io.Writer, stderr io.Writer) int {
 	imagePath := fs.String("image-path", defaults.ImagePath, "path to compressed image file for /camera/image/compressed")
 	imageFrameID := fs.String("image-frame", defaults.ImageFrameID, "frame id for compressed image stream")
 	imageFormat := fs.String("image-format", defaults.ImageFormat, "compressed image format")
+	logTopic := fs.String("log-topic", defaults.LogTopic, "Foxglove Log Panel topic")
+	logName := fs.String("log-name", defaults.LogName, "source name used in foxglove.Log messages")
 	mock := fs.Bool("mock", false, "generate mock IMU quaternion packets instead of TCP input")
 	mockHz := fs.Int("mock-hz", 50, "mock sample rate (Hz)")
 	mockIDStr := fs.String("mock-id", "0x10", "mock packet id")
@@ -158,8 +161,14 @@ func runFoxglove(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "invalid --quat-id:", err)
 		return 2
 	}
+	tempID, err := parseUint8(*tempIDStr)
+	if err != nil {
+		fmt.Fprintln(stderr, "invalid --temp-id:", err)
+		return 2
+	}
 	protocol.TextPacketID = textID
 	protocol.Register(quatID, reflect.TypeOf(protocol.QuatPacket{}))
+	protocol.Register(tempID, reflect.TypeOf(protocol.TemperaturePacket{}))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -177,6 +186,8 @@ func runFoxglove(args []string, stdout io.Writer, stderr io.Writer) int {
 	cfg.ImagePath = *imagePath
 	cfg.ImageFrameID = *imageFrameID
 	cfg.ImageFormat = *imageFormat
+	cfg.LogTopic = *logTopic
+	cfg.LogName = *logName
 
 	server := foxglove.NewServer(cfg, hub, textID, quatID)
 
@@ -186,7 +197,7 @@ func runFoxglove(args []string, stdout io.Writer, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "invalid --mock-id:", err)
 			return 2
 		}
-		go runMockPublisher(ctx, hub, mockID, *mockHz)
+		go runMockPublisher(ctx, hub, mockID, textID, tempID, *mockHz)
 	} else {
 		frames := make(chan []byte, *bufSize)
 		transport.StartListener(ctx, *addr, frames,
@@ -239,7 +250,7 @@ func parseUint8(value string) (uint8, error) {
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  rttd server [--addr host:port] [--log file.jsonl] [--text-id 0xFF] [--reconnect 1s] [--buf 256] [--reader-buf 65536]")
-	fmt.Fprintln(w, "  rttd foxglove [--addr host:port] [--ws-addr host:port] [--text-id 0xFF] [--quat-id 0x10] [--reconnect 1s] [--buf 256] [--reader-buf 65536] [--topic name] [--schema-name name] [--marker-topic /visualization_marker] [--parent-frame world] [--frame-id base_link] [--image-path path] [--image-frame camera] [--image-format jpeg] [--mock] [--mock-hz 50] [--mock-id 0x10]")
+	fmt.Fprintln(w, "  rttd foxglove [--addr host:port] [--ws-addr host:port] [--text-id 0xFF] [--quat-id 0x10] [--temp-id 0x20] [--reconnect 1s] [--buf 256] [--reader-buf 65536] [--topic name] [--schema-name name] [--marker-topic /visualization_marker] [--parent-frame world] [--frame-id base_link] [--image-path path] [--image-frame camera] [--image-format jpeg] [--log-topic /ratitude/log] [--log-name ratitude] [--mock] [--mock-hz 50] [--mock-id 0x10]")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Commands:")
 	fmt.Fprintln(w, "  server   start the Ratitude host pipeline")

@@ -22,3 +22,8 @@ type QuatPacket struct {
 	Y float32 `json:"y"`
 	Z float32 `json:"z"`
 }
+
+// TemperaturePacket mirrors MCU payload layout: struct { float celsius; }.
+type TemperaturePacket struct {
+	Celsius float32 `json:"celsius"`
+}

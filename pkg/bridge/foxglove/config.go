@@ -145,6 +145,43 @@ const DefaultCompressedImageSchema = `{
   "required": ["timestamp", "frame_id", "format", "data"]
 }`
 
+const DefaultLogSchema = `{
+  "type": "object",
+  "properties": {
+    "timestamp": {
+      "type": "object",
+      "properties": {
+        "sec": { "type": "integer" },
+        "nsec": { "type": "integer" }
+      },
+      "required": ["sec", "nsec"]
+    },
+    "level": { "type": "integer" },
+    "message": { "type": "string" },
+    "name": { "type": "string" },
+    "file": { "type": "string" },
+    "line": { "type": "integer" }
+  },
+  "required": ["timestamp", "level", "message", "name", "file", "line"]
+}`
+
+const DefaultTemperatureSchema = `{
+  "type": "object",
+  "properties": {
+    "timestamp": {
+      "type": "object",
+      "properties": {
+        "sec": { "type": "integer" },
+        "nsec": { "type": "integer" }
+      },
+      "required": ["sec", "nsec"]
+    },
+    "value": { "type": "number" },
+    "unit": { "type": "string" }
+  },
+  "required": ["timestamp", "value", "unit"]
+}`
+
 type Config struct {
 	WSAddr                  string
 	Name                    string
@@ -175,6 +212,20 @@ type Config struct {
 	ImagePath               string
 	ImageFrameID            string
 	ImageFormat             string
+	LogTopic                string
+	LogChannelID            uint64
+	LogSchemaName           string
+	LogSchemaEncoding       string
+	LogSchema               string
+	LogEncoding             string
+	LogName                 string
+	TempTopic               string
+	TempChannelID           uint64
+	TempSchemaName          string
+	TempSchemaEncoding      string
+	TempSchema              string
+	TempEncoding            string
+	TempUnit                string
 	ParentFrameID           string
 	FrameID                 string
 	SendBuf                 int
@@ -211,6 +262,20 @@ func DefaultConfig() Config {
 		ImagePath:               "D:/Repos/ratitude/demo.jpg",
 		ImageFrameID:            "camera",
 		ImageFormat:             "jpeg",
+		LogTopic:                "/ratitude/log",
+		LogChannelID:            5,
+		LogSchemaName:           "foxglove.Log",
+		LogSchemaEncoding:       "jsonschema",
+		LogSchema:               DefaultLogSchema,
+		LogEncoding:             "json",
+		LogName:                 "ratitude",
+		TempTopic:               "/ratitude/temperature",
+		TempChannelID:           6,
+		TempSchemaName:          "ratitude.Temperature",
+		TempSchemaEncoding:      "jsonschema",
+		TempSchema:              DefaultTemperatureSchema,
+		TempEncoding:            "json",
+		TempUnit:                "C",
 		ParentFrameID:           "world",
 		FrameID:                 "base_link",
 		SendBuf:                 256,

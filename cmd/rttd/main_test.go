@@ -22,4 +22,13 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(got, "rttd foxglove") {
 		t.Fatalf("unexpected help output: %q", got)
 	}
+	if !strings.Contains(got, "--log-topic /ratitude/log") {
+		t.Fatalf("missing --log-topic in help output: %q", got)
+	}
+	if !strings.Contains(got, "--log-name ratitude") {
+		t.Fatalf("missing --log-name in help output: %q", got)
+	}
+	if !strings.Contains(got, "--temp-id 0x20") {
+		t.Fatalf("missing --temp-id in help output: %q", got)
+	}
 }

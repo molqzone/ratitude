@@ -113,3 +113,33 @@ func TestDefaultCompressedImageSchemaObject(t *testing.T) {
 		t.Fatalf("expected compressed image schema type object, got %v", parsed["type"])
 	}
 }
+
+func TestDefaultLogSchemaObject(t *testing.T) {
+	schema := foxglove.DefaultLogSchema
+	if strings.Contains(schema, "\"$ref\"") {
+		t.Fatalf("log schema should not contain $ref")
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(schema), &parsed); err != nil {
+		t.Fatalf("log schema should be valid json: %v", err)
+	}
+	if parsed["type"] != "object" {
+		t.Fatalf("expected log schema type object, got %v", parsed["type"])
+	}
+}
+
+func TestDefaultTemperatureSchemaObject(t *testing.T) {
+	schema := foxglove.DefaultTemperatureSchema
+	if strings.Contains(schema, "\"$ref\"") {
+		t.Fatalf("temperature schema should not contain $ref")
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(schema), &parsed); err != nil {
+		t.Fatalf("temperature schema should be valid json: %v", err)
+	}
+	if parsed["type"] != "object" {
+		t.Fatalf("expected temperature schema type object, got %v", parsed["type"])
+	}
+}

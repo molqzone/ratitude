@@ -49,6 +49,61 @@ func TestNewMockPacket(t *testing.T) {
 	}
 }
 
+func TestNewMockTextPacket(t *testing.T) {
+	ts := time.Unix(0, 99)
+	pkt := newMockTextPacket(0xFF, 7, ts)
+	if pkt.ID != 0xFF {
+		t.Fatalf("unexpected packet id: %d", pkt.ID)
+	}
+	if pkt.Timestamp != ts {
+		t.Fatalf("unexpected timestamp: %v", pkt.Timestamp)
+	}
+	text, ok := pkt.Data.(string)
+	if !ok {
+		t.Fatalf("unexpected data type: %T", pkt.Data)
+	}
+	if text != "rat_info mock seq=7" {
+		t.Fatalf("unexpected text: %s", text)
+	}
+	if string(pkt.Payload) != text {
+		t.Fatalf("payload should match text, got payload=%q text=%q", string(pkt.Payload), text)
+	}
+}
+
+func TestNewMockTemperaturePacket(t *testing.T) {
+	ts := time.Unix(0, 120)
+	seconds := 2.5
+	pkt := newMockTemperaturePacket(0x20, seconds, ts)
+	if pkt.ID != 0x20 {
+		t.Fatalf("unexpected packet id: %d", pkt.ID)
+	}
+	if pkt.Timestamp != ts {
+		t.Fatalf("unexpected timestamp: %v", pkt.Timestamp)
+	}
+	if len(pkt.Payload) != 4 {
+		t.Fatalf("unexpected payload size: %d", len(pkt.Payload))
+	}
+	temp, ok := pkt.Data.(protocol.TemperaturePacket)
+	if !ok {
+		t.Fatalf("unexpected data type: %T", pkt.Data)
+	}
+	decoded := math.Float32frombits(binary.LittleEndian.Uint32(pkt.Payload))
+	if math.Abs(float64(decoded-temp.Celsius)) > 1e-6 {
+		t.Fatalf("payload/data mismatch: payload=%f data=%f", decoded, temp.Celsius)
+	}
+}
+
+func TestMockTemperatureCelsiusVarying(t *testing.T) {
+	t0 := mockTemperatureCelsius(0)
+	t1 := mockTemperatureCelsius(10)
+	if t0 == t1 {
+		t.Fatalf("expected temperature to vary over time")
+	}
+	if t0 < 20 || t0 > 50 || t1 < 20 || t1 > 50 {
+		t.Fatalf("unexpected temperature range: t0=%f t1=%f", t0, t1)
+	}
+}
+
 func TestMockEulerAnglesTriAxis(t *testing.T) {
 	r0, p0, y0 := mockEulerAngles(0)
 	r1, p1, y1 := mockEulerAngles(1.0)

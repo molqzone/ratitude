@@ -22,6 +22,7 @@ import (
 const (
 	markerTypeCube       = 1
 	markerActionAdd      = 0
+	logLevelInfo         = 2
 	imagePublishInterval = time.Second
 )
 
@@ -101,6 +102,21 @@ type CompressedImageMessage struct {
 	FrameID   string    `json:"frame_id"`
 	Format    string    `json:"format"`
 	Data      string    `json:"data"`
+}
+
+type LogMessage struct {
+	Timestamp FrameTime `json:"timestamp"`
+	Level     uint8     `json:"level"`
+	Message   string    `json:"message"`
+	Name      string    `json:"name"`
+	File      string    `json:"file"`
+	Line      uint32    `json:"line"`
+}
+
+type TemperatureMessage struct {
+	Timestamp FrameTime `json:"timestamp"`
+	Value     float64   `json:"value"`
+	Unit      string    `json:"unit"`
 }
 
 type Server struct {
@@ -208,6 +224,48 @@ func NewServer(cfg Config, hub *engine.Hub, textID uint8, quatID uint8) *Server 
 	if cfg.ImageFormat == "" {
 		cfg.ImageFormat = defaults.ImageFormat
 	}
+	if cfg.LogTopic == "" {
+		cfg.LogTopic = defaults.LogTopic
+	}
+	if cfg.LogChannelID == 0 {
+		cfg.LogChannelID = defaults.LogChannelID
+	}
+	if cfg.LogSchemaName == "" {
+		cfg.LogSchemaName = defaults.LogSchemaName
+	}
+	if cfg.LogSchemaEncoding == "" {
+		cfg.LogSchemaEncoding = defaults.LogSchemaEncoding
+	}
+	if cfg.LogSchema == "" {
+		cfg.LogSchema = defaults.LogSchema
+	}
+	if cfg.LogEncoding == "" {
+		cfg.LogEncoding = defaults.LogEncoding
+	}
+	if cfg.LogName == "" {
+		cfg.LogName = defaults.LogName
+	}
+	if cfg.TempTopic == "" {
+		cfg.TempTopic = defaults.TempTopic
+	}
+	if cfg.TempChannelID == 0 {
+		cfg.TempChannelID = defaults.TempChannelID
+	}
+	if cfg.TempSchemaName == "" {
+		cfg.TempSchemaName = defaults.TempSchemaName
+	}
+	if cfg.TempSchemaEncoding == "" {
+		cfg.TempSchemaEncoding = defaults.TempSchemaEncoding
+	}
+	if cfg.TempSchema == "" {
+		cfg.TempSchema = defaults.TempSchema
+	}
+	if cfg.TempEncoding == "" {
+		cfg.TempEncoding = defaults.TempEncoding
+	}
+	if cfg.TempUnit == "" {
+		cfg.TempUnit = defaults.TempUnit
+	}
 	if cfg.ParentFrameID == "" {
 		cfg.ParentFrameID = defaults.ParentFrameID
 	}
@@ -222,6 +280,12 @@ func NewServer(cfg Config, hub *engine.Hub, textID uint8, quatID uint8) *Server 
 	}
 	if cfg.ImageChannelID == cfg.ChannelID || cfg.ImageChannelID == cfg.MarkerChannelID || cfg.ImageChannelID == cfg.TransformChannelID {
 		cfg.ImageChannelID = maxUint64(cfg.TransformChannelID, maxUint64(cfg.ChannelID, cfg.MarkerChannelID)) + 1
+	}
+	if cfg.LogChannelID == cfg.ChannelID || cfg.LogChannelID == cfg.MarkerChannelID || cfg.LogChannelID == cfg.TransformChannelID || cfg.LogChannelID == cfg.ImageChannelID {
+		cfg.LogChannelID = maxUint64(cfg.ImageChannelID, maxUint64(cfg.TransformChannelID, maxUint64(cfg.ChannelID, cfg.MarkerChannelID))) + 1
+	}
+	if cfg.TempChannelID == cfg.ChannelID || cfg.TempChannelID == cfg.MarkerChannelID || cfg.TempChannelID == cfg.TransformChannelID || cfg.TempChannelID == cfg.ImageChannelID || cfg.TempChannelID == cfg.LogChannelID {
+		cfg.TempChannelID = maxUint64(cfg.LogChannelID, maxUint64(cfg.ImageChannelID, maxUint64(cfg.TransformChannelID, maxUint64(cfg.ChannelID, cfg.MarkerChannelID)))) + 1
 	}
 	if cfg.SendBuf <= 0 {
 		cfg.SendBuf = defaults.SendBuf
@@ -319,6 +383,8 @@ func (s *Server) supportedChannels() map[uint64]struct{} {
 		s.cfg.ChannelID:          {},
 		s.cfg.MarkerChannelID:    {},
 		s.cfg.TransformChannelID: {},
+		s.cfg.LogChannelID:       {},
+		s.cfg.TempChannelID:      {},
 	}
 	if s.imageEnabled {
 		channels[s.cfg.ImageChannelID] = struct{}{}
@@ -361,6 +427,22 @@ func (s *Server) advertise() AdvertiseMsg {
 			SchemaName:     s.cfg.TransformSchemaName,
 			SchemaEncoding: s.cfg.TransformSchemaEncoding,
 			Schema:         s.cfg.TransformSchema,
+		},
+		{
+			ID:             s.cfg.LogChannelID,
+			Topic:          s.cfg.LogTopic,
+			Encoding:       s.cfg.LogEncoding,
+			SchemaName:     s.cfg.LogSchemaName,
+			SchemaEncoding: s.cfg.LogSchemaEncoding,
+			Schema:         s.cfg.LogSchema,
+		},
+		{
+			ID:             s.cfg.TempChannelID,
+			Topic:          s.cfg.TempTopic,
+			Encoding:       s.cfg.TempEncoding,
+			SchemaName:     s.cfg.TempSchemaName,
+			SchemaEncoding: s.cfg.TempSchemaEncoding,
+			Schema:         s.cfg.TempSchema,
 		},
 	}
 	if s.imageEnabled {
@@ -438,13 +520,21 @@ func (s *Server) broadcastPacket(pkt protocol.RatPacket) {
 		Data:       pkt.Data,
 	}
 	if pkt.ID == s.textID {
-		if text, ok := pkt.Data.(string); ok {
-			rec.Text = text
-			rec.Data = nil
+		text, ok := pkt.Data.(string)
+		if !ok {
+			text = protocol.ParseText(pkt.Payload)
 		}
+		rec.Text = text
+		rec.Data = nil
 	}
 	s.publishJSONToChannel(s.cfg.ChannelID, ts, rec)
 
+	if log, ok := s.logFromPacket(pkt, ts); ok {
+		s.publishJSONToChannel(s.cfg.LogChannelID, ts, log)
+	}
+	if temp, ok := s.temperatureFromPacket(pkt, ts); ok {
+		s.publishJSONToChannel(s.cfg.TempChannelID, ts, temp)
+	}
 	if marker, ok := s.markerFromPacket(pkt, ts); ok {
 		s.publishJSONToChannel(s.cfg.MarkerChannelID, ts, marker)
 	}
@@ -468,6 +558,38 @@ func (s *Server) publishJSONToChannel(channelID uint64, ts time.Time, message an
 			c.trySend(frame)
 		}
 	}
+}
+
+func (s *Server) logFromPacket(pkt protocol.RatPacket, ts time.Time) (LogMessage, bool) {
+	if pkt.ID != s.textID {
+		return LogMessage{}, false
+	}
+
+	text, ok := pkt.Data.(string)
+	if !ok {
+		text = protocol.ParseText(pkt.Payload)
+	}
+
+	return LogMessage{
+		Timestamp: FrameTime{Sec: uint32(ts.Unix()), Nsec: uint32(ts.Nanosecond())},
+		Level:     logLevelInfo,
+		Message:   text,
+		Name:      s.cfg.LogName,
+		File:      "",
+		Line:      0,
+	}, true
+}
+
+func (s *Server) temperatureFromPacket(pkt protocol.RatPacket, ts time.Time) (TemperatureMessage, bool) {
+	temp, ok := pkt.Data.(protocol.TemperaturePacket)
+	if !ok {
+		return TemperatureMessage{}, false
+	}
+	return TemperatureMessage{
+		Timestamp: FrameTime{Sec: uint32(ts.Unix()), Nsec: uint32(ts.Nanosecond())},
+		Value:     float64(temp.Celsius),
+		Unit:      s.cfg.TempUnit,
+	}, true
 }
 
 func (s *Server) markerFromPacket(pkt protocol.RatPacket, ts time.Time) (MarkerMessage, bool) {
