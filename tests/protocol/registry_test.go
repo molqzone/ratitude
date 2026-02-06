@@ -13,6 +13,7 @@ type samplePacket struct {
 }
 
 func TestParsePacketSizeMismatch(t *testing.T) {
+	protocol.ClearDynamicRegistry()
 	protocol.Register(0x01, reflect.TypeOf(samplePacket{}))
 
 	_, err := protocol.ParsePacket(0x01, []byte{0xAA})
@@ -22,6 +23,7 @@ func TestParsePacketSizeMismatch(t *testing.T) {
 }
 
 func TestParsePacketUnknown(t *testing.T) {
+	protocol.ClearDynamicRegistry()
 	data, err := protocol.ParsePacket(0x7E, []byte{0x01, 0x02})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -39,6 +41,7 @@ func TestParsePacketUnknown(t *testing.T) {
 }
 
 func TestParsePacketText(t *testing.T) {
+	protocol.ClearDynamicRegistry()
 	old := protocol.TextPacketID
 	protocol.TextPacketID = 0xEE
 	defer func() {

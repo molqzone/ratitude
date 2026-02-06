@@ -660,6 +660,11 @@ func extractQuaternion(pkt protocol.RatPacket) (protocol.QuatPacket, bool) {
 	if quat, ok := pkt.Data.(protocol.QuatPacket); ok {
 		return quat, true
 	}
+	if m, ok := pkt.Data.(map[string]any); ok {
+		if quat, ok := quaternionFromMap(m); ok {
+			return quat, true
+		}
+	}
 	if len(pkt.Payload) < 16 {
 		return protocol.QuatPacket{}, false
 	}
@@ -669,6 +674,57 @@ func extractQuaternion(pkt protocol.RatPacket) (protocol.QuatPacket, bool) {
 		Y: math.Float32frombits(binary.LittleEndian.Uint32(pkt.Payload[8:12])),
 		Z: math.Float32frombits(binary.LittleEndian.Uint32(pkt.Payload[12:16])),
 	}, true
+}
+
+func quaternionFromMap(data map[string]any) (protocol.QuatPacket, bool) {
+	x, okX := numberToFloat32(data["x"])
+	y, okY := numberToFloat32(data["y"])
+	z, okZ := numberToFloat32(data["z"])
+	w, okW := numberToFloat32(data["w"])
+	if okX && okY && okZ && okW {
+		return protocol.QuatPacket{X: x, Y: y, Z: z, W: w}, true
+	}
+
+	w2, okW2 := numberToFloat32(data["q_w"])
+	x2, okX2 := numberToFloat32(data["q_x"])
+	y2, okY2 := numberToFloat32(data["q_y"])
+	z2, okZ2 := numberToFloat32(data["q_z"])
+	if okW2 && okX2 && okY2 && okZ2 {
+		return protocol.QuatPacket{W: w2, X: x2, Y: y2, Z: z2}, true
+	}
+
+	return protocol.QuatPacket{}, false
+}
+
+func numberToFloat32(v any) (float32, bool) {
+	switch n := v.(type) {
+	case float32:
+		return n, true
+	case float64:
+		return float32(n), true
+	case int:
+		return float32(n), true
+	case int8:
+		return float32(n), true
+	case int16:
+		return float32(n), true
+	case int32:
+		return float32(n), true
+	case int64:
+		return float32(n), true
+	case uint:
+		return float32(n), true
+	case uint8:
+		return float32(n), true
+	case uint16:
+		return float32(n), true
+	case uint32:
+		return float32(n), true
+	case uint64:
+		return float32(n), true
+	default:
+		return 0, false
+	}
 }
 
 func (s *Server) addClient(c *client) {

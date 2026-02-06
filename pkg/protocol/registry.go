@@ -60,6 +60,12 @@ func ParsePacket(id uint8, payload []byte) (any, error) {
 		return ParseText(payload), nil
 	}
 
+	if decoded, ok, err := parseDynamicPacket(id, payload); err != nil {
+		return nil, err
+	} else if ok {
+		return decoded, nil
+	}
+
 	registryMu.RLock()
 	t, ok := typeRegistry[id]
 	registryMu.RUnlock()

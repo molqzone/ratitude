@@ -14,6 +14,7 @@ Ratitude provides a low-latency RTT telemetry pipeline:
 - Go host pipeline (`transport` -> `protocol` -> `engine` -> `logger`).
 - JSONL output for offline analysis.
 - OpenOCD RTT compatible transport path.
+- Config-driven runtime packet decoding from C annotations.
 
 ## Quick start
 
@@ -22,11 +23,71 @@ git submodule update --init --recursive
 rttd server --addr 127.0.0.1:19021 --log out.jsonl
 ```
 
+## Config-driven initialization (C -> TOML)
+
+`@rat` annotations in C are the single source of truth for packet definitions.
+
+- `[[packets]]` is **auto-managed** and overwritten by scanner sync.
+- `[rttd.server]` / `[rttd.foxglove]` are **manual runtime settings** and are preserved.
+- Runtime precedence is: **flags > TOML > built-in defaults**.
+
+### C annotation format
+
+`@rat` can be written in line comments or block comments:
+
+```c
+// @rat:id=0x01, type=plot
+typedef struct {
+  int32_t value;
+  uint32_t tick_ms;
+} RatSample;
+
+/* @rat:id=0x02, type=json */
+typedef struct {
+  uint16_t voltage_mv;
+  uint16_t current_ma;
+} BatteryReading;
+```
+
+The scanner uses Tree-sitter C AST (CGO build) to locate `typedef struct` and fields.
+
+### Start with auto-sync (recommended)
+
+```bash
+rttd server --config firmware/example/stm32f4_rtt/ratitude.toml
+rttd foxglove --config firmware/example/stm32f4_rtt/ratitude.toml
+```
+
+Both commands run packet sync before startup, so firmware developers only need to:
+
+1. write C structs + `@rat`
+2. run CLI command
+
+### Manual sync (optional, for CI/debug)
+
+> CGO note: Tree-sitter parsing requires a C toolchain when `CGO_ENABLED=1`.
+> In non-CGO environments, Ratitude falls back to compatibility parsing.
+
+```bash
+go run tools/rat-gen.go sync --config firmware/example/stm32f4_rtt/ratitude.toml
+```
+
+To validate the Tree-sitter path with CGO enabled:
+
+```powershell
+./tools/test_cgo.ps1 -Packages ./...
+```
+
+### Default config file
+
+- `firmware/example/stm32f4_rtt/ratitude.toml`
+
 ### `rttd server` common flags
 
-- `--addr`: TCP source address (default `127.0.0.1:19021`)
+- `--config`: TOML config path (default `firmware/example/stm32f4_rtt/ratitude.toml`)
+- `--addr`: TCP source address (default from TOML)
 - `--log`: JSONL output file path (default stdout)
-- `--text-id`: text packet id (default `0xFF`)
+- `--text-id`: text packet id (default from TOML)
 
 ## Foxglove bridge
 
@@ -36,19 +97,20 @@ rttd foxglove --addr 127.0.0.1:19021 --ws-addr 127.0.0.1:8765
 
 ### `rttd foxglove` common flags
 
-- `--ws-addr`: WebSocket listen address (default `127.0.0.1:8765`)
-- `--topic`: generic packet topic (default `ratitude/packet`)
-- `--schema-name`: generic packet schema name (default `ratitude.Packet`)
-- `--marker-topic`: marker topic for 3D panel (default `/visualization_marker`)
-- `--quat-id`: quaternion packet id (default `0x10`, payload is `struct { float w, x, y, z; }`)
-- `--temp-id`: temperature packet id (default `0x20`, payload is `struct { float celsius; }`)
-- `--parent-frame`: transform parent frame id (default `world`)
-- `--frame-id`: marker frame id / transform child frame id (default `base_link`)
-- `--image-path`: compressed image file used for image stream (default `D:/Repos/ratitude/demo.jpg`, set to empty to disable)
-- `--image-frame`: frame id for image stream (default `camera`)
-- `--image-format`: compressed image format tag (default `jpeg`)
-- `--log-topic`: Foxglove Log Panel topic (default `/ratitude/log`)
-- `--log-name`: source name in log records (default `ratitude`)
+- `--config`: TOML config path (default `firmware/example/stm32f4_rtt/ratitude.toml`)
+- `--ws-addr`: WebSocket listen address (default from TOML)
+- `--topic`: generic packet topic (default from TOML)
+- `--schema-name`: generic packet schema name (default from TOML)
+- `--marker-topic`: marker topic for 3D panel (default from TOML)
+- `--quat-id`: quaternion packet id (explicit override). If omitted and TOML `quat_id` does not match discovered packets, first `type=pose_3d` packet is used.
+- `--temp-id`: temperature packet id (default from TOML, payload is `struct { float celsius; }`)
+- `--parent-frame`: transform parent frame id (default from TOML)
+- `--frame-id`: marker frame id / transform child frame id (default from TOML)
+- `--image-path`: compressed image file used for image stream (default from TOML)
+- `--image-frame`: frame id for image stream (default from TOML)
+- `--image-format`: compressed image format tag (default from TOML)
+- `--log-topic`: Foxglove Log Panel topic (default from TOML)
+- `--log-name`: source name in log records (default from TOML)
 
 ### IMU-style tri-axis mock source
 
@@ -82,3 +144,8 @@ For a temperature gauge mock, add a **Gauge Panel**, subscribe to `/ratitude/tem
 For the image stream, add an **Image Panel** and subscribe to `/camera/image/compressed`.
 
 The mock source rotates on roll/pitch/yaw together (not a single-axis spin).
+
+
+
+
+

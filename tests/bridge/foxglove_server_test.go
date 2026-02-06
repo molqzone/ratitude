@@ -134,6 +134,8 @@ func subscribeChannel(t *testing.T, conn *websocket.Conn, subID uint32, channelI
 	if err := conn.WriteJSON(msg); err != nil {
 		t.Fatalf("subscribe channel %d: %v", channelID, err)
 	}
+	// Server subscriptions are async; give it a short window before publishing.
+	time.Sleep(20 * time.Millisecond)
 }
 
 func readBinaryPayloadForSubID(t *testing.T, conn *websocket.Conn, subID uint32) []byte {
@@ -244,4 +246,73 @@ func TestFoxglovePublishesTemperatureGaugeMessage(t *testing.T) {
 	if rec.Unit != cfg.TempUnit {
 		t.Fatalf("unexpected temperature unit: %s", rec.Unit)
 	}
+}
+
+func TestFoxglovePublishesPose3DFromDynamicMap(t *testing.T) {
+	cfg := foxglove.DefaultConfig()
+	cfg.ImagePath = ""
+
+	s := startFoxgloveSession(t, cfg, 0xFF, 0x10)
+	markerChannel := s.channels[cfg.MarkerTopic]
+	transformChannel := s.channels[cfg.TransformTopic]
+	subscribeChannel(t, s.conn, 31, markerChannel.ID)
+	subscribeChannel(t, s.conn, 32, transformChannel.ID)
+
+	s.hub.Publish(protocol.RatPacket{
+		ID:        0x10,
+		Timestamp: time.Unix(777, 999),
+		Data: map[string]any{
+			"x": 0.1,
+			"y": -0.2,
+			"z": 0.3,
+			"w": 0.9,
+		},
+	})
+
+	markerPayload := readBinaryPayloadForSubID(t, s.conn, 31)
+	var marker struct {
+		Pose struct {
+			Orientation struct {
+				X float64 `json:"x"`
+				Y float64 `json:"y"`
+				Z float64 `json:"z"`
+				W float64 `json:"w"`
+			} `json:"orientation"`
+		} `json:"pose"`
+	}
+	if err := json.Unmarshal(markerPayload, &marker); err != nil {
+		t.Fatalf("decode marker payload: %v", err)
+	}
+	if !closeEnough(marker.Pose.Orientation.X, 0.1) || !closeEnough(marker.Pose.Orientation.Y, -0.2) || !closeEnough(marker.Pose.Orientation.Z, 0.3) || !closeEnough(marker.Pose.Orientation.W, 0.9) {
+		t.Fatalf("unexpected marker quaternion: %+v", marker.Pose.Orientation)
+	}
+
+	transformPayload := readBinaryPayloadForSubID(t, s.conn, 32)
+	var tf struct {
+		Transforms []struct {
+			Rotation struct {
+				X float64 `json:"x"`
+				Y float64 `json:"y"`
+				Z float64 `json:"z"`
+				W float64 `json:"w"`
+			} `json:"rotation"`
+		} `json:"transforms"`
+	}
+	if err := json.Unmarshal(transformPayload, &tf); err != nil {
+		t.Fatalf("decode transform payload: %v", err)
+	}
+	if len(tf.Transforms) != 1 {
+		t.Fatalf("expected one transform, got %d", len(tf.Transforms))
+	}
+	if !closeEnough(tf.Transforms[0].Rotation.X, 0.1) || !closeEnough(tf.Transforms[0].Rotation.Y, -0.2) || !closeEnough(tf.Transforms[0].Rotation.Z, 0.3) || !closeEnough(tf.Transforms[0].Rotation.W, 0.9) {
+		t.Fatalf("unexpected transform quaternion: %+v", tf.Transforms[0].Rotation)
+	}
+}
+
+func closeEnough(got float64, want float64) bool {
+	delta := got - want
+	if delta < 0 {
+		delta = -delta
+	}
+	return delta < 1e-6
 }
