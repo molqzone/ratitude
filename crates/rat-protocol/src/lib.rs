@@ -1,13 +1,10 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::RwLock;
 use std::time::SystemTime;
 
 use nom::number::complete::{
     le_f32, le_f64, le_i16, le_i32, le_i64, le_i8, le_u16, le_u32, le_u64, le_u8,
 };
 use nom::IResult;
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use thiserror::Error;
@@ -99,93 +96,164 @@ enum StaticPacketKind {
     Temperature,
 }
 
-static TEXT_PACKET_ID: AtomicU8 = AtomicU8::new(0xFF);
-static STATIC_REGISTRY: Lazy<RwLock<HashMap<u8, StaticPacketKind>>> =
-    Lazy::new(|| RwLock::new(HashMap::new()));
-static DYNAMIC_REGISTRY: Lazy<RwLock<HashMap<u8, DynamicPacketDef>>> =
-    Lazy::new(|| RwLock::new(HashMap::new()));
-
-pub fn set_text_packet_id(id: u8) {
-    TEXT_PACKET_ID.store(id, Ordering::Relaxed);
+#[derive(Clone, Debug)]
+pub struct ProtocolContext {
+    text_packet_id: u8,
+    static_registry: HashMap<u8, StaticPacketKind>,
+    dynamic_registry: HashMap<u8, DynamicPacketDef>,
 }
 
-pub fn text_packet_id() -> u8 {
-    TEXT_PACKET_ID.load(Ordering::Relaxed)
-}
-
-pub fn clear_static_registry() {
-    if let Ok(mut guard) = STATIC_REGISTRY.write() {
-        guard.clear();
+impl Default for ProtocolContext {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-pub fn register_static_quat(id: u8) {
-    if let Ok(mut guard) = STATIC_REGISTRY.write() {
-        guard.insert(id, StaticPacketKind::Quat);
-    }
-}
-
-pub fn register_static_temperature(id: u8) {
-    if let Ok(mut guard) = STATIC_REGISTRY.write() {
-        guard.insert(id, StaticPacketKind::Temperature);
-    }
-}
-
-pub fn clear_dynamic_registry() {
-    if let Ok(mut guard) = DYNAMIC_REGISTRY.write() {
-        guard.clear();
-    }
-}
-
-pub fn register_dynamic(id: u8, def: DynamicPacketDef) -> Result<(), ProtocolError> {
-    if def.byte_size == 0 {
-        return Err(ProtocolError::InvalidDynamicByteSize(def.byte_size));
-    }
-    if def.fields.is_empty() {
-        return Err(ProtocolError::MissingDynamicFields);
+impl ProtocolContext {
+    pub fn new() -> Self {
+        Self {
+            text_packet_id: 0xFF,
+            static_registry: HashMap::new(),
+            dynamic_registry: HashMap::new(),
+        }
     }
 
-    let mut normalized = DynamicPacketDef {
-        id,
-        struct_name: def.struct_name,
-        packed: def.packed,
-        byte_size: def.byte_size,
-        fields: Vec::with_capacity(def.fields.len()),
-    };
+    pub fn set_text_packet_id(&mut self, id: u8) {
+        self.text_packet_id = id;
+    }
 
-    for field in def.fields {
-        let c_type = normalize_c_type(&field.c_type);
-        let expected_size = c_type_size(&c_type)
-            .ok_or_else(|| ProtocolError::UnsupportedCType(field.c_type.clone()))?;
-        if field.size != expected_size {
-            return Err(ProtocolError::DynamicFieldSizeMismatch {
+    pub fn text_packet_id(&self) -> u8 {
+        self.text_packet_id
+    }
+
+    pub fn clear_static_registry(&mut self) {
+        self.static_registry.clear();
+    }
+
+    pub fn register_static_quat(&mut self, id: u8) {
+        self.static_registry.insert(id, StaticPacketKind::Quat);
+    }
+
+    pub fn register_static_temperature(&mut self, id: u8) {
+        self.static_registry
+            .insert(id, StaticPacketKind::Temperature);
+    }
+
+    pub fn clear_dynamic_registry(&mut self) {
+        self.dynamic_registry.clear();
+    }
+
+    pub fn register_dynamic(&mut self, id: u8, def: DynamicPacketDef) -> Result<(), ProtocolError> {
+        if def.byte_size == 0 {
+            return Err(ProtocolError::InvalidDynamicByteSize(def.byte_size));
+        }
+        if def.fields.is_empty() {
+            return Err(ProtocolError::MissingDynamicFields);
+        }
+
+        let mut normalized = DynamicPacketDef {
+            id,
+            struct_name: def.struct_name,
+            packed: def.packed,
+            byte_size: def.byte_size,
+            fields: Vec::with_capacity(def.fields.len()),
+        };
+
+        for field in def.fields {
+            let c_type = normalize_c_type(&field.c_type);
+            let expected_size = c_type_size(&c_type)
+                .ok_or_else(|| ProtocolError::UnsupportedCType(field.c_type.clone()))?;
+            if field.size != expected_size {
+                return Err(ProtocolError::DynamicFieldSizeMismatch {
+                    name: field.name,
+                    got: field.size,
+                    expected: expected_size,
+                });
+            }
+            let field_end = field.offset.checked_add(field.size).ok_or_else(|| {
+                ProtocolError::DynamicFieldOffset {
+                    name: field.name.clone(),
+                    offset: field.offset,
+                }
+            })?;
+            if field_end > normalized.byte_size {
+                return Err(ProtocolError::DynamicFieldOutOfRange { name: field.name });
+            }
+            normalized.fields.push(DynamicFieldDef {
                 name: field.name,
-                got: field.size,
-                expected: expected_size,
+                c_type,
+                offset: field.offset,
+                size: field.size,
             });
         }
-        let field_end = field.offset.checked_add(field.size).ok_or_else(|| {
-            ProtocolError::DynamicFieldOffset {
-                name: field.name.clone(),
-                offset: field.offset,
-            }
-        })?;
-        if field_end > normalized.byte_size {
-            return Err(ProtocolError::DynamicFieldOutOfRange { name: field.name });
+
+        self.dynamic_registry.insert(id, normalized);
+
+        Ok(())
+    }
+
+    pub fn parse_packet(&self, id: u8, payload: &[u8]) -> Result<PacketData, ProtocolError> {
+        if id == self.text_packet_id() {
+            return Ok(PacketData::Text(parse_text(payload)));
         }
-        normalized.fields.push(DynamicFieldDef {
-            name: field.name,
-            c_type,
-            offset: field.offset,
-            size: field.size,
-        });
+
+        if let Some(decoded) = self.parse_dynamic_packet(id, payload)? {
+            return Ok(PacketData::Dynamic(decoded));
+        }
+
+        if let Some(kind) = self.static_registry.get(&id) {
+            return match kind {
+                StaticPacketKind::Quat => Ok(PacketData::Quat(parse_quat_payload(id, payload)?)),
+                StaticPacketKind::Temperature => Ok(PacketData::Temperature(
+                    parse_temperature_payload(id, payload)?,
+                )),
+            };
+        }
+
+        Ok(PacketData::Raw(RawPacket {
+            id: format!("0x{:02x}", id),
+            payload_hex: hex::encode(payload),
+        }))
     }
 
-    if let Ok(mut guard) = DYNAMIC_REGISTRY.write() {
-        guard.insert(id, normalized);
-    }
+    fn parse_dynamic_packet(
+        &self,
+        id: u8,
+        payload: &[u8],
+    ) -> Result<Option<Map<String, Value>>, ProtocolError> {
+        let Some(def) = self.dynamic_registry.get(&id) else {
+            return Ok(None);
+        };
 
-    Ok(())
+        if payload.len() != def.byte_size {
+            return Err(ProtocolError::PayloadSizeMismatch {
+                id,
+                got: payload.len(),
+                expected: def.byte_size,
+            });
+        }
+
+        let mut out = Map::new();
+        for field in &def.fields {
+            let start = field.offset;
+            let end = field.offset.checked_add(field.size).ok_or_else(|| {
+                ProtocolError::DynamicFieldOffset {
+                    name: field.name.clone(),
+                    offset: field.offset,
+                }
+            })?;
+            let slice =
+                payload
+                    .get(start..end)
+                    .ok_or_else(|| ProtocolError::DynamicFieldOutOfRange {
+                        name: field.name.clone(),
+                    })?;
+            let value = decode_dynamic_value(field, slice)?;
+            out.insert(field.name.clone(), value);
+        }
+
+        Ok(Some(out))
+    }
 }
 
 pub fn parse_text(payload: &[u8]) -> String {
@@ -199,34 +267,6 @@ pub fn parse_text(payload: &[u8]) -> String {
     String::from_utf8_lossy(&payload[..end])
         .trim_end_matches('\0')
         .to_string()
-}
-
-pub fn parse_packet(id: u8, payload: &[u8]) -> Result<PacketData, ProtocolError> {
-    if id == text_packet_id() {
-        return Ok(PacketData::Text(parse_text(payload)));
-    }
-
-    if let Some(decoded) = parse_dynamic_packet(id, payload)? {
-        return Ok(PacketData::Dynamic(decoded));
-    }
-
-    if let Some(kind) = STATIC_REGISTRY
-        .read()
-        .ok()
-        .and_then(|guard| guard.get(&id).cloned())
-    {
-        return match kind {
-            StaticPacketKind::Quat => Ok(PacketData::Quat(parse_quat_payload(id, payload)?)),
-            StaticPacketKind::Temperature => Ok(PacketData::Temperature(
-                parse_temperature_payload(id, payload)?,
-            )),
-        };
-    }
-
-    Ok(PacketData::Raw(RawPacket {
-        id: format!("0x{:02x}", id),
-        payload_hex: hex::encode(payload),
-    }))
 }
 
 fn parse_quat_payload(id: u8, payload: &[u8]) -> Result<QuatPacket, ProtocolError> {
@@ -299,48 +339,6 @@ where
     } else {
         None
     }
-}
-
-fn parse_dynamic_packet(
-    id: u8,
-    payload: &[u8],
-) -> Result<Option<Map<String, Value>>, ProtocolError> {
-    let Some(def) = DYNAMIC_REGISTRY
-        .read()
-        .ok()
-        .and_then(|guard| guard.get(&id).cloned())
-    else {
-        return Ok(None);
-    };
-
-    if payload.len() != def.byte_size {
-        return Err(ProtocolError::PayloadSizeMismatch {
-            id,
-            got: payload.len(),
-            expected: def.byte_size,
-        });
-    }
-
-    let mut out = Map::new();
-    for field in &def.fields {
-        let start = field.offset;
-        let end = field.offset.checked_add(field.size).ok_or_else(|| {
-            ProtocolError::DynamicFieldOffset {
-                name: field.name.clone(),
-                offset: field.offset,
-            }
-        })?;
-        let slice =
-            payload
-                .get(start..end)
-                .ok_or_else(|| ProtocolError::DynamicFieldOutOfRange {
-                    name: field.name.clone(),
-                })?;
-        let value = decode_dynamic_value(field, slice)?;
-        out.insert(field.name.clone(), value);
-    }
-
-    Ok(Some(out))
 }
 
 fn decode_dynamic_value(field: &DynamicFieldDef, data: &[u8]) -> Result<Value, ProtocolError> {
@@ -420,5 +418,55 @@ mod tests {
             cobs_decode(&[0x03, 0x11, 0x22]).expect("decode"),
             vec![0x11, 0x22]
         );
+    }
+
+    #[test]
+    fn text_id_isolation_between_contexts() {
+        let mut ctx_a = ProtocolContext::new();
+        ctx_a.set_text_packet_id(0x01);
+        let mut ctx_b = ProtocolContext::new();
+        ctx_b.set_text_packet_id(0x02);
+
+        let data_a = ctx_a.parse_packet(0x01, b"abc").expect("ctx_a parse");
+        let data_b = ctx_b.parse_packet(0x01, b"abc").expect("ctx_b parse");
+
+        assert!(matches!(data_a, PacketData::Text(_)));
+        assert!(matches!(data_b, PacketData::Raw(_)));
+    }
+
+    #[test]
+    fn dynamic_registry_isolation_between_contexts() {
+        let mut ctx_a = ProtocolContext::new();
+        let ctx_b = ProtocolContext::new();
+        ctx_a
+            .register_dynamic(
+                0x20,
+                DynamicPacketDef {
+                    id: 0x20,
+                    struct_name: "Demo".to_string(),
+                    packed: true,
+                    byte_size: 4,
+                    fields: vec![DynamicFieldDef {
+                        name: "value".to_string(),
+                        c_type: "int32_t".to_string(),
+                        offset: 0,
+                        size: 4,
+                    }],
+                },
+            )
+            .expect("register dynamic");
+
+        let payload = 42_i32.to_le_bytes();
+
+        let data_a = ctx_a.parse_packet(0x20, &payload).expect("ctx_a parse");
+        let data_b = ctx_b.parse_packet(0x20, &payload).expect("ctx_b parse");
+
+        match data_a {
+            PacketData::Dynamic(map) => {
+                assert_eq!(map.get("value").and_then(Value::as_i64), Some(42));
+            }
+            other => panic!("unexpected packet kind: {other:?}"),
+        }
+        assert!(matches!(data_b, PacketData::Raw(_)));
     }
 }

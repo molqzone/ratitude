@@ -967,13 +967,14 @@ dependencies = [
  "base64",
  "foxglove",
  "hex",
- "rat-engine",
+ "rat-core",
  "rat-protocol",
  "serde",
  "serde_json",
  "time",
  "tokio",
  "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -983,27 +984,23 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "toml",
+ "toml_edit",
 ]
 
 [[package]]
-name = "rat-engine"
+name = "rat-core"
 version = "0.1.0"
 dependencies = [
- "rat-protocol",
- "tokio",
-]
-
-[[package]]
-name = "rat-logger"
-version = "0.1.0"
-dependencies = [
+ "bytes",
+ "futures-util",
  "hex",
- "rat-engine",
  "rat-protocol",
  "serde",
  "serde_json",
  "time",
  "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -1013,7 +1010,6 @@ dependencies = [
  "cobs",
  "hex",
  "nom",
- "once_cell",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -1030,18 +1026,6 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-c",
  "walkdir",
-]
-
-[[package]]
-name = "rat-transport"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "futures-util",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "tracing",
 ]
 
 [[package]]
@@ -1111,11 +1095,9 @@ dependencies = [
  "humantime",
  "rat-bridge-foxglove",
  "rat-config",
- "rat-engine",
- "rat-logger",
+ "rat-core",
  "rat-protocol",
  "rat-sync",
- "rat-transport",
  "serde_json",
  "tokio",
  "tokio-util",

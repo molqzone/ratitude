@@ -1,8 +1,0 @@
-[package]
-name = "rat-engine"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-rat-protocol = { path = "../rat-protocol" }
-tokio.workspace = true

@@ -1,17 +1,17 @@
-use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use anyhow::{anyhow, Context as AnyhowContext, Result};
 use base64::Engine;
 use foxglove::{Context, PartialMetadata, RawChannel, Schema, WebSocketServer};
-use rat_engine::Hub;
+use rat_core::Hub;
 use rat_protocol::{PacketData, QuatPacket, RatPacket};
 use serde::Serialize;
 use serde_json::{json, Value};
 use time::OffsetDateTime;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 pub const DEFAULT_TEMP_TOPIC: &str = "/ratitude/temperature";
 pub const DEFAULT_TEMP_UNIT: &str = "C";
@@ -224,7 +224,7 @@ impl Default for BridgeConfig {
             marker_topic: "/visualization_marker".to_string(),
             parent_frame_id: "world".to_string(),
             frame_id: "base_link".to_string(),
-            image_path: "D:/Repos/ratitude/demo.jpg".to_string(),
+            image_path: "".to_string(),
             image_frame_id: "camera".to_string(),
             image_format: "jpeg".to_string(),
             log_topic: "/ratitude/log".to_string(),
@@ -312,8 +312,13 @@ pub async fn run_bridge(
         shutdown.clone(),
     );
 
-    let image_task =
-        spawn_image_publish_task(channels.image.clone(), cfg.clone(), shutdown.clone());
+    let image_payload = load_image_payload(&cfg).await;
+    let image_task = spawn_image_publish_task(
+        channels.image.clone(),
+        cfg.clone(),
+        image_payload,
+        shutdown.clone(),
+    );
 
     shutdown.cancelled().await;
 
@@ -358,7 +363,7 @@ fn build_image_channel(
     context: &Arc<Context>,
     cfg: &BridgeConfig,
 ) -> Result<Option<Arc<RawChannel>>> {
-    if cfg.image_path.trim().is_empty() || !Path::new(&cfg.image_path).exists() {
+    if cfg.image_path.trim().is_empty() {
         return Ok(None);
     }
     let channel = build_raw_channel(
@@ -368,6 +373,20 @@ fn build_image_channel(
         DEFAULT_IMAGE_SCHEMA,
     )?;
     Ok(Some(channel))
+}
+
+async fn load_image_payload(cfg: &BridgeConfig) -> Option<String> {
+    if cfg.image_path.trim().is_empty() {
+        return None;
+    }
+
+    match tokio::fs::read(&cfg.image_path).await {
+        Ok(bytes) => Some(base64::engine::general_purpose::STANDARD.encode(bytes)),
+        Err(err) => {
+            warn!(path = %cfg.image_path, error = %err, "failed to read image payload, image channel disabled");
+            None
+        }
+    }
 }
 
 fn spawn_packet_publish_task(
@@ -398,11 +417,11 @@ fn spawn_packet_publish_task(
 fn spawn_image_publish_task(
     image_channel: Option<Arc<RawChannel>>,
     cfg: BridgeConfig,
+    encoded: Option<String>,
     shutdown: CancellationToken,
 ) -> Option<JoinHandle<()>> {
     let channel = image_channel?;
-    let bytes = std::fs::read(&cfg.image_path).ok()?;
-    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    let encoded = encoded?;
 
     Some(tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(1));

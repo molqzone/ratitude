@@ -9,15 +9,9 @@ use anyhow::{anyhow, Context, Result};
 use clap::{Args, Parser, Subcommand};
 use rat_bridge_foxglove::{run_bridge, BridgeConfig};
 use rat_config::{load_or_default, FieldDef, PacketDef, RatitudeConfig, DEFAULT_CONFIG_PATH};
-use rat_engine::Hub;
-use rat_logger::spawn_jsonl_writer;
-use rat_protocol::{
-    clear_dynamic_registry, clear_static_registry, cobs_decode, parse_packet, register_dynamic,
-    register_static_quat, register_static_temperature, set_text_packet_id, DynamicFieldDef,
-    DynamicPacketDef, RatPacket,
-};
+use rat_core::{spawn_jsonl_writer, spawn_listener, Hub, ListenerOptions};
+use rat_protocol::{cobs_decode, DynamicFieldDef, DynamicPacketDef, ProtocolContext, RatPacket};
 use rat_sync::sync_packets;
-use rat_transport::{spawn_listener, ListenerOptions};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -240,9 +234,10 @@ async fn run_server(args: ServerArgs) -> Result<()> {
 
     info!(mode = "server", config = %config_path, addr = %addr, text_id = format!("0x{:02X}", text_id), "starting server runtime");
 
-    set_text_packet_id(text_id);
-    clear_static_registry();
-    register_dynamic_packets(&cfg.packets)?;
+    let mut protocol = ProtocolContext::new();
+    protocol.set_text_packet_id(text_id);
+    register_dynamic_packets(&mut protocol, &cfg.packets)?;
+    let protocol = Arc::new(protocol);
 
     let shutdown = CancellationToken::new();
     let hub = Hub::new(buf.max(1));
@@ -259,7 +254,8 @@ async fn run_server(args: ServerArgs) -> Result<()> {
         },
     );
 
-    let consume_task = spawn_frame_consumer(frame_rx, hub.clone(), shutdown.clone());
+    let consume_task =
+        spawn_frame_consumer(frame_rx, hub.clone(), protocol.clone(), shutdown.clone());
 
     let writer: Box<dyn Write + Send> = if let Some(log_path) = args.log {
         Box::new(File::create(log_path).context("failed to open log file")?)
@@ -300,11 +296,12 @@ async fn run_foxglove(args: FoxgloveArgs) -> Result<()> {
 
     info!(mode = "foxglove", config = %config_path, addr = %addr, quat_id = format!("0x{:02X}", quat_id), temp_id = format!("0x{:02X}", temp_id), mock = args.mock, "starting foxglove runtime");
 
-    set_text_packet_id(text_id);
-    clear_static_registry();
-    register_static_quat(quat_id);
-    register_static_temperature(temp_id);
-    register_dynamic_packets(&cfg.packets)?;
+    let mut protocol = ProtocolContext::new();
+    protocol.set_text_packet_id(text_id);
+    protocol.register_static_quat(quat_id);
+    protocol.register_static_temperature(temp_id);
+    register_dynamic_packets(&mut protocol, &cfg.packets)?;
+    let protocol = Arc::new(protocol);
 
     let shutdown = CancellationToken::new();
     let hub = Hub::new(buf.max(1));
@@ -328,9 +325,7 @@ async fn run_foxglove(args: FoxgloveArgs) -> Result<()> {
         frame_id: args
             .frame_id
             .unwrap_or_else(|| cfg.rttd.foxglove.frame_id.clone()),
-        image_path: args
-            .image_path
-            .unwrap_or_else(|| cfg.rttd.foxglove.image_path.clone()),
+        image_path: choose_image_path(args.image_path.clone(), &cfg),
         image_frame_id: args
             .image_frame
             .unwrap_or_else(|| cfg.rttd.foxglove.image_frame.clone()),
@@ -385,6 +380,7 @@ async fn run_foxglove(args: FoxgloveArgs) -> Result<()> {
         consume_task = Some(spawn_frame_consumer(
             frame_rx,
             hub.clone(),
+            protocol.clone(),
             shutdown.clone(),
         ));
     }
@@ -414,8 +410,8 @@ async fn run_foxglove(args: FoxgloveArgs) -> Result<()> {
     }
 }
 
-fn register_dynamic_packets(packets: &[PacketDef]) -> Result<()> {
-    clear_dynamic_registry();
+fn register_dynamic_packets(protocol: &mut ProtocolContext, packets: &[PacketDef]) -> Result<()> {
+    protocol.clear_dynamic_registry();
     debug!(
         packets = packets.len(),
         "registering dynamic packet definitions"
@@ -431,22 +427,23 @@ fn register_dynamic_packets(packets: &[PacketDef]) -> Result<()> {
             .map(map_field)
             .collect::<Vec<DynamicFieldDef>>();
 
-        register_dynamic(
-            packet.id as u8,
-            DynamicPacketDef {
-                id: packet.id as u8,
-                struct_name: packet.struct_name.clone(),
-                packed: packet.packed,
-                byte_size: packet.byte_size,
-                fields,
-            },
-        )
-        .with_context(|| {
-            format!(
-                "register packet 0x{:02X} ({})",
-                packet.id, packet.struct_name
+        protocol
+            .register_dynamic(
+                packet.id as u8,
+                DynamicPacketDef {
+                    id: packet.id as u8,
+                    struct_name: packet.struct_name.clone(),
+                    packed: packet.packed,
+                    byte_size: packet.byte_size,
+                    fields,
+                },
             )
-        })?;
+            .with_context(|| {
+                format!(
+                    "register packet 0x{:02X} ({})",
+                    packet.id, packet.struct_name
+                )
+            })?;
     }
     Ok(())
 }
@@ -484,6 +481,18 @@ fn parse_duration(raw: Option<&str>, fallback: &str) -> Result<Duration> {
     humantime::parse_duration(value).with_context(|| format!("invalid duration: {}", value))
 }
 
+fn choose_image_path(cli_image_path: Option<String>, cfg: &RatitudeConfig) -> String {
+    cli_image_path.unwrap_or_else(|| resolve_toml_relative_path(cfg, &cfg.rttd.foxglove.image_path))
+}
+
+fn resolve_toml_relative_path(cfg: &RatitudeConfig, raw: &str) -> String {
+    let resolved = cfg.resolve_relative_path(raw);
+    if resolved.as_os_str().is_empty() {
+        return String::new();
+    }
+    resolved.to_string_lossy().to_string()
+}
+
 fn choose_default_quat_id(cfg: &RatitudeConfig) -> u16 {
     let explicit = cfg.rttd.foxglove.quat_id;
     if explicit != 0 && cfg.packets.iter().any(|packet| packet.id == explicit) {
@@ -500,6 +509,7 @@ fn choose_default_quat_id(cfg: &RatitudeConfig) -> u16 {
 fn spawn_frame_consumer(
     mut receiver: mpsc::Receiver<Vec<u8>>,
     hub: Hub,
+    protocol: Arc<ProtocolContext>,
     shutdown: CancellationToken,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -520,7 +530,7 @@ fn spawn_frame_consumer(
                     }
                     let id = decoded[0];
                     let payload = decoded[1..].to_vec();
-                    let data = match parse_packet(id, &payload) {
+                    let data = match protocol.parse_packet(id, &payload) {
                         Ok(data) => data,
                         Err(err) => {
                             warn!(packet_id = format!("0x{:02X}", id), error = %err, payload_len = payload.len(), "dropping undecodable packet");
@@ -630,5 +640,41 @@ fn mock_quaternion(t: f64) -> rat_protocol::QuatPacket {
         x: (x * inv) as f32,
         y: (y * inv) as f32,
         z: (z * inv) as f32,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::*;
+
+    fn build_test_config(config_path: &str, image_path: &str) -> RatitudeConfig {
+        let mut cfg = RatitudeConfig::default();
+        cfg.rttd.foxglove.image_path = image_path.to_string();
+        cfg.normalize(Path::new(config_path));
+        cfg
+    }
+
+    #[test]
+    fn resolve_toml_relative_path_uses_config_dir() {
+        let cfg = build_test_config("configs/ratitude.toml", "demo.jpg");
+        let resolved = choose_image_path(None, &cfg);
+        assert!(PathBuf::from(resolved).ends_with(Path::new("configs").join("demo.jpg")));
+    }
+
+    #[test]
+    fn resolve_toml_absolute_path_keeps_original() {
+        let absolute = std::env::temp_dir().join("demo.jpg");
+        let cfg = build_test_config("configs/ratitude.toml", absolute.to_string_lossy().as_ref());
+        let resolved = choose_image_path(None, &cfg);
+        assert_eq!(PathBuf::from(resolved), absolute);
+    }
+
+    #[test]
+    fn cli_image_path_keeps_cwd_semantics() {
+        let cfg = build_test_config("configs/ratitude.toml", "demo.jpg");
+        let resolved = choose_image_path(Some("assets/demo.jpg".to_string()), &cfg);
+        assert_eq!(resolved, "assets/demo.jpg");
     }
 }

@@ -1,4 +1,4 @@
-﻿use rat_protocol::RatPacket;
+use rat_protocol::RatPacket;
 use tokio::sync::broadcast;
 
 #[derive(Clone)]

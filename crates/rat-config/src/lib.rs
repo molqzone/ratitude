@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use toml_edit::{value, ArrayOfTables, DocumentMut, Item, Table};
 
 pub const DEFAULT_CONFIG_PATH: &str = "firmware/example/stm32f4_rtt/ratitude.toml";
 
@@ -13,6 +14,8 @@ pub enum ConfigError {
     Read(std::io::Error),
     #[error("failed to parse config: {0}")]
     Parse(toml::de::Error),
+    #[error("failed to parse editable config: {0}")]
+    EditParse(toml_edit::TomlError),
     #[error("failed to serialize config: {0}")]
     Serialize(toml::ser::Error),
     #[error("failed to create config directory: {0}")]
@@ -142,7 +145,7 @@ impl Default for FoxgloveConfig {
             marker_topic: "/visualization_marker".to_string(),
             parent_frame: "world".to_string(),
             frame_id: "base_link".to_string(),
-            image_path: "D:/Repos/ratitude/demo.jpg".to_string(),
+            image_path: "".to_string(),
             image_frame: "camera".to_string(),
             image_format: "jpeg".to_string(),
             log_topic: "/ratitude/log".to_string(),
@@ -212,10 +215,23 @@ impl RatitudeConfig {
         self.validate()?;
         self.packets.sort_by_key(|packet| packet.id);
 
-        let out = toml::to_string_pretty(&self).map_err(ConfigError::Serialize)?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(ConfigError::Mkdir)?;
         }
+
+        let out = if path.exists() {
+            let raw = fs::read_to_string(&path).map_err(ConfigError::Read)?;
+            let mut doc = raw.parse::<DocumentMut>().map_err(ConfigError::EditParse)?;
+            if self.packets.is_empty() {
+                doc.remove("packets");
+            } else {
+                doc["packets"] = packets_to_item(&self.packets)?;
+            }
+            doc.to_string()
+        } else {
+            toml::to_string_pretty(&self).map_err(ConfigError::Serialize)?
+        };
+
         fs::write(&path, out).map_err(ConfigError::Write)
     }
 
@@ -286,6 +302,20 @@ impl RatitudeConfig {
         &self.scan_root_path
     }
 
+    pub fn resolve_relative_path(&self, raw: impl AsRef<Path>) -> PathBuf {
+        let path = raw.as_ref();
+        if path.as_os_str().is_empty() {
+            return PathBuf::new();
+        }
+        if path.is_absolute() {
+            return path.to_path_buf();
+        }
+        self.config_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(path)
+    }
+
     pub fn normalize(&mut self, path: &Path) {
         if self.project.name.trim().is_empty() {
             self.project.name = ProjectConfig::default().name;
@@ -342,6 +372,55 @@ impl RatitudeConfig {
     }
 }
 
+fn packets_to_item(packets: &[PacketDef]) -> Result<Item, ConfigError> {
+    let mut array = ArrayOfTables::new();
+    for packet in packets {
+        array.push(packet_to_table(packet)?);
+    }
+    Ok(Item::ArrayOfTables(array))
+}
+
+fn packet_to_table(packet: &PacketDef) -> Result<Table, ConfigError> {
+    let mut table = Table::new();
+    table["id"] = value(packet.id as i64);
+    table["struct_name"] = value(packet.struct_name.clone());
+    table["type"] = value(packet.packet_type.clone());
+    table["packed"] = value(packet.packed);
+    table["byte_size"] = value(packet.byte_size as i64);
+    table["source"] = value(packet.source.clone());
+
+    if !packet.fields.is_empty() {
+        let mut fields = ArrayOfTables::new();
+        for field in &packet.fields {
+            let mut field_table = Table::new();
+            field_table["name"] = value(field.name.clone());
+            field_table["c_type"] = value(field.c_type.clone());
+            field_table["offset"] = value(field.offset as i64);
+            field_table["size"] = value(field.size as i64);
+            fields.push(field_table);
+        }
+        table["fields"] = Item::ArrayOfTables(fields);
+    }
+
+    if let Some(foxglove) = &packet.foxglove {
+        let mut foxglove_table = Table::new();
+        for (key, val) in foxglove {
+            foxglove_table[key] = toml_value_to_item(val)?;
+        }
+        table["foxglove"] = Item::Table(foxglove_table);
+    }
+
+    Ok(table)
+}
+
+fn toml_value_to_item(value_src: &toml::Value) -> Result<Item, ConfigError> {
+    let snippet = format!("value = {}", value_src);
+    let parsed = snippet
+        .parse::<DocumentMut>()
+        .map_err(ConfigError::EditParse)?;
+    Ok(parsed["value"].clone())
+}
+
 fn normalize_config_path(path: &Path) -> PathBuf {
     if path.as_os_str().is_empty() {
         PathBuf::from(DEFAULT_CONFIG_PATH)
@@ -352,6 +431,9 @@ fn normalize_config_path(path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use super::*;
 
     #[test]
@@ -360,5 +442,165 @@ mod tests {
         let path = PathBuf::from("tmp/ratitude.toml");
         cfg.normalize(&path);
         assert!(cfg.scan_root_path.ends_with("tmp"));
+    }
+
+    #[test]
+    fn resolve_relative_path_uses_config_dir() {
+        let mut cfg = RatitudeConfig::default();
+        let config_path = PathBuf::from("tmp/ratitude.toml");
+        cfg.normalize(&config_path);
+
+        let resolved = cfg.resolve_relative_path("demo.jpg");
+        assert!(resolved.ends_with(Path::new("tmp").join("demo.jpg")));
+
+        let absolute = std::env::temp_dir().join("demo.jpg");
+        let resolved_absolute = cfg.resolve_relative_path(&absolute);
+        assert_eq!(resolved_absolute, absolute);
+    }
+
+    #[test]
+    fn save_removes_packets_section_when_empty() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("ratitude_cfg_empty_{unique}"));
+        fs::create_dir_all(&dir).expect("mkdir temp dir");
+        let config_path = dir.join("ratitude.toml");
+
+        let initial = r#"# keep this comment
+[project]
+name = 'demo'
+scan_root = '.'
+recursive = true
+extensions = ['.c']
+ignore_dirs = ['build']
+
+[rttd]
+text_id = 255
+
+[[packets]]
+id = 1
+struct_name = 'OldPacket'
+type = 'plot'
+packed = true
+byte_size = 4
+source = 'old.c'
+"#;
+        fs::write(&config_path, initial).expect("write initial config");
+
+        let (mut cfg, exists) = load_or_default(&config_path).expect("load config");
+        assert!(exists);
+        cfg.packets.clear();
+        cfg.save(&config_path).expect("save config");
+
+        let out = fs::read_to_string(&config_path).expect("read updated config");
+        assert!(out.contains("# keep this comment"));
+        assert!(!out.contains("[[packets]]"));
+
+        let _ = fs::remove_file(&config_path);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_preserves_manual_sections_and_comments() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("ratitude_cfg_{unique}"));
+        fs::create_dir_all(&dir).expect("mkdir temp dir");
+        let config_path = dir.join("ratitude.toml");
+
+        let initial = r#"# user comment
+[project]
+name = 'demo'
+scan_root = '.'
+recursive = true
+extensions = ['.c']
+ignore_dirs = ['build']
+
+[rttd]
+text_id = 255
+
+# keep me
+[rttd.server]
+addr = '127.0.0.1:9999'
+reconnect = '2s'
+buf = 64
+reader_buf = 1024
+
+[rttd.foxglove]
+ws_addr = '127.0.0.1:8765'
+topic = 'ratitude/packet'
+schema_name = 'ratitude.Packet'
+quat_id = 16
+temp_id = 32
+marker_topic = '/visualization_marker'
+parent_frame = 'world'
+frame_id = 'base_link'
+image_path = ''
+image_frame = 'camera'
+image_format = 'jpeg'
+log_topic = '/ratitude/log'
+log_name = 'ratitude'
+
+[[packets]]
+id = 1
+struct_name = 'OldPacket'
+type = 'plot'
+packed = true
+byte_size = 4
+source = 'old.c'
+
+[[packets.fields]]
+name = 'old'
+c_type = 'int32_t'
+offset = 0
+size = 4
+"#;
+        fs::write(&config_path, initial).expect("write initial config");
+
+        let (mut cfg, exists) = load_or_default(&config_path).expect("load config");
+        assert!(exists);
+        cfg.packets = vec![PacketDef {
+            id: 2,
+            struct_name: "NewPacket".to_string(),
+            packet_type: "plot".to_string(),
+            packed: false,
+            byte_size: 8,
+            source: "Core/Src/main.c".to_string(),
+            fields: vec![
+                FieldDef {
+                    name: "value".to_string(),
+                    c_type: "int32_t".to_string(),
+                    offset: 0,
+                    size: 4,
+                },
+                FieldDef {
+                    name: "tick".to_string(),
+                    c_type: "uint32_t".to_string(),
+                    offset: 4,
+                    size: 4,
+                },
+            ],
+            foxglove: Some(BTreeMap::from([(
+                "topic".to_string(),
+                toml::Value::String("/rat/newpacket".to_string()),
+            )])),
+        }];
+
+        cfg.save(&config_path).expect("save config");
+        let out = fs::read_to_string(&config_path).expect("read updated config");
+
+        assert!(out.contains("# user comment"));
+        assert!(out.contains("# keep me"));
+        assert!(out.contains("addr = '127.0.0.1:9999'"));
+        assert!(out.contains("struct_name"));
+        assert!(out.contains("NewPacket"));
+        assert!(!out.contains("OldPacket"));
+
+        let _ = fs::remove_file(&config_path);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

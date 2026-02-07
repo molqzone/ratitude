@@ -6,7 +6,6 @@ edition = "2021"
 [dependencies]
 cobs.workspace = true
 hex.workspace = true
-once_cell.workspace = true
 nom.workspace = true
 serde.workspace = true
 serde_json.workspace = true
