@@ -1,0 +1,42 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/rttd",
+  "crates/rat-config",
+  "crates/rat-sync",
+  "crates/rat-protocol",
+  "crates/rat-transport",
+  "crates/rat-engine",
+  "crates/rat-bridge-foxglove",
+  "crates/rat-logger",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1.0"
+base64 = "0.22"
+bytes = "1.7"
+clap = { version = "4.5", features = ["derive"] }
+cobs = "0.2"
+foxglove = { version = "0.17.2", default-features = false, features = ["live_visualization", "serde"] }
+futures-util = "0.3"
+hex = "0.4"
+humantime = "2.1"
+nom = "8"
+once_cell = "1.21"
+regex = "1.11"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "signal", "net", "io-util", "time", "sync"] }
+tokio-util = { version = "0.7", features = ["rt", "codec"] }
+time = { version = "0.3", features = ["formatting"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+toml = "0.8"
+tree-sitter = "0.26"
+tree-sitter-c = "0.24"
+walkdir = "2.5"
