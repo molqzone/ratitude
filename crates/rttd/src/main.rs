@@ -65,44 +65,10 @@ struct FoxgloveArgs {
     addr: Option<String>,
     #[arg(long = "ws-addr")]
     ws_addr: Option<String>,
-    #[arg(long = "text-id")]
-    text_id: Option<String>,
-    #[arg(long = "quat-id")]
-    quat_id: Option<String>,
-    #[arg(long = "temp-id")]
-    temp_id: Option<String>,
     #[arg(long)]
     reconnect: Option<String>,
     #[arg(long)]
     buf: Option<usize>,
-    #[arg(long = "reader-buf")]
-    reader_buf: Option<usize>,
-    #[arg(long)]
-    topic: Option<String>,
-    #[arg(long = "schema-name")]
-    schema_name: Option<String>,
-    #[arg(long = "marker-topic")]
-    marker_topic: Option<String>,
-    #[arg(long = "parent-frame")]
-    parent_frame: Option<String>,
-    #[arg(long = "frame-id")]
-    frame_id: Option<String>,
-    #[arg(long = "image-path")]
-    image_path: Option<String>,
-    #[arg(long = "image-frame")]
-    image_frame: Option<String>,
-    #[arg(long = "image-format")]
-    image_format: Option<String>,
-    #[arg(long = "log-topic")]
-    log_topic: Option<String>,
-    #[arg(long = "log-name")]
-    log_name: Option<String>,
-    #[arg(long)]
-    mock: bool,
-    #[arg(long = "mock-hz")]
-    mock_hz: Option<u32>,
-    #[arg(long = "mock-id")]
-    mock_id: Option<String>,
     #[command(flatten)]
     backend: BackendArgs,
 }
@@ -362,15 +328,15 @@ async fn run_foxglove(args: FoxgloveArgs) -> Result<()> {
         .unwrap_or_else(|| DEFAULT_CONFIG_PATH.to_string());
     let (mut cfg, _) = load_or_default(&config_path)?;
     load_generated_packets(&mut cfg)?;
+    if cfg.packets.is_empty() {
+        return Err(anyhow!(
+            "rat_gen.toml has no packets; foxglove mode requires generated declarations"
+        ));
+    }
 
     let addr = args.addr.unwrap_or_else(|| cfg.rttd.server.addr.clone());
-    let text_id = parse_u8_id(args.text_id.as_deref(), cfg.rttd.text_id)?;
     let reconnect = parse_duration(args.reconnect.as_deref(), &cfg.rttd.server.reconnect)?;
     let buf = args.buf.unwrap_or(cfg.rttd.server.buf);
-
-    let resolved_quat_default = choose_default_quat_id(&cfg);
-    let quat_id = parse_u8_id(args.quat_id.as_deref(), resolved_quat_default as u16)?;
-    let temp_id = parse_u8_id(args.temp_id.as_deref(), cfg.rttd.foxglove.temp_id)?;
 
     let backend_cfg = merge_backend_config(&cfg.rttd.server.backend, &args.backend, &addr)?;
 
@@ -378,18 +344,13 @@ async fn run_foxglove(args: FoxgloveArgs) -> Result<()> {
         mode = "foxglove",
         config = %config_path,
         addr = %addr,
-        quat_id = format!("0x{:02X}", quat_id),
-        temp_id = format!("0x{:02X}", temp_id),
-        mock = args.mock,
+        packets = cfg.packets.len(),
         backend = ?backend_cfg.backend_type,
         auto_start_backend = backend_cfg.auto_start,
         "starting foxglove runtime"
     );
 
     let mut protocol = ProtocolContext::new();
-    protocol.set_text_packet_id(text_id);
-    protocol.register_static_quat(quat_id);
-    protocol.register_static_temperature(temp_id);
     register_dynamic_packets(&mut protocol, &cfg.packets)?;
     let protocol = Arc::new(protocol);
 
@@ -400,83 +361,34 @@ async fn run_foxglove(args: FoxgloveArgs) -> Result<()> {
         ws_addr: args
             .ws_addr
             .unwrap_or_else(|| cfg.rttd.foxglove.ws_addr.clone()),
-        topic: args
-            .topic
-            .unwrap_or_else(|| cfg.rttd.foxglove.topic.clone()),
-        schema_name: args
-            .schema_name
-            .unwrap_or_else(|| cfg.rttd.foxglove.schema_name.clone()),
-        marker_topic: args
-            .marker_topic
-            .unwrap_or_else(|| cfg.rttd.foxglove.marker_topic.clone()),
-        parent_frame_id: args
-            .parent_frame
-            .unwrap_or_else(|| cfg.rttd.foxglove.parent_frame.clone()),
-        frame_id: args
-            .frame_id
-            .unwrap_or_else(|| cfg.rttd.foxglove.frame_id.clone()),
-        image_path: choose_image_path(args.image_path.clone(), &cfg),
-        image_frame_id: args
-            .image_frame
-            .unwrap_or_else(|| cfg.rttd.foxglove.image_frame.clone()),
-        image_format: args
-            .image_format
-            .unwrap_or_else(|| cfg.rttd.foxglove.image_format.clone()),
-        log_topic: args
-            .log_topic
-            .unwrap_or_else(|| cfg.rttd.foxglove.log_topic.clone()),
-        log_name: args
-            .log_name
-            .unwrap_or_else(|| cfg.rttd.foxglove.log_name.clone()),
-        ..BridgeConfig::default()
     };
 
     let bridge_task = tokio::spawn(run_bridge(
         bridge_cfg,
+        cfg.packets.clone(),
         hub.clone(),
-        text_id,
-        quat_id,
         shutdown.clone(),
     ));
 
-    let mut backend_runtime = BackendRuntime::disabled();
-    let mut listener_task: Option<JoinHandle<()>> = None;
-    let mut consume_task: Option<JoinHandle<()>> = None;
-    let mut mock_task: Option<JoinHandle<()>> = None;
-
-    if args.mock {
-        let mock_hz = args.mock_hz.unwrap_or(50).max(1);
-        let mock_id = parse_u8_id(args.mock_id.as_deref(), resolved_quat_default)?;
-        mock_task = Some(spawn_mock_publisher(
-            hub.clone(),
-            text_id,
-            temp_id,
-            mock_id,
-            mock_hz,
-            shutdown.clone(),
-        ));
-    } else {
-        backend_runtime = BackendRuntime::start(&backend_cfg, &addr).await?;
-        let _reader_buf = args.reader_buf.unwrap_or(cfg.rttd.server.reader_buf);
-        let (frame_tx, frame_rx) = mpsc::channel::<Vec<u8>>(buf.max(1));
-        listener_task = Some(spawn_listener(
-            shutdown.clone(),
-            addr,
-            frame_tx,
-            ListenerOptions {
-                reconnect,
-                reconnect_max: Duration::from_secs(30),
-                dial_timeout: Duration::from_secs(5),
-                strip_jlink_banner: matches!(backend_cfg.backend_type, BackendType::Jlink),
-            },
-        ));
-        consume_task = Some(spawn_frame_consumer(
-            frame_rx,
-            hub.clone(),
-            protocol.clone(),
-            shutdown.clone(),
-        ));
-    }
+    let mut backend_runtime = BackendRuntime::start(&backend_cfg, &addr).await?;
+    let (frame_tx, frame_rx) = mpsc::channel::<Vec<u8>>(buf.max(1));
+    let listener_task = spawn_listener(
+        shutdown.clone(),
+        addr,
+        frame_tx,
+        ListenerOptions {
+            reconnect,
+            reconnect_max: Duration::from_secs(30),
+            dial_timeout: Duration::from_secs(5),
+            strip_jlink_banner: matches!(backend_cfg.backend_type, BackendType::Jlink),
+        },
+    );
+    let consume_task = spawn_frame_consumer(
+        frame_rx,
+        hub.clone(),
+        protocol.clone(),
+        shutdown.clone(),
+    );
 
     tokio::signal::ctrl_c()
         .await
@@ -484,16 +396,9 @@ async fn run_foxglove(args: FoxgloveArgs) -> Result<()> {
     info!("received ctrl-c, shutting down foxglove runtime");
     shutdown.cancel();
 
-    if let Some(task) = mock_task {
-        let _ = task.await;
-    }
-    if let Some(task) = listener_task {
-        task.abort();
-        let _ = task.await;
-    }
-    if let Some(task) = consume_task {
-        let _ = task.await;
-    }
+    listener_task.abort();
+    let _ = listener_task.await;
+    let _ = consume_task.await;
 
     drop(hub);
 
@@ -677,31 +582,6 @@ fn parse_duration(raw: Option<&str>, fallback: &str) -> Result<Duration> {
     humantime::parse_duration(value).with_context(|| format!("invalid duration: {}", value))
 }
 
-fn choose_image_path(cli_image_path: Option<String>, cfg: &RatitudeConfig) -> String {
-    cli_image_path.unwrap_or_else(|| resolve_toml_relative_path(cfg, &cfg.rttd.foxglove.image_path))
-}
-
-fn resolve_toml_relative_path(cfg: &RatitudeConfig, raw: &str) -> String {
-    let resolved = cfg.resolve_relative_path(raw);
-    if resolved.as_os_str().is_empty() {
-        return String::new();
-    }
-    resolved.to_string_lossy().to_string()
-}
-
-fn choose_default_quat_id(cfg: &RatitudeConfig) -> u16 {
-    let explicit = cfg.rttd.foxglove.quat_id;
-    if explicit != 0 && cfg.packets.iter().any(|packet| packet.id == explicit) {
-        return explicit;
-    }
-
-    cfg.packets
-        .iter()
-        .find(|packet| packet.packet_type.eq_ignore_ascii_case("pose_3d"))
-        .map(|packet| packet.id)
-        .unwrap_or(explicit.max(0x10))
-}
-
 fn decode_init_magic_packet(id: u8, payload: &[u8]) -> Option<u64> {
     if id != 0x00 || payload.len() != 12 {
         return None;
@@ -764,133 +644,109 @@ fn spawn_frame_consumer(
     })
 }
 
-fn spawn_mock_publisher(
-    hub: Hub,
-    text_id: u8,
-    temp_id: u8,
-    mock_id: u8,
-    hz: u32,
-    shutdown: CancellationToken,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        let hz = hz.max(1);
-        let mut quat_ticker = tokio::time::interval(Duration::from_secs_f64(1.0 / hz as f64));
-        let mut log_ticker = tokio::time::interval(Duration::from_secs(1));
-        let start = SystemTime::now();
-        let mut seq: i64 = 0;
-
-        loop {
-            tokio::select! {
-                _ = shutdown.cancelled() => break,
-                _ = quat_ticker.tick() => {
-                    let now = SystemTime::now();
-                    let t = now.duration_since(start).unwrap_or_else(|_| Duration::from_secs(0)).as_secs_f64();
-                    let quat = mock_quaternion(t);
-                    let payload = {
-                        let mut data = Vec::with_capacity(16);
-                        data.extend_from_slice(&quat.w.to_le_bytes());
-                        data.extend_from_slice(&quat.x.to_le_bytes());
-                        data.extend_from_slice(&quat.y.to_le_bytes());
-                        data.extend_from_slice(&quat.z.to_le_bytes());
-                        data
-                    };
-                    hub.publish(RatPacket {
-                        id: mock_id,
-                        timestamp: now,
-                        payload,
-                        data: rat_protocol::PacketData::Quat(quat.clone()),
-                    });
-
-                    let celsius = mock_temperature(t);
-                    hub.publish(RatPacket {
-                        id: temp_id,
-                        timestamp: now,
-                        payload: celsius.to_le_bytes().to_vec(),
-                        data: rat_protocol::PacketData::Temperature(rat_protocol::TemperaturePacket { celsius }),
-                    });
-                    seq += 1;
-                }
-                _ = log_ticker.tick() => {
-                    let text = format!("rat_info mock seq={}", seq);
-                    hub.publish(RatPacket {
-                        id: text_id,
-                        timestamp: SystemTime::now(),
-                        payload: text.as_bytes().to_vec(),
-                        data: rat_protocol::PacketData::Text(text),
-                    });
-                }
-            }
-        }
-    })
-}
-
-fn mock_temperature(t: f64) -> f32 {
-    (36.5 + 3.5 * (2.0 * std::f64::consts::PI * 0.08 * t + std::f64::consts::PI / 5.0).sin()) as f32
-}
-
-fn mock_quaternion(t: f64) -> rat_protocol::QuatPacket {
-    let roll = 35_f64.to_radians() * (2.0 * std::f64::consts::PI * 0.23 * t).sin();
-    let pitch = 25_f64.to_radians()
-        * (2.0 * std::f64::consts::PI * 0.31 * t + std::f64::consts::PI / 3.0).sin();
-    let yaw = 40_f64.to_radians()
-        * (2.0 * std::f64::consts::PI * 0.17 * t + 2.0 * std::f64::consts::PI / 3.0).sin();
-
-    let cr = (roll * 0.5).cos();
-    let sr = (roll * 0.5).sin();
-    let cp = (pitch * 0.5).cos();
-    let sp = (pitch * 0.5).sin();
-    let cy = (yaw * 0.5).cos();
-    let sy = (yaw * 0.5).sin();
-
-    let w = cr * cp * cy + sr * sp * sy;
-    let x = sr * cp * cy - cr * sp * sy;
-    let y = cr * sp * cy + sr * cp * sy;
-    let z = cr * cp * sy - sr * sp * cy;
-
-    let norm = (w * w + x * x + y * y + z * z).sqrt();
-    let inv = if norm == 0.0 { 1.0 } else { 1.0 / norm };
-
-    rat_protocol::QuatPacket {
-        w: (w * inv) as f32,
-        x: (x * inv) as f32,
-        y: (y * inv) as f32,
-        z: (z * inv) as f32,
-    }
-}
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use clap::Parser;
 
     use super::*;
 
-    fn build_test_config(config_path: &str, image_path: &str) -> RatitudeConfig {
-        let mut cfg = RatitudeConfig::default();
-        cfg.rttd.foxglove.image_path = image_path.to_string();
-        cfg.normalize(Path::new(config_path));
-        cfg
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("{prefix}_{unique}"));
+        fs::create_dir_all(&dir).expect("mkdir temp dir");
+        dir
+    }
+
+    #[tokio::test]
+    async fn run_foxglove_rejects_empty_generated_packets() {
+        let dir = unique_temp_dir("rttd_foxglove_empty_gen");
+        let config_path = dir.join("rat.toml");
+        let generated_path = dir.join("rat_gen.toml");
+
+        let config = r#"
+[project]
+name = "demo"
+scan_root = "."
+
+[generation]
+out_dir = "."
+toml_name = "rat_gen.toml"
+header_name = "rat_gen.h"
+
+[rttd.server]
+addr = "127.0.0.1:19021"
+reconnect = "1s"
+buf = 16
+reader_buf = 1024
+
+[rttd.server.backend]
+type = "none"
+auto_start = false
+startup_timeout_ms = 1000
+
+[rttd.server.backend.openocd]
+elf = ""
+symbol = "_SEGGER_RTT"
+interface = "interface/cmsis-dap.cfg"
+target = "target/stm32f4x.cfg"
+transport = "swd"
+speed = 8000
+polling = 1
+disable_debug_ports = true
+
+[rttd.server.backend.jlink]
+device = "STM32F407ZG"
+interface = "SWD"
+speed = 4000
+serial = ""
+ip = ""
+rtt_telnet_port = 19021
+
+[rttd.foxglove]
+ws_addr = "127.0.0.1:8765"
+"#;
+        fs::write(&config_path, config).expect("write config");
+        fs::write(&generated_path, "packets = []\n\n[meta]\nproject = \"demo\"\nfingerprint = \"0x1\"\n")
+            .expect("write generated");
+
+        let args = FoxgloveArgs {
+            config: Some(config_path.to_string_lossy().to_string()),
+            addr: None,
+            ws_addr: None,
+            reconnect: None,
+            buf: None,
+            backend: BackendArgs::default(),
+        };
+
+        let err = run_foxglove(args).await.expect_err("empty packets should fail");
+        assert!(err
+            .to_string()
+            .contains("rat_gen.toml has no packets; foxglove mode requires generated declarations"));
+
+        let _ = fs::remove_file(config_path);
+        let _ = fs::remove_file(generated_path);
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
-    fn resolve_toml_relative_path_uses_config_dir() {
-        let cfg = build_test_config("configs/rat.toml", "demo.jpg");
-        let resolved = choose_image_path(None, &cfg);
-        assert!(PathBuf::from(resolved).ends_with(Path::new("configs").join("demo.jpg")));
-    }
-
-    #[test]
-    fn resolve_toml_absolute_path_keeps_original() {
-        let absolute = std::env::temp_dir().join("demo.jpg");
-        let cfg = build_test_config("configs/rat.toml", absolute.to_string_lossy().as_ref());
-        let resolved = choose_image_path(None, &cfg);
-        assert_eq!(PathBuf::from(resolved), absolute);
-    }
-
-    #[test]
-    fn cli_image_path_keeps_cwd_semantics() {
-        let cfg = build_test_config("configs/rat.toml", "demo.jpg");
-        let resolved = choose_image_path(Some("assets/demo.jpg".to_string()), &cfg);
-        assert_eq!(resolved, "assets/demo.jpg");
+    fn foxglove_cli_rejects_removed_flags() {
+        let parsed = Cli::try_parse_from([
+            "rttd",
+            "foxglove",
+            "--config",
+            "firmware/example/stm32f4_rtt/rat.toml",
+            "--quat-id",
+            "16",
+        ]);
+        assert!(parsed.is_err());
     }
 
     #[test]

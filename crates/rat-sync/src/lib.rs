@@ -365,10 +365,9 @@ fn normalize_packet_type(raw: &str) -> Result<String, &'static str> {
     match normalized.as_str() {
         "plot" => Ok("plot".to_string()),
         "quat" => Ok("quat".to_string()),
-        "pose" => Ok("quat".to_string()),
         "image" => Ok("image".to_string()),
         "log" => Ok("log".to_string()),
-        _ => Err("supported types: plot|quat|pose|image|log"),
+        _ => Err("supported types: plot|quat|image|log"),
     }
 }
 
@@ -937,10 +936,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn packet_type_normalization_supports_default_and_alias() {
+    fn packet_type_normalization_supports_default_only() {
         assert_eq!(normalize_packet_type("plot").expect("plot"), "plot");
         assert_eq!(normalize_packet_type("quat").expect("quat"), "quat");
-        assert_eq!(normalize_packet_type("pose").expect("pose"), "quat");
+        assert!(normalize_packet_type("pose").is_err());
         assert_eq!(normalize_packet_type("").expect("default"), "plot");
         assert!(normalize_packet_type("json").is_err());
     }

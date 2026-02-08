@@ -1,32 +1,16 @@
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use anyhow::{anyhow, Context as AnyhowContext, Result};
-use base64::Engine;
-use foxglove::{Context, PartialMetadata, RawChannel, Schema, WebSocketServer};
+use foxglove::schemas::{RawImage, Timestamp};
+use foxglove::{Channel, Context, PartialMetadata, RawChannel, Schema, WebSocketServer};
+use rat_config::{FieldDef, PacketDef};
 use rat_core::Hub;
 use rat_protocol::{PacketData, QuatPacket, RatPacket};
-use serde::Serialize;
 use serde_json::{json, Value};
-use time::OffsetDateTime;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::warn;
-
-pub const DEFAULT_TEMP_TOPIC: &str = "/ratitude/temperature";
-pub const DEFAULT_TEMP_UNIT: &str = "C";
-
-pub const DEFAULT_PACKET_SCHEMA: &str = r#"{
-  "type": "object",
-  "properties": {
-    "id": { "type": "string" },
-    "ts": { "type": "string" },
-    "payload_hex": { "type": "string" },
-    "data": { "type": "object", "additionalProperties": true },
-    "text": { "type": "string" }
-  },
-  "required": ["id", "payload_hex"]
-}"#;
 
 pub const DEFAULT_MARKER_SCHEMA: &str = r#"{
   "type": "object",
@@ -143,157 +127,63 @@ pub const DEFAULT_TRANSFORM_SCHEMA: &str = r#"{
   "required": ["transforms"]
 }"#;
 
-pub const DEFAULT_IMAGE_SCHEMA: &str = r#"{
-  "type": "object",
-  "properties": {
-    "timestamp": {
-      "type": "object",
-      "properties": {
-        "sec": { "type": "integer" },
-        "nsec": { "type": "integer" }
-      },
-      "required": ["sec", "nsec"]
-    },
-    "frame_id": { "type": "string" },
-    "format": { "type": "string" },
-    "data": { "type": "string", "contentEncoding": "base64" }
-  },
-  "required": ["timestamp", "frame_id", "format", "data"]
-}"#;
-
-pub const DEFAULT_LOG_SCHEMA: &str = r#"{
-  "type": "object",
-  "properties": {
-    "timestamp": {
-      "type": "object",
-      "properties": {
-        "sec": { "type": "integer" },
-        "nsec": { "type": "integer" }
-      },
-      "required": ["sec", "nsec"]
-    },
-    "level": { "type": "integer" },
-    "message": { "type": "string" },
-    "name": { "type": "string" },
-    "file": { "type": "string" },
-    "line": { "type": "integer" }
-  },
-  "required": ["timestamp", "level", "message", "name", "file", "line"]
-}"#;
-
-pub const DEFAULT_TEMPERATURE_SCHEMA: &str = r#"{
-  "type": "object",
-  "properties": {
-    "timestamp": {
-      "type": "object",
-      "properties": {
-        "sec": { "type": "integer" },
-        "nsec": { "type": "integer" }
-      },
-      "required": ["sec", "nsec"]
-    },
-    "value": { "type": "number" },
-    "unit": { "type": "string" }
-  },
-  "required": ["timestamp", "value", "unit"]
-}"#;
-
 #[derive(Clone, Debug)]
 pub struct BridgeConfig {
     pub ws_addr: String,
-    pub topic: String,
-    pub schema_name: String,
-    pub marker_topic: String,
-    pub parent_frame_id: String,
-    pub frame_id: String,
-    pub image_path: String,
-    pub image_frame_id: String,
-    pub image_format: String,
-    pub log_topic: String,
-    pub log_name: String,
-    pub temp_topic: String,
-    pub temp_unit: String,
 }
 
 impl Default for BridgeConfig {
     fn default() -> Self {
         Self {
             ws_addr: "127.0.0.1:8765".to_string(),
-            topic: "ratitude/packet".to_string(),
-            schema_name: "ratitude.Packet".to_string(),
-            marker_topic: "/visualization_marker".to_string(),
-            parent_frame_id: "world".to_string(),
-            frame_id: "base_link".to_string(),
-            image_path: "".to_string(),
-            image_frame_id: "camera".to_string(),
-            image_format: "jpeg".to_string(),
-            log_topic: "/ratitude/log".to_string(),
-            log_name: "ratitude".to_string(),
-            temp_topic: DEFAULT_TEMP_TOPIC.to_string(),
-            temp_unit: DEFAULT_TEMP_UNIT.to_string(),
         }
     }
 }
 
-#[derive(Clone)]
-struct Channels {
-    packet: Arc<RawChannel>,
-    marker: Arc<RawChannel>,
-    transform: Arc<RawChannel>,
-    image: Option<Arc<RawChannel>>,
-    log: Arc<RawChannel>,
-    temp: Arc<RawChannel>,
+#[derive(Clone, Debug)]
+struct PacketBinding {
+    id: u8,
+    struct_name: String,
+    packet_type: String,
+    topic: String,
+    schema_name: String,
+    schema_json: String,
+    tf_topic: Option<String>,
+    marker_topic: Option<String>,
+    image_topic: Option<String>,
 }
 
-#[derive(Serialize)]
-struct FoxglovePacket {
-    id: String,
-    ts: String,
-    payload_hex: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    data: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    text: Option<String>,
+#[derive(Clone)]
+struct PacketChannels {
+    data: Arc<RawChannel>,
+    marker: Option<Arc<RawChannel>>,
+    tf: Option<Arc<RawChannel>>,
+    image: Option<Arc<Channel<RawImage>>>,
+    binding: PacketBinding,
 }
 
 pub async fn run_bridge(
     cfg: BridgeConfig,
+    packets: Vec<PacketDef>,
     hub: Hub,
-    text_id: u8,
-    quat_id: u8,
     shutdown: CancellationToken,
 ) -> Result<()> {
+    if packets.is_empty() {
+        return Err(anyhow!("no packets found in rat_gen.toml"));
+    }
+
     let context = Context::new();
     let (host, port) = split_host_port(&cfg.ws_addr)?;
 
-    let channels = Channels {
-        packet: build_raw_channel(
-            &context,
-            &cfg.topic,
-            &cfg.schema_name,
-            DEFAULT_PACKET_SCHEMA,
-        )?,
-        marker: build_raw_channel(
-            &context,
-            &cfg.marker_topic,
-            "visualization_msgs/Marker",
-            DEFAULT_MARKER_SCHEMA,
-        )?,
-        transform: build_raw_channel(
-            &context,
-            "/tf",
-            "foxglove.FrameTransforms",
-            DEFAULT_TRANSFORM_SCHEMA,
-        )?,
-        image: build_image_channel(&context, &cfg)?,
-        log: build_raw_channel(&context, &cfg.log_topic, "foxglove.Log", DEFAULT_LOG_SCHEMA)?,
-        temp: build_raw_channel(
-            &context,
-            &cfg.temp_topic,
-            "ratitude.Temperature",
-            DEFAULT_TEMPERATURE_SCHEMA,
-        )?,
-    };
+    let bindings = build_packet_bindings(&packets)?;
+    let channels = build_packet_channels(&context, &bindings)?;
+
+    let channel_map: Arc<HashMap<u8, PacketChannels>> = Arc::new(
+        channels
+            .iter()
+            .map(|item| (item.binding.id, item.clone()))
+            .collect(),
+    );
 
     let server = WebSocketServer::new()
         .name("ratitude")
@@ -303,30 +193,11 @@ pub async fn run_bridge(
         .await
         .with_context(|| format!("failed to start foxglove websocket at {}", cfg.ws_addr))?;
 
-    let packet_task = spawn_packet_publish_task(
-        hub.subscribe(),
-        channels.clone(),
-        cfg.clone(),
-        text_id,
-        quat_id,
-        shutdown.clone(),
-    );
-
-    let image_payload = load_image_payload(&cfg).await;
-    let image_task = spawn_image_publish_task(
-        channels.image.clone(),
-        cfg.clone(),
-        image_payload,
-        shutdown.clone(),
-    );
+    let packet_task = spawn_packet_publish_task(hub.subscribe(), channel_map, shutdown.clone());
 
     shutdown.cancelled().await;
 
     packet_task.abort();
-    if let Some(task) = image_task {
-        task.abort();
-    }
-
     server.stop().wait().await;
     Ok(())
 }
@@ -339,6 +210,100 @@ fn split_host_port(raw: &str) -> Result<(String, u16)> {
         .parse::<u16>()
         .with_context(|| format!("invalid ws port in {}", raw))?;
     Ok((host.to_string(), port))
+}
+
+fn sanitize_topic_segment(raw: &str) -> String {
+    raw.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn c_type_to_json_type(c_type: &str) -> Option<&'static str> {
+    match c_type.trim().to_ascii_lowercase().as_str() {
+        "float" | "double" => Some("number"),
+        "bool" | "_bool" => Some("boolean"),
+        "int8_t" | "uint8_t" | "int16_t" | "uint16_t" | "int32_t" | "uint32_t" | "int64_t"
+        | "uint64_t" => Some("integer"),
+        _ => None,
+    }
+}
+
+fn packet_schema_json(fields: &[FieldDef]) -> Result<String> {
+    if fields.is_empty() {
+        return Err(anyhow!("packet schema requires at least one field"));
+    }
+
+    let mut properties = serde_json::Map::new();
+    let mut required = Vec::with_capacity(fields.len());
+    for field in fields {
+        let json_type = c_type_to_json_type(&field.c_type)
+            .ok_or_else(|| anyhow!("unsupported c type for foxglove schema: {}", field.c_type))?;
+        properties.insert(field.name.clone(), json!({ "type": json_type }));
+        required.push(field.name.clone());
+    }
+
+    serde_json::to_string(&json!({
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": false,
+    }))
+    .map_err(|err| anyhow!(err.to_string()))
+}
+
+fn build_packet_bindings(packets: &[PacketDef]) -> Result<Vec<PacketBinding>> {
+    let mut topic_count: BTreeMap<String, usize> = BTreeMap::new();
+    let mut out = Vec::with_capacity(packets.len());
+
+    for packet in packets {
+        if packet.id > 0xFF {
+            return Err(anyhow!("packet id out of range: 0x{:X}", packet.id));
+        }
+
+        let base = sanitize_topic_segment(&packet.struct_name);
+        let mut topic = format!("/rat/{}", base);
+        let counter = topic_count.entry(topic.clone()).or_insert(0);
+        if *counter > 0 {
+            topic = format!("{}_0x{:02X}", topic, packet.id);
+        }
+        *counter += 1;
+
+        let schema_name = format!("ratitude.{}", base);
+        let is_quat = packet.packet_type.eq_ignore_ascii_case("quat");
+        let is_image = packet.packet_type.eq_ignore_ascii_case("image");
+
+        out.push(PacketBinding {
+            id: packet.id as u8,
+            struct_name: packet.struct_name.clone(),
+            packet_type: packet.packet_type.clone(),
+            topic: topic.clone(),
+            schema_name,
+            schema_json: packet_schema_json(&packet.fields)?,
+            marker_topic: if is_quat {
+                Some(format!("{}/marker", topic))
+            } else {
+                None
+            },
+            tf_topic: if is_quat {
+                Some(format!("{}/tf", topic))
+            } else {
+                None
+            },
+            image_topic: if is_image {
+                Some(format!("{}/image", topic))
+            } else {
+                None
+            },
+        });
+    }
+
+    Ok(out)
 }
 
 fn build_raw_channel(
@@ -359,42 +324,58 @@ fn build_raw_channel(
         .map_err(|err| anyhow!(err.to_string()))
 }
 
-fn build_image_channel(
+fn build_packet_channels(
     context: &Arc<Context>,
-    cfg: &BridgeConfig,
-) -> Result<Option<Arc<RawChannel>>> {
-    if cfg.image_path.trim().is_empty() {
-        return Ok(None);
-    }
-    let channel = build_raw_channel(
-        context,
-        "/camera/image/compressed",
-        "foxglove.CompressedImage",
-        DEFAULT_IMAGE_SCHEMA,
-    )?;
-    Ok(Some(channel))
-}
+    bindings: &[PacketBinding],
+) -> Result<Vec<PacketChannels>> {
+    let mut out = Vec::with_capacity(bindings.len());
+    for binding in bindings {
+        let data = build_raw_channel(
+            context,
+            &binding.topic,
+            &binding.schema_name,
+            &binding.schema_json,
+        )?;
 
-async fn load_image_payload(cfg: &BridgeConfig) -> Option<String> {
-    if cfg.image_path.trim().is_empty() {
-        return None;
-    }
+        let marker = match &binding.marker_topic {
+            Some(topic) => Some(build_raw_channel(
+                context,
+                topic,
+                "visualization_msgs/Marker",
+                DEFAULT_MARKER_SCHEMA,
+            )?),
+            None => None,
+        };
 
-    match tokio::fs::read(&cfg.image_path).await {
-        Ok(bytes) => Some(base64::engine::general_purpose::STANDARD.encode(bytes)),
-        Err(err) => {
-            warn!(path = %cfg.image_path, error = %err, "failed to read image payload, image channel disabled");
-            None
-        }
+        let tf = match &binding.tf_topic {
+            Some(topic) => Some(build_raw_channel(
+                context,
+                topic,
+                "foxglove.FrameTransforms",
+                DEFAULT_TRANSFORM_SCHEMA,
+            )?),
+            None => None,
+        };
+
+        let image = binding
+            .image_topic
+            .as_ref()
+            .map(|topic| Arc::new(context.channel_builder(topic).build::<RawImage>()));
+
+        out.push(PacketChannels {
+            data,
+            marker,
+            tf,
+            image,
+            binding: binding.clone(),
+        });
     }
+    Ok(out)
 }
 
 fn spawn_packet_publish_task(
     mut receiver: tokio::sync::broadcast::Receiver<RatPacket>,
-    channels: Channels,
-    cfg: BridgeConfig,
-    text_id: u8,
-    quat_id: u8,
+    channels: Arc<HashMap<u8, PacketChannels>>,
     shutdown: CancellationToken,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -407,139 +388,79 @@ fn spawn_packet_publish_task(
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                     };
-                    publish_packet(&channels, &cfg, &packet, text_id, quat_id);
+                    publish_packet(&channels, &packet);
                 }
             }
         }
     })
 }
 
-fn spawn_image_publish_task(
-    image_channel: Option<Arc<RawChannel>>,
-    cfg: BridgeConfig,
-    encoded: Option<String>,
-    shutdown: CancellationToken,
-) -> Option<JoinHandle<()>> {
-    let channel = image_channel?;
-    let encoded = encoded?;
+fn publish_packet(channels: &HashMap<u8, PacketChannels>, packet: &RatPacket) {
+    let Some(channels) = channels.get(&packet.id) else {
+        return;
+    };
 
-    Some(tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(Duration::from_secs(1));
-        loop {
-            tokio::select! {
-                _ = shutdown.cancelled() => break,
-                _ = ticker.tick() => {
-                    let now = SystemTime::now();
-                    let frame = json!({
-                        "timestamp": frame_time(now),
-                        "frame_id": cfg.image_frame_id,
-                        "format": cfg.image_format,
-                        "data": encoded,
-                    });
-                    publish_json(&channel, now, &frame);
-                }
+    if let Some(value) = packet_data_to_json(&packet.data) {
+        publish_json(&channels.data, packet.timestamp, &value);
+    }
+
+    if channels.binding.packet_type.eq_ignore_ascii_case("quat") {
+        if let Some(quat) = extract_quaternion(packet) {
+            if let Some(marker_channel) = &channels.marker {
+                let marker = json!({
+                    "header": {
+                        "frame_id": "world",
+                        "stamp": marker_stamp(packet.timestamp),
+                    },
+                    "ns": channels.binding.struct_name,
+                    "id": 0,
+                    "type": 1,
+                    "action": 0,
+                    "pose": {
+                        "position": {"x": 0.0, "y": 0.0, "z": 0.0},
+                        "orientation": {
+                            "x": quat.x,
+                            "y": quat.y,
+                            "z": quat.z,
+                            "w": quat.w,
+                        }
+                    },
+                    "scale": {"x": 0.1, "y": 0.1, "z": 0.1},
+                    "color": {"r": 1.0, "g": 1.0, "b": 1.0, "a": 1.0}
+                });
+                publish_json(marker_channel, packet.timestamp, &marker);
+            }
+
+            if let Some(tf_channel) = &channels.tf {
+                let transform = json!({
+                    "transforms": [{
+                        "timestamp": frame_time(packet.timestamp),
+                        "parent_frame_id": "world",
+                        "child_frame_id": channels.binding.struct_name,
+                        "translation": {"x": 0.0, "y": 0.0, "z": 0.0},
+                        "rotation": {
+                            "x": quat.x,
+                            "y": quat.y,
+                            "z": quat.z,
+                            "w": quat.w,
+                        }
+                    }]
+                });
+                publish_json(tf_channel, packet.timestamp, &transform);
             }
         }
-    }))
-}
-
-fn publish_packet(
-    channels: &Channels,
-    cfg: &BridgeConfig,
-    packet: &RatPacket,
-    text_id: u8,
-    quat_id: u8,
-) {
-    let ts = packet.timestamp;
-    let packet_data = packet_data_value(&packet.data);
-    let text = match &packet.data {
-        PacketData::Text(value) => Some(value.clone()),
-        _ => None,
-    };
-
-    let record = FoxglovePacket {
-        id: format!("0x{:02x}", packet.id),
-        ts: format_timestamp(ts),
-        payload_hex: hex::encode(&packet.payload),
-        data: if packet.id == text_id {
-            None
-        } else {
-            packet_data
-        },
-        text,
-    };
-    publish_json(&channels.packet, ts, &record);
-
-    if packet.id == text_id {
-        let text = match &packet.data {
-            PacketData::Text(value) => value.clone(),
-            _ => String::new(),
-        };
-        let log = json!({
-            "timestamp": frame_time(ts),
-            "level": 2,
-            "message": text,
-            "name": cfg.log_name,
-            "file": "",
-            "line": 0,
-        });
-        publish_json(&channels.log, ts, &log);
     }
 
-    if let PacketData::Temperature(temp) = &packet.data {
-        let value = json!({
-            "timestamp": frame_time(ts),
-            "value": temp.celsius,
-            "unit": cfg.temp_unit,
-        });
-        publish_json(&channels.temp, ts, &value);
-    }
-
-    if packet.id == quat_id {
-        if let Some(quat) = extract_quaternion(packet) {
-            let marker = json!({
-                "header": {
-                    "frame_id": cfg.frame_id,
-                    "stamp": marker_stamp(ts),
-                },
-                "ns": "ratitude",
-                "id": 0,
-                "type": 1,
-                "action": 0,
-                "pose": {
-                    "position": {"x": 0.0, "y": 0.0, "z": 0.0},
-                    "orientation": {
-                        "x": quat.x,
-                        "y": quat.y,
-                        "z": quat.z,
-                        "w": quat.w,
-                    }
-                },
-                "scale": {"x": 0.1, "y": 0.1, "z": 0.1},
-                "color": {"r": 1.0, "g": 1.0, "b": 1.0, "a": 1.0}
-            });
-            publish_json(&channels.marker, ts, &marker);
-
-            let transform = json!({
-                "transforms": [{
-                    "timestamp": frame_time(ts),
-                    "parent_frame_id": cfg.parent_frame_id,
-                    "child_frame_id": cfg.frame_id,
-                    "translation": {"x": 0.0, "y": 0.0, "z": 0.0},
-                    "rotation": {
-                        "x": quat.x,
-                        "y": quat.y,
-                        "z": quat.z,
-                        "w": quat.w,
-                    }
-                }]
-            });
-            publish_json(&channels.transform, ts, &transform);
+    if channels.binding.packet_type.eq_ignore_ascii_case("image") {
+        if let Some(image_channel) = &channels.image {
+            if let Some(image_msg) = build_image_message(packet, &channels.binding.struct_name) {
+                image_channel.log(&image_msg);
+            }
         }
     }
 }
 
-fn publish_json(channel: &Arc<RawChannel>, ts: SystemTime, value: &impl Serialize) {
+fn publish_json(channel: &Arc<RawChannel>, ts: SystemTime, value: &Value) {
     let Ok(payload) = serde_json::to_vec(value) else {
         return;
     };
@@ -549,14 +470,69 @@ fn publish_json(channel: &Arc<RawChannel>, ts: SystemTime, value: &impl Serializ
     );
 }
 
-fn packet_data_value(data: &PacketData) -> Option<Value> {
+fn packet_data_to_json(data: &PacketData) -> Option<Value> {
     match data {
-        PacketData::Text(text) => Some(Value::String(text.clone())),
         PacketData::Dynamic(map) => Some(Value::Object(map.clone())),
-        PacketData::Quat(value) => serde_json::to_value(value).ok(),
-        PacketData::Temperature(value) => serde_json::to_value(value).ok(),
-        PacketData::Raw(value) => serde_json::to_value(value).ok(),
+        PacketData::Quat(quat) => Some(json!({
+            "x": quat.x,
+            "y": quat.y,
+            "z": quat.z,
+            "w": quat.w,
+        })),
+        PacketData::Temperature(temp) => Some(json!({
+            "celsius": temp.celsius,
+        })),
+        _ => None,
     }
+}
+
+fn build_image_message(packet: &RatPacket, frame_id: &str) -> Option<RawImage> {
+    let PacketData::Dynamic(map) = &packet.data else {
+        return None;
+    };
+
+    let width = number_to_u32(map.get("width")).unwrap_or(320).clamp(1, 1024);
+    let height = number_to_u32(map.get("height")).unwrap_or(240).clamp(1, 1024);
+    let frame_idx = number_to_u32(map.get("frame_idx")).or_else(|| number_to_u32(map.get("frame"))).unwrap_or(0);
+    let luma = number_to_u8(map.get("luma")).or_else(|| number_to_u8(map.get("gray"))).unwrap_or(128);
+
+    let step = width;
+    let size = width.checked_mul(height)? as usize;
+    let mut data = vec![0_u8; size];
+    for y in 0..height {
+        for x in 0..width {
+            let index = (y * width + x) as usize;
+            let gradient = ((x + frame_idx) & 0xFF) as u8;
+            let wave = ((y.wrapping_add(frame_idx / 2)) & 0xFF) as u8;
+            data[index] = gradient.wrapping_add(wave).wrapping_add(luma / 2);
+        }
+    }
+
+    Some(RawImage {
+        timestamp: to_fox_timestamp(packet.timestamp),
+        frame_id: frame_id.to_string(),
+        width,
+        height,
+        encoding: "mono8".to_string(),
+        step,
+        data: data.into(),
+    })
+}
+
+fn to_fox_timestamp(ts: SystemTime) -> Option<Timestamp> {
+    Timestamp::try_from(ts).ok()
+}
+
+fn number_to_u32(value: Option<&Value>) -> Option<u32> {
+    match value {
+        Some(Value::Number(number)) => number.as_u64().and_then(|v| u32::try_from(v).ok()),
+        Some(Value::Bool(flag)) => Some(if *flag { 1 } else { 0 }),
+        _ => None,
+    }
+}
+
+fn number_to_u8(value: Option<&Value>) -> Option<u8> {
+    number_to_u32(value).and_then(|v| u8::try_from(v).ok())
 }
 
 fn extract_quaternion(packet: &RatPacket) -> Option<QuatPacket> {
@@ -628,12 +604,160 @@ fn marker_stamp(ts: SystemTime) -> Value {
     })
 }
 
-fn format_timestamp(ts: SystemTime) -> String {
-    let duration = ts
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_else(|_| Duration::from_secs(0));
-    OffsetDateTime::from_unix_timestamp_nanos(duration.as_nanos() as i128)
-        .ok()
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string())
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_fields() -> Vec<FieldDef> {
+        vec![
+            FieldDef {
+                name: "w".to_string(),
+                c_type: "float".to_string(),
+                offset: 0,
+                size: 4,
+            },
+            FieldDef {
+                name: "x".to_string(),
+                c_type: "float".to_string(),
+                offset: 4,
+                size: 4,
+            },
+        ]
+    }
+
+    #[test]
+    fn schema_generation_maps_c_types() {
+        let schema = packet_schema_json(&sample_fields()).expect("schema");
+        assert!(schema.contains("\"w\":{\"type\":\"number\"}"));
+        assert!(schema.contains("\"x\":{\"type\":\"number\"}"));
+    }
+
+    #[test]
+    fn binding_uses_struct_name_topic_and_suffix_for_duplicates() {
+        let packets = vec![
+            PacketDef {
+                id: 0x10,
+                struct_name: "Attitude".to_string(),
+                packet_type: "quat".to_string(),
+                packed: true,
+                byte_size: 16,
+                source: String::new(),
+                fields: sample_fields(),
+                foxglove: None,
+            },
+            PacketDef {
+                id: 0x11,
+                struct_name: "Attitude".to_string(),
+                packet_type: "plot".to_string(),
+                packed: true,
+                byte_size: 8,
+                source: String::new(),
+                fields: sample_fields(),
+                foxglove: None,
+            },
+        ];
+
+        let bindings = build_packet_bindings(&packets).expect("bindings");
+        assert_eq!(bindings[0].topic, "/rat/Attitude");
+        assert_eq!(bindings[1].topic, "/rat/Attitude_0x11");
+        assert_eq!(bindings[0].marker_topic.as_deref(), Some("/rat/Attitude/marker"));
+        assert!(bindings[0].image_topic.is_none());
+        assert!(bindings[1].marker_topic.is_none());
+        assert!(bindings[1].image_topic.is_none());
+    }
+
+    #[test]
+    fn unknown_c_type_is_rejected() {
+        let fields = vec![FieldDef {
+            name: "name".to_string(),
+            c_type: "char*".to_string(),
+            offset: 0,
+            size: 8,
+        }];
+        assert!(packet_schema_json(&fields).is_err());
+    }
+
+
+
+    #[test]
+    fn image_binding_has_derived_image_topic() {
+        let packets = vec![PacketDef {
+            id: 0x20,
+            struct_name: "CameraStats".to_string(),
+            packet_type: "image".to_string(),
+            packed: true,
+            byte_size: 8,
+            source: String::new(),
+            fields: vec![FieldDef {
+                name: "width".to_string(),
+                c_type: "uint16_t".to_string(),
+                offset: 0,
+                size: 2,
+            }],
+            foxglove: None,
+        }];
+
+        let bindings = build_packet_bindings(&packets).expect("bindings");
+        assert_eq!(bindings[0].image_topic.as_deref(), Some("/rat/CameraStats/image"));
+    }
+
+    #[test]
+    fn packet_data_to_json_supports_quat() {
+        let value = packet_data_to_json(&PacketData::Quat(QuatPacket {
+            x: 0.1,
+            y: 0.2,
+            z: 0.3,
+            w: 0.9,
+        }))
+        .expect("quat value");
+
+        let x = value.get("x").and_then(Value::as_f64).expect("x");
+        let w = value.get("w").and_then(Value::as_f64).expect("w");
+        assert!((x - 0.1).abs() < 1e-6);
+        assert!((w - 0.9).abs() < 1e-6);
+    }
+
+    #[test]
+    fn build_image_message_generates_mono8_frame() {
+        let packet = RatPacket {
+            id: 0x30,
+            timestamp: SystemTime::UNIX_EPOCH,
+            payload: vec![],
+            data: PacketData::Dynamic(serde_json::Map::from_iter([
+                ("width".to_string(), json!(4)),
+                ("height".to_string(), json!(3)),
+                ("frame_idx".to_string(), json!(7)),
+                ("luma".to_string(), json!(128)),
+            ])),
+        };
+
+        let image = build_image_message(&packet, "Camera").expect("image message");
+        assert_eq!(image.frame_id, "Camera");
+        assert_eq!(image.width, 4);
+        assert_eq!(image.height, 3);
+        assert_eq!(image.step, 4);
+        assert_eq!(image.encoding, "mono8");
+        assert_eq!(image.data.len(), 12);
+    }
+
+    #[test]
+    fn extract_quaternion_reads_dynamic_fields() {
+        let packet = RatPacket {
+            id: 0x10,
+            timestamp: SystemTime::UNIX_EPOCH,
+            payload: vec![],
+            data: PacketData::Dynamic(serde_json::Map::from_iter([
+                ("x".to_string(), json!(1.0)),
+                ("y".to_string(), json!(2.0)),
+                ("z".to_string(), json!(3.0)),
+                ("w".to_string(), json!(4.0)),
+            ])),
+        };
+
+        let quat = extract_quaternion(&packet).expect("quat");
+        assert_eq!(quat.x, 1.0);
+        assert_eq!(quat.y, 2.0);
+        assert_eq!(quat.z, 3.0);
+        assert_eq!(quat.w, 4.0);
+    }
 }

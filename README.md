@@ -26,6 +26,12 @@ Ratitude provides a low-latency RTT telemetry pipeline:
 - `rat-bridge-foxglove`: Foxglove bridge/channels
 - `rttd`: CLI orchestration (`server` / `foxglove` / `sync`)
 
+## 文档入口
+
+- 新手阅读建议：`docs/README.md`
+- 5 分钟上手：`docs/quickstart.md`
+- 工作流总览：`docs/workflow.md`
+
 ## Build
 
 ```bash
@@ -64,7 +70,7 @@ typedef struct {
 Supported `type` values:
 
 - `plot`
-- `quat` (`pose` is treated as alias)
+- `quat`
 - `image`
 - `log`
 
@@ -84,10 +90,6 @@ Both commands auto-sync packets before startup:
 rttd server --config firmware/example/stm32f4_rtt/rat.toml
 rttd foxglove --config firmware/example/stm32f4_rtt/rat.toml
 ```
-
-### Default config file
-
-- `firmware/example/stm32f4_rtt/rat.toml`
 
 ## RTT backend startup (OpenOCD / J-Link)
 
@@ -119,11 +121,6 @@ You can also let `rttd` auto-start backend via config/flags (`--backend`, `--aut
 
 When `--backend jlink` is selected, `rttd` strips the SEGGER RTT banner line before COBS frame decoding.
 
-### Path resolution rules
-
-- Relative paths from TOML (for example `rttd.foxglove.image_path = '../../../demo.jpg'`) are resolved relative to the config file directory.
-- Paths passed via CLI flags keep standard CLI behavior and are resolved from the current working directory.
-
 ## `rttd server`
 
 ```bash
@@ -138,7 +135,7 @@ Common flags:
 - `--text-id`: text packet id
 - `--reconnect`: reconnect interval (example: `1s`)
 - `--buf`: frame channel buffer size
-- `--reader-buf`: retained for compatibility
+- `--reader-buf`: reader buffer size
 - `--backend`: backend type (`none` / `openocd` / `jlink`)
 - `--auto-start-backend`: let `rttd` auto-start backend process
 - `--no-auto-start-backend`: force disable backend auto-start
@@ -155,38 +152,52 @@ rttd foxglove --addr 127.0.0.1:19021 --ws-addr 127.0.0.1:8765
 Common flags:
 
 - `--config`: TOML config path
+- `--addr`: RTT TCP source address
 - `--ws-addr`: WebSocket listen address
-- `--topic`: generic packet topic
-- `--schema-name`: generic packet schema name
-- `--marker-topic`: marker topic for 3D panel
-- `--quat-id`: quaternion packet id override
-- `--temp-id`: temperature packet id
-- `--parent-frame`: transform parent frame id
-- `--frame-id`: marker frame id / transform child frame id
-- `--image-path`: compressed image file path (CLI path uses current working directory)
-- `--image-frame`: frame id for image stream
-- `--image-format`: compressed image format tag
-- `--log-topic`: Foxglove Log Panel topic
-- `--log-name`: source name in log records
-- `--mock`: enable local mock packets
-- `--mock-hz`: mock sample rate
-- `--mock-id`: mock quaternion packet id
-- `--backend` / `--auto-start-backend` / `--backend-timeout-ms`: same backend controls as `server` mode
+- `--reconnect`: reconnect interval
+- `--buf`: frame channel buffer size
+- `--backend` / `--auto-start-backend` / `--no-auto-start-backend` / `--backend-timeout-ms`
+- `--openocd-*` / `--jlink-*`
+
+Foxglove mode is strictly declaration-driven:
+
+- Data channels and schemas are generated only from `rat_gen.toml`.
+- Fixed legacy channels are removed.
+- Unknown packet IDs are dropped.
+- If `rat_gen.toml` is missing or `packets=[]`, startup fails immediately.
 
 ## Foxglove channels
 
-The bridge uses the official `foxglove` Rust SDK and publishes six channels:
+The bridge uses the official `foxglove` Rust SDK and publishes declaration-driven channels:
 
-- `ratitude/packet`
-- `/ratitude/log`
-- `/ratitude/temperature`
-- `/visualization_marker`
-- `/tf`
-- `/camera/image/compressed`
+- Data topic: `/rat/{struct_name}`
+- Schema name: `ratitude.{struct_name}`
+- For every `quat` packet: additional `/rat/{struct_name}/marker` and `/rat/{struct_name}/tf`
+- For every `image` packet: additional `/rat/{struct_name}/image` (foxglove.RawImage, mono8)
 
 Open Foxglove, connect to `ws://127.0.0.1:8765`, then subscribe in panels.
 
-Image payload loading is asynchronous during bridge startup. If image loading fails, only `/camera/image/compressed` is disabled; other channels continue normally.
+## OpenOCD-like mock for Foxglove integration
+
+For local testing without hardware, use the independent declaration-driven mock tools:
+
+- Python byte-stream mock server: `tools/openocd_rtt_mock.py`
+- One-click startup (Linux/macOS): `tools/run_mock_foxglove.sh`
+- One-click startup (Windows PowerShell): `tools/run_mock_foxglove.ps1`
+- Mock config package: `examples/mock/rat.toml` + `examples/mock/rat_gen.toml`
+
+Run one-click flow:
+
+```bash
+./tools/run_mock_foxglove.sh
+```
+
+Or run manually:
+
+```bash
+python -X utf8 tools/openocd_rtt_mock.py --config examples/mock/rat.toml --verbose
+cargo run -p rttd -- foxglove --config examples/mock/rat.toml --addr 127.0.0.1:19021 --ws-addr 127.0.0.1:8765 --backend none --no-auto-start-backend
+```
 
 ## Make targets
 
@@ -194,5 +205,6 @@ Image payload loading is asynchronous during bridge startup. If image loading fa
 make sync
 make server
 make foxglove
+make mock-foxglove
 make up
 ```

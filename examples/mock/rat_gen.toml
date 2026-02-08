@@ -1,0 +1,111 @@
+[meta]
+project = "mock_foxglove"
+fingerprint = "0xB0418E460F2BEDAA"
+
+[[packets]]
+id = 116
+signature_hash = "0xD502DE5A7EDFE2B5"
+struct_name = "Attitude"
+type = "quat"
+packed = false
+byte_size = 16
+source = "mock_packets.h"
+
+[[packets.fields]]
+name = "x"
+c_type = "float"
+offset = 0
+size = 4
+
+[[packets.fields]]
+name = "y"
+c_type = "float"
+offset = 4
+size = 4
+
+[[packets.fields]]
+name = "z"
+c_type = "float"
+offset = 8
+size = 4
+
+[[packets.fields]]
+name = "w"
+c_type = "float"
+offset = 12
+size = 4
+
+[[packets]]
+id = 34
+signature_hash = "0xE9362C8E7333E16B"
+struct_name = "Temperature"
+type = "plot"
+packed = false
+byte_size = 8
+source = "mock_packets.h"
+
+[[packets.fields]]
+name = "celsius"
+c_type = "float"
+offset = 0
+size = 4
+
+[[packets.fields]]
+name = "tick_ms"
+c_type = "uint32_t"
+offset = 4
+size = 4
+
+[[packets]]
+id = 118
+signature_hash = "0x4A47EFE0AEDC0C05"
+struct_name = "Waveform"
+type = "plot"
+packed = false
+byte_size = 8
+source = "mock_packets.h"
+
+[[packets.fields]]
+name = "value"
+c_type = "float"
+offset = 0
+size = 4
+
+[[packets.fields]]
+name = "tick_ms"
+c_type = "uint32_t"
+offset = 4
+size = 4
+
+[[packets]]
+id = 212
+signature_hash = "0xEE8A89BD08BF3645"
+struct_name = "ImageStats"
+type = "image"
+packed = false
+byte_size = 12
+source = "mock_packets.h"
+
+[[packets.fields]]
+name = "width"
+c_type = "uint16_t"
+offset = 0
+size = 2
+
+[[packets.fields]]
+name = "height"
+c_type = "uint16_t"
+offset = 2
+size = 2
+
+[[packets.fields]]
+name = "frame_idx"
+c_type = "uint32_t"
+offset = 4
+size = 4
+
+[[packets.fields]]
+name = "luma"
+c_type = "uint8_t"
+offset = 8
+size = 1

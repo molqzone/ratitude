@@ -964,14 +964,12 @@ name = "rat-bridge-foxglove"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64",
  "foxglove",
- "hex",
+ "rat-config",
  "rat-core",
  "rat-protocol",
  "serde",
  "serde_json",
- "time",
  "tokio",
  "tokio-util",
  "tracing",

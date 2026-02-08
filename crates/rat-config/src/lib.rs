@@ -252,39 +252,15 @@ impl Default for ServerConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct FoxgloveConfig {
     pub ws_addr: String,
-    pub topic: String,
-    pub schema_name: String,
-    pub quat_id: u16,
-    pub temp_id: u16,
-    pub marker_topic: String,
-    pub parent_frame: String,
-    pub frame_id: String,
-    pub image_path: String,
-    pub image_frame: String,
-    pub image_format: String,
-    pub log_topic: String,
-    pub log_name: String,
 }
 
 impl Default for FoxgloveConfig {
     fn default() -> Self {
         Self {
             ws_addr: "127.0.0.1:8765".to_string(),
-            topic: "ratitude/packet".to_string(),
-            schema_name: "ratitude.Packet".to_string(),
-            quat_id: 0x10,
-            temp_id: 0x20,
-            marker_topic: "/visualization_marker".to_string(),
-            parent_frame: "world".to_string(),
-            frame_id: "base_link".to_string(),
-            image_path: "".to_string(),
-            image_frame: "camera".to_string(),
-            image_format: "jpeg".to_string(),
-            log_topic: "/ratitude/log".to_string(),
-            log_name: "ratitude".to_string(),
         }
     }
 }
@@ -469,18 +445,6 @@ impl RatitudeConfig {
             return Err(ConfigError::Validation(format!(
                 "rttd.text_id out of range: 0x{:X}",
                 self.rttd.text_id
-            )));
-        }
-        if self.rttd.foxglove.quat_id > 0xFF {
-            return Err(ConfigError::Validation(format!(
-                "rttd.foxglove.quat_id out of range: 0x{:X}",
-                self.rttd.foxglove.quat_id
-            )));
-        }
-        if self.rttd.foxglove.temp_id > 0xFF {
-            return Err(ConfigError::Validation(format!(
-                "rttd.foxglove.temp_id out of range: 0x{:X}",
-                self.rttd.foxglove.temp_id
             )));
         }
         if self.rttd.server.backend.startup_timeout_ms == 0 {
@@ -788,5 +752,32 @@ mod tests {
         assert!(err
             .to_string()
             .contains("generation.header_name must not be empty"));
+    }
+
+    #[test]
+    fn foxglove_rejects_unknown_fields() {
+        let dir = unique_temp_dir("ratitude_cfg_foxglove_unknown");
+        let path = dir.join("rat.toml");
+        let raw = r#"
+[project]
+name = "demo"
+scan_root = "Core"
+
+[generation]
+out_dir = "."
+toml_name = "rat_gen.toml"
+header_name = "rat_gen.h"
+
+[rttd.foxglove]
+ws_addr = "127.0.0.1:8765"
+quat_id = 16
+"#;
+        fs::write(&path, raw).expect("write config");
+
+        let err = load_or_default(&path).expect_err("unknown foxglove field should fail");
+        assert!(err.to_string().contains("unknown field `quat_id`"));
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(dir);
     }
 }
