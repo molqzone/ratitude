@@ -1,4 +1,5 @@
 use std::env;
+mod backend;
 use std::fs::File;
 use std::io::{self, Write};
 use std::str::FromStr;
@@ -6,9 +7,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use anyhow::{anyhow, Context, Result};
+use backend::BackendRuntime;
 use clap::{Args, Parser, Subcommand};
 use rat_bridge_foxglove::{run_bridge, BridgeConfig};
-use rat_config::{load_or_default, FieldDef, PacketDef, RatitudeConfig, DEFAULT_CONFIG_PATH};
+use rat_config::{
+    load_generated_or_default, load_or_default, BackendConfig, BackendType, FieldDef, PacketDef,
+    RatitudeConfig, DEFAULT_CONFIG_PATH,
+};
 use rat_core::{spawn_jsonl_writer, spawn_listener, Hub, ListenerOptions};
 use rat_protocol::{cobs_decode, DynamicFieldDef, DynamicPacketDef, ProtocolContext, RatPacket};
 use rat_sync::sync_packets;
@@ -48,6 +53,8 @@ struct ServerArgs {
     buf: Option<usize>,
     #[arg(long = "reader-buf")]
     reader_buf: Option<usize>,
+    #[command(flatten)]
+    backend: BackendArgs,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -96,6 +103,48 @@ struct FoxgloveArgs {
     mock_hz: Option<u32>,
     #[arg(long = "mock-id")]
     mock_id: Option<String>,
+    #[command(flatten)]
+    backend: BackendArgs,
+}
+
+#[derive(Args, Debug, Clone, Default)]
+struct BackendArgs {
+    #[arg(long)]
+    backend: Option<String>,
+    #[arg(long = "auto-start-backend", default_value_t = false)]
+    auto_start_backend: bool,
+    #[arg(long = "no-auto-start-backend", default_value_t = false)]
+    no_auto_start_backend: bool,
+    #[arg(long = "backend-timeout-ms")]
+    backend_timeout_ms: Option<u64>,
+    #[arg(long = "openocd-elf")]
+    openocd_elf: Option<String>,
+    #[arg(long = "openocd-symbol")]
+    openocd_symbol: Option<String>,
+    #[arg(long = "openocd-interface")]
+    openocd_interface: Option<String>,
+    #[arg(long = "openocd-target")]
+    openocd_target: Option<String>,
+    #[arg(long = "openocd-transport")]
+    openocd_transport: Option<String>,
+    #[arg(long = "openocd-speed")]
+    openocd_speed: Option<u32>,
+    #[arg(long = "openocd-polling")]
+    openocd_polling: Option<u32>,
+    #[arg(long = "openocd-disable-debug-ports")]
+    openocd_disable_debug_ports: Option<bool>,
+    #[arg(long = "jlink-device")]
+    jlink_device: Option<String>,
+    #[arg(long = "jlink-if")]
+    jlink_if: Option<String>,
+    #[arg(long = "jlink-speed")]
+    jlink_speed: Option<u32>,
+    #[arg(long = "jlink-serial")]
+    jlink_serial: Option<String>,
+    #[arg(long = "jlink-ip")]
+    jlink_ip: Option<String>,
+    #[arg(long = "jlink-rtt-port")]
+    jlink_rtt_port: Option<u16>,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -136,6 +185,7 @@ async fn run() -> Result<()> {
                 reconnect: None,
                 buf: None,
                 reader_buf: None,
+                backend: BackendArgs::default(),
             })
             .await
         }
@@ -220,11 +270,25 @@ fn run_sync(args: SyncArgs) -> Result<()> {
     Ok(())
 }
 
+fn load_generated_packets(cfg: &mut RatitudeConfig) -> Result<()> {
+    let generated_path = cfg.generated_toml_path().to_path_buf();
+    let (generated, exists) = load_generated_or_default(&generated_path)?;
+    if !exists {
+        warn!(path = %generated_path.display(), "generated packet config not found, packets are empty");
+        cfg.packets.clear();
+        return Ok(());
+    }
+    cfg.packets = generated.to_packet_defs();
+    cfg.validate()?;
+    Ok(())
+}
+
 async fn run_server(args: ServerArgs) -> Result<()> {
     let config_path = args
         .config
         .unwrap_or_else(|| DEFAULT_CONFIG_PATH.to_string());
-    let (cfg, _) = load_or_default(&config_path)?;
+    let (mut cfg, _) = load_or_default(&config_path)?;
+    load_generated_packets(&mut cfg)?;
 
     let addr = args.addr.unwrap_or_else(|| cfg.rttd.server.addr.clone());
     let text_id = parse_u8_id(args.text_id.as_deref(), cfg.rttd.text_id)?;
@@ -232,7 +296,18 @@ async fn run_server(args: ServerArgs) -> Result<()> {
     let buf = args.buf.unwrap_or(cfg.rttd.server.buf);
     let _reader_buf = args.reader_buf.unwrap_or(cfg.rttd.server.reader_buf);
 
-    info!(mode = "server", config = %config_path, addr = %addr, text_id = format!("0x{:02X}", text_id), "starting server runtime");
+    let backend_cfg = merge_backend_config(&cfg.rttd.server.backend, &args.backend, &addr)?;
+    let mut backend_runtime = BackendRuntime::start(&backend_cfg, &addr).await?;
+
+    info!(
+        mode = "server",
+        config = %config_path,
+        addr = %addr,
+        text_id = format!("0x{:02X}", text_id),
+        backend = ?backend_cfg.backend_type,
+        auto_start_backend = backend_cfg.auto_start,
+        "starting server runtime"
+    );
 
     let mut protocol = ProtocolContext::new();
     protocol.set_text_packet_id(text_id);
@@ -251,6 +326,7 @@ async fn run_server(args: ServerArgs) -> Result<()> {
             reconnect,
             reconnect_max: Duration::from_secs(30),
             dial_timeout: Duration::from_secs(5),
+            strip_jlink_banner: matches!(backend_cfg.backend_type, BackendType::Jlink),
         },
     );
 
@@ -276,6 +352,7 @@ async fn run_server(args: ServerArgs) -> Result<()> {
     let _ = consume_task.await;
     drop(hub);
     let _ = log_task.await;
+    backend_runtime.shutdown().await;
     Ok(())
 }
 
@@ -283,7 +360,8 @@ async fn run_foxglove(args: FoxgloveArgs) -> Result<()> {
     let config_path = args
         .config
         .unwrap_or_else(|| DEFAULT_CONFIG_PATH.to_string());
-    let (cfg, _) = load_or_default(&config_path)?;
+    let (mut cfg, _) = load_or_default(&config_path)?;
+    load_generated_packets(&mut cfg)?;
 
     let addr = args.addr.unwrap_or_else(|| cfg.rttd.server.addr.clone());
     let text_id = parse_u8_id(args.text_id.as_deref(), cfg.rttd.text_id)?;
@@ -294,7 +372,19 @@ async fn run_foxglove(args: FoxgloveArgs) -> Result<()> {
     let quat_id = parse_u8_id(args.quat_id.as_deref(), resolved_quat_default as u16)?;
     let temp_id = parse_u8_id(args.temp_id.as_deref(), cfg.rttd.foxglove.temp_id)?;
 
-    info!(mode = "foxglove", config = %config_path, addr = %addr, quat_id = format!("0x{:02X}", quat_id), temp_id = format!("0x{:02X}", temp_id), mock = args.mock, "starting foxglove runtime");
+    let backend_cfg = merge_backend_config(&cfg.rttd.server.backend, &args.backend, &addr)?;
+
+    info!(
+        mode = "foxglove",
+        config = %config_path,
+        addr = %addr,
+        quat_id = format!("0x{:02X}", quat_id),
+        temp_id = format!("0x{:02X}", temp_id),
+        mock = args.mock,
+        backend = ?backend_cfg.backend_type,
+        auto_start_backend = backend_cfg.auto_start,
+        "starting foxglove runtime"
+    );
 
     let mut protocol = ProtocolContext::new();
     protocol.set_text_packet_id(text_id);
@@ -349,6 +439,7 @@ async fn run_foxglove(args: FoxgloveArgs) -> Result<()> {
         shutdown.clone(),
     ));
 
+    let mut backend_runtime = BackendRuntime::disabled();
     let mut listener_task: Option<JoinHandle<()>> = None;
     let mut consume_task: Option<JoinHandle<()>> = None;
     let mut mock_task: Option<JoinHandle<()>> = None;
@@ -365,6 +456,7 @@ async fn run_foxglove(args: FoxgloveArgs) -> Result<()> {
             shutdown.clone(),
         ));
     } else {
+        backend_runtime = BackendRuntime::start(&backend_cfg, &addr).await?;
         let _reader_buf = args.reader_buf.unwrap_or(cfg.rttd.server.reader_buf);
         let (frame_tx, frame_rx) = mpsc::channel::<Vec<u8>>(buf.max(1));
         listener_task = Some(spawn_listener(
@@ -375,6 +467,7 @@ async fn run_foxglove(args: FoxgloveArgs) -> Result<()> {
                 reconnect,
                 reconnect_max: Duration::from_secs(30),
                 dial_timeout: Duration::from_secs(5),
+                strip_jlink_banner: matches!(backend_cfg.backend_type, BackendType::Jlink),
             },
         ));
         consume_task = Some(spawn_frame_consumer(
@@ -404,10 +497,13 @@ async fn run_foxglove(args: FoxgloveArgs) -> Result<()> {
 
     drop(hub);
 
-    match bridge_task.await {
+    let bridge_result = match bridge_task.await {
         Ok(result) => result,
         Err(err) => Err(anyhow!("foxglove task failed: {err}")),
-    }
+    };
+
+    backend_runtime.shutdown().await;
+    bridge_result
 }
 
 fn register_dynamic_packets(protocol: &mut ProtocolContext, packets: &[PacketDef]) -> Result<()> {
@@ -455,6 +551,106 @@ fn map_field(field: &FieldDef) -> DynamicFieldDef {
         offset: field.offset,
         size: field.size,
     }
+}
+
+fn parse_backend_type(raw: &str) -> Result<BackendType> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "none" => Ok(BackendType::None),
+        "openocd" => Ok(BackendType::Openocd),
+        "jlink" => Ok(BackendType::Jlink),
+        _ => Err(anyhow!("invalid backend type: {}", raw)),
+    }
+}
+
+fn parse_port_from_addr(addr: &str) -> Option<u16> {
+    addr.parse::<std::net::SocketAddr>()
+        .ok()
+        .map(|socket| socket.port())
+        .or_else(|| {
+            addr.rsplit_once(':')
+                .and_then(|(_, p)| p.parse::<u16>().ok())
+        })
+}
+
+fn merge_backend_config(
+    base: &BackendConfig,
+    cli: &BackendArgs,
+    transport_addr: &str,
+) -> Result<BackendConfig> {
+    if cli.auto_start_backend && cli.no_auto_start_backend {
+        return Err(anyhow!(
+            "--auto-start-backend and --no-auto-start-backend are mutually exclusive"
+        ));
+    }
+
+    let mut merged = base.clone();
+
+    if let Some(raw) = cli.backend.as_deref() {
+        merged.backend_type = parse_backend_type(raw)?;
+    }
+
+    if cli.auto_start_backend {
+        merged.auto_start = true;
+    }
+    if cli.no_auto_start_backend {
+        merged.auto_start = false;
+    }
+
+    if let Some(timeout_ms) = cli.backend_timeout_ms {
+        merged.startup_timeout_ms = timeout_ms;
+    }
+
+    if let Some(value) = &cli.openocd_elf {
+        merged.openocd.elf = value.clone();
+    }
+    if let Some(value) = &cli.openocd_symbol {
+        merged.openocd.symbol = value.clone();
+    }
+    if let Some(value) = &cli.openocd_interface {
+        merged.openocd.interface = value.clone();
+    }
+    if let Some(value) = &cli.openocd_target {
+        merged.openocd.target = value.clone();
+    }
+    if let Some(value) = &cli.openocd_transport {
+        merged.openocd.transport = value.clone();
+    }
+    if let Some(value) = cli.openocd_speed {
+        merged.openocd.speed = value;
+    }
+    if let Some(value) = cli.openocd_polling {
+        merged.openocd.polling = value;
+    }
+    if let Some(value) = cli.openocd_disable_debug_ports {
+        merged.openocd.disable_debug_ports = value;
+    }
+
+    if let Some(value) = &cli.jlink_device {
+        merged.jlink.device = value.clone();
+    }
+    if let Some(value) = &cli.jlink_if {
+        merged.jlink.interface = value.clone();
+    }
+    if let Some(value) = cli.jlink_speed {
+        merged.jlink.speed = value;
+    }
+    if let Some(value) = &cli.jlink_serial {
+        merged.jlink.serial = value.clone();
+    }
+    if let Some(value) = &cli.jlink_ip {
+        merged.jlink.ip = value.clone();
+    }
+    if let Some(value) = cli.jlink_rtt_port {
+        merged.jlink.rtt_telnet_port = value;
+    } else if let Some(port) = parse_port_from_addr(transport_addr) {
+        merged.jlink.rtt_telnet_port = port;
+    }
+
+    if merged.startup_timeout_ms == 0 {
+        return Err(anyhow!("backend timeout must be > 0"));
+    }
+
+    Ok(merged)
 }
 
 fn parse_u8_id(raw: Option<&str>, fallback: u16) -> Result<u8> {
@@ -506,6 +702,21 @@ fn choose_default_quat_id(cfg: &RatitudeConfig) -> u16 {
         .unwrap_or(explicit.max(0x10))
 }
 
+fn decode_init_magic_packet(id: u8, payload: &[u8]) -> Option<u64> {
+    if id != 0x00 || payload.len() != 12 {
+        return None;
+    }
+    if payload.get(0..4) != Some(b"RATI") {
+        return None;
+    }
+
+    let mut fingerprint = 0_u64;
+    for (idx, byte) in payload[4..12].iter().enumerate() {
+        fingerprint |= (*byte as u64) << (idx * 8);
+    }
+    Some(fingerprint)
+}
+
 fn spawn_frame_consumer(
     mut receiver: mpsc::Receiver<Vec<u8>>,
     hub: Hub,
@@ -530,6 +741,10 @@ fn spawn_frame_consumer(
                     }
                     let id = decoded[0];
                     let payload = decoded[1..].to_vec();
+                    if let Some(fingerprint) = decode_init_magic_packet(id, &payload) {
+                        info!(fingerprint = format!("0x{:016X}", fingerprint), "received librat init magic packet");
+                        continue;
+                    }
                     let data = match protocol.parse_packet(id, &payload) {
                         Ok(data) => data,
                         Err(err) => {
@@ -658,7 +873,7 @@ mod tests {
 
     #[test]
     fn resolve_toml_relative_path_uses_config_dir() {
-        let cfg = build_test_config("configs/ratitude.toml", "demo.jpg");
+        let cfg = build_test_config("configs/rat.toml", "demo.jpg");
         let resolved = choose_image_path(None, &cfg);
         assert!(PathBuf::from(resolved).ends_with(Path::new("configs").join("demo.jpg")));
     }
@@ -666,15 +881,67 @@ mod tests {
     #[test]
     fn resolve_toml_absolute_path_keeps_original() {
         let absolute = std::env::temp_dir().join("demo.jpg");
-        let cfg = build_test_config("configs/ratitude.toml", absolute.to_string_lossy().as_ref());
+        let cfg = build_test_config("configs/rat.toml", absolute.to_string_lossy().as_ref());
         let resolved = choose_image_path(None, &cfg);
         assert_eq!(PathBuf::from(resolved), absolute);
     }
 
     #[test]
     fn cli_image_path_keeps_cwd_semantics() {
-        let cfg = build_test_config("configs/ratitude.toml", "demo.jpg");
+        let cfg = build_test_config("configs/rat.toml", "demo.jpg");
         let resolved = choose_image_path(Some("assets/demo.jpg".to_string()), &cfg);
         assert_eq!(resolved, "assets/demo.jpg");
+    }
+
+    #[test]
+    fn parse_backend_type_supports_known_values() {
+        assert!(matches!(
+            parse_backend_type("none").expect("none"),
+            BackendType::None
+        ));
+        assert!(matches!(
+            parse_backend_type("openocd").expect("openocd"),
+            BackendType::Openocd
+        ));
+        assert!(matches!(
+            parse_backend_type("jlink").expect("jlink"),
+            BackendType::Jlink
+        ));
+        assert!(parse_backend_type("bad").is_err());
+    }
+
+    #[test]
+    fn merge_backend_config_prefers_cli_over_toml() {
+        let mut base = BackendConfig::default();
+        base.backend_type = BackendType::Openocd;
+        base.auto_start = false;
+
+        let args = BackendArgs {
+            backend: Some("jlink".to_string()),
+            auto_start_backend: true,
+            no_auto_start_backend: false,
+            backend_timeout_ms: Some(9_000),
+            openocd_elf: None,
+            openocd_symbol: None,
+            openocd_interface: None,
+            openocd_target: None,
+            openocd_transport: None,
+            openocd_speed: None,
+            openocd_polling: None,
+            openocd_disable_debug_ports: None,
+            jlink_device: Some("STM32F407ZG".to_string()),
+            jlink_if: Some("SWD".to_string()),
+            jlink_speed: Some(8_000),
+            jlink_serial: Some("12345678".to_string()),
+            jlink_ip: None,
+            jlink_rtt_port: Some(19029),
+        };
+
+        let merged = merge_backend_config(&base, &args, "127.0.0.1:19021").expect("merge config");
+        assert!(matches!(merged.backend_type, BackendType::Jlink));
+        assert!(merged.auto_start);
+        assert_eq!(merged.startup_timeout_ms, 9_000);
+        assert_eq!(merged.jlink.speed, 8_000);
+        assert_eq!(merged.jlink.rtt_telnet_port, 19029);
     }
 }

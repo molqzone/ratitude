@@ -1,4 +1,4 @@
-﻿# Ratitude
+# Ratitude
 
 > High-performance binary telemetry stack for embedded systems.
 
@@ -14,13 +14,14 @@ Ratitude provides a low-latency RTT telemetry pipeline:
 - Rust host pipeline (`rat-core -> rat-protocol -> rttd -> logger/bridge`).
 - JSONL output for offline analysis.
 - OpenOCD RTT compatible transport path.
+- J-Link RTT compatible transport path.
 - Config-driven runtime packet decoding from C annotations.
 
 ### Host architecture
 
 - `rat-core`: transport listener + hub + JSONL writer runtime primitives
 - `rat-protocol`: COBS + packet parsing and protocol context
-- `rat-sync`: `@rat` scanner and TOML packet sync
+- `rat-sync`: `@rat` scanner and generated files sync
 - `rat-config`: config model and TOML persistence
 - `rat-bridge-foxglove`: Foxglove bridge/channels
 - `rttd`: CLI orchestration (`server` / `foxglove` / `sync`)
@@ -35,8 +36,9 @@ cargo build -p rttd
 
 `@rat` annotations in C are the single source of truth for packet definitions.
 
-- `[[packets]]` is auto-managed and overwritten by scanner sync.
-- `[rttd.server]` / `[rttd.foxglove]` are manual runtime settings and are preserved.
+- `rat.toml` stores project/runtime settings (scan scope, artifacts, backend options).
+- `rat_gen.toml` is auto-generated from `@rat` declarations and should not be edited manually.
+- `rat_gen.h` is auto-generated for firmware packet IDs and fingerprint.
 - Runtime precedence: `flags > TOML > built-in defaults`.
 
 ### C annotation format
@@ -44,25 +46,34 @@ cargo build -p rttd
 `@rat` supports line comments and block comments:
 
 ```c
-// @rat:id=0x01, type=plot
+// @rat, plot
 typedef struct {
   int32_t value;
   uint32_t tick_ms;
 } RatSample;
 
-/* @rat:id=0x02, type=json */
+/* @rat, log */
 typedef struct {
   uint16_t voltage_mv;
   uint16_t current_ma;
 } BatteryReading;
 ```
 
+`@rat` also supports omitted type (`// @rat`), which defaults to `plot`.
+
+Supported `type` values:
+
+- `plot`
+- `quat` (`pose` is treated as alias)
+- `image`
+- `log`
+
 Scanner backend uses Rust `tree-sitter` + `tree-sitter-c` AST to locate `typedef struct` and fields.
 
 ### Manual sync
 
 ```bash
-rttd sync --config firmware/example/stm32f4_rtt/ratitude.toml
+rttd sync --config firmware/example/stm32f4_rtt/rat.toml
 ```
 
 ### Start with auto-sync (recommended)
@@ -70,13 +81,43 @@ rttd sync --config firmware/example/stm32f4_rtt/ratitude.toml
 Both commands auto-sync packets before startup:
 
 ```bash
-rttd server --config firmware/example/stm32f4_rtt/ratitude.toml
-rttd foxglove --config firmware/example/stm32f4_rtt/ratitude.toml
+rttd server --config firmware/example/stm32f4_rtt/rat.toml
+rttd foxglove --config firmware/example/stm32f4_rtt/rat.toml
 ```
 
 ### Default config file
 
-- `firmware/example/stm32f4_rtt/ratitude.toml`
+- `firmware/example/stm32f4_rtt/rat.toml`
+
+## RTT backend startup (OpenOCD / J-Link)
+
+`rttd` consumes framed RTT bytes from `--addr` (default `127.0.0.1:19021`).
+Backend process should be started first, then `rttd` attaches to the TCP endpoint.
+
+### OpenOCD RTT server
+
+```bash
+powershell -ExecutionPolicy Bypass -File tools/openocd_rtt_server.ps1
+rttd server --addr 127.0.0.1:19021 --log out.jsonl
+```
+
+### J-Link RTT server
+
+```bash
+./tools/jlink_rtt_server.sh --device STM32F407ZG --if SWD --speed 4000 --rtt-port 19021
+rttd server --addr 127.0.0.1:19021 --log out.jsonl
+```
+
+On Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/jlink_rtt_server.ps1 -Device STM32F407ZG -Interface SWD -Speed 4000 -RttTelnetPort 19021
+rttd server --addr 127.0.0.1:19021 --log out.jsonl
+```
+
+You can also let `rttd` auto-start backend via config/flags (`--backend`, `--auto-start-backend`).
+
+When `--backend jlink` is selected, `rttd` strips the SEGGER RTT banner line before COBS frame decoding.
 
 ### Path resolution rules
 
@@ -98,6 +139,12 @@ Common flags:
 - `--reconnect`: reconnect interval (example: `1s`)
 - `--buf`: frame channel buffer size
 - `--reader-buf`: retained for compatibility
+- `--backend`: backend type (`none` / `openocd` / `jlink`)
+- `--auto-start-backend`: let `rttd` auto-start backend process
+- `--no-auto-start-backend`: force disable backend auto-start
+- `--backend-timeout-ms`: backend startup wait timeout
+- `--openocd-*`: override OpenOCD backend options
+- `--jlink-*`: override J-Link backend options
 
 ## `rttd foxglove`
 
@@ -124,6 +171,7 @@ Common flags:
 - `--mock`: enable local mock packets
 - `--mock-hz`: mock sample rate
 - `--mock-id`: mock quaternion packet id
+- `--backend` / `--auto-start-backend` / `--backend-timeout-ms`: same backend controls as `server` mode
 
 ## Foxglove channels
 
@@ -148,4 +196,3 @@ make server
 make foxglove
 make up
 ```
-

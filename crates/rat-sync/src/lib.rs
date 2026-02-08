@@ -1,12 +1,19 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use rat_config::{ConfigError, FieldDef, PacketDef, RatitudeConfig};
+use rat_config::{
+    self, load_generated_or_default, save_generated, ConfigError, FieldDef, GeneratedConfig,
+    GeneratedMeta, GeneratedPacketDef, RatitudeConfig,
+};
 use regex::Regex;
 use thiserror::Error;
 use tree_sitter::{Node, Parser, Tree};
 use walkdir::{DirEntry, WalkDir};
+
+const RAT_ID_MIN: u16 = 1;
+const RAT_ID_MAX: u16 = 0xFE;
 
 #[derive(Debug, Error)]
 pub enum SyncError {
@@ -21,6 +28,11 @@ pub enum SyncError {
     ParseSource { path: PathBuf },
     #[error("sync validation failed: {0}")]
     Validation(String),
+    #[error("failed to write generated header {path}: {source}")]
+    WriteHeader {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -31,7 +43,7 @@ pub struct SyncResult {
 
 #[derive(Debug, Clone)]
 struct DiscoveredPacket {
-    id: u16,
+    signature_hash: u64,
     struct_name: String,
     packet_type: String,
     packed: bool,
@@ -43,7 +55,6 @@ struct DiscoveredPacket {
 #[derive(Debug, Clone)]
 struct TagMatch {
     end_byte: usize,
-    id: u16,
     packet_type: String,
     line: usize,
 }
@@ -69,19 +80,35 @@ pub fn sync_packets(
     scan_root_override: Option<&Path>,
 ) -> Result<SyncResult, SyncError> {
     let config_path = config_path.as_ref();
-    let (mut cfg, exists) = rat_config::load_or_default(config_path)?;
+    let (mut cfg, _) = rat_config::load_or_default(config_path)?;
 
     let discovered = discover_packets(&cfg, scan_root_override)?;
-    let merged = merge_packets(&cfg.packets, discovered);
 
-    let mut old_packets = cfg.packets.clone();
-    old_packets.sort_by_key(|packet| packet.id);
-    let changed = old_packets != merged;
+    let generated_path = cfg.generated_toml_path().to_path_buf();
+    let generated_header_path = cfg.generated_header_path().to_path_buf();
 
-    cfg.packets = merged;
-    if !exists || changed {
-        cfg.save(config_path)?;
+    let (old_generated, old_exists) = load_generated_or_default(&generated_path)?;
+    let packets = allocate_packet_ids(&discovered, &old_generated.packets)?;
+    let fingerprint = compute_fingerprint(&packets);
+
+    let generated = GeneratedConfig {
+        meta: GeneratedMeta {
+            project: cfg.project.name.clone(),
+            fingerprint: format!("0x{:016X}", fingerprint),
+        },
+        packets,
+    };
+
+    let changed = !old_exists || old_generated != generated;
+    if changed {
+        save_generated(&generated_path, &generated)?;
     }
+    if changed || !generated_header_path.exists() {
+        write_generated_header(&generated_header_path, &generated)?;
+    }
+
+    cfg.packets = generated.to_packet_defs();
+    cfg.validate()?;
 
     Ok(SyncResult {
         config: cfg,
@@ -107,13 +134,14 @@ fn discover_packets(
         .collect();
     let ignore_dirs: HashSet<String> = cfg.project.ignore_dirs.iter().cloned().collect();
 
-    let mut walker = WalkDir::new(&scan_root).follow_links(false);
+    let mut walker = WalkDir::new(&scan_root)
+        .follow_links(false)
+        .sort_by_file_name();
     if !cfg.project.recursive {
         walker = walker.max_depth(1);
     }
 
     let mut discovered = Vec::new();
-    let mut seen_ids: HashMap<u16, String> = HashMap::new();
 
     let mut iter = walker.into_iter();
     while let Some(entry) = iter.next() {
@@ -131,27 +159,17 @@ fn discover_packets(
             .extension()
             .and_then(|value| value.to_str())
             .map(|value| format!(".{}", value.to_ascii_lowercase()));
-        if let Some(ext) = ext {
-            if !extension_set.contains(&ext) {
-                continue;
-            }
-        } else {
+        let Some(ext) = ext else {
+            continue;
+        };
+        if !extension_set.contains(&ext) {
             continue;
         }
 
         let packets = parse_tagged_file(entry.path(), &scan_root)?;
-        for packet in packets {
-            if let Some(prev) = seen_ids.insert(packet.id, packet.source.clone()) {
-                return Err(SyncError::Validation(format!(
-                    "duplicate packet id 0x{:02X} in {} and {}",
-                    packet.id, prev, packet.source
-                )));
-            }
-            discovered.push(packet);
-        }
+        discovered.extend(packets);
     }
 
-    discovered.sort_by_key(|packet| packet.id);
     Ok(discovered)
 }
 
@@ -221,8 +239,7 @@ fn parse_tagged_file(path: &Path, scan_root: &Path) -> Result<Vec<DiscoveredPack
 
         let (idx, st) = matched.ok_or_else(|| {
             SyncError::Validation(format!(
-                "@rat tag id=0x{:02X} in {}:{} has no following typedef struct",
-                tag.id,
+                "@rat tag in {}:{} has no following typedef struct",
                 path.display(),
                 tag.line
             ))
@@ -235,15 +252,17 @@ fn parse_tagged_file(path: &Path, scan_root: &Path) -> Result<Vec<DiscoveredPack
             .to_string_lossy()
             .replace('\\', "/");
 
-        out.push(DiscoveredPacket {
-            id: tag.id,
+        let mut packet = DiscoveredPacket {
+            signature_hash: 0,
             struct_name: st.name,
             packet_type: tag.packet_type,
             packed: st.packed,
             byte_size: st.byte_size,
             source: relative,
             fields: st.fields,
-        });
+        };
+        packet.signature_hash = compute_signature_hash(&packet);
+        out.push(packet);
     }
 
     Ok(out)
@@ -254,8 +273,12 @@ fn collect_comment_tags(
     source: &[u8],
     path: &Path,
 ) -> Result<Vec<TagMatch>, SyncError> {
-    let tag_re = Regex::new(r"@rat:id=(0x[0-9A-Fa-f]+)\s*,\s*type=([A-Za-z_][A-Za-z0-9_]*)")
+    let tag_re = Regex::new(r"@rat(?:\s*,\s*([A-Za-z_][A-Za-z0-9_]*))?")
         .map_err(|err| SyncError::Validation(format!("invalid tag regex: {err}")))?;
+    let old_id_re = Regex::new(r"@rat\s*:\s*id\s*=")
+        .map_err(|err| SyncError::Validation(format!("invalid old-id regex: {err}")))?;
+    let old_type_re = Regex::new(r"@rat\s*,\s*type\s*=")
+        .map_err(|err| SyncError::Validation(format!("invalid old-type regex: {err}")))?;
 
     let mut tags = Vec::new();
     walk_nodes(tree.root_node(), &mut |node| {
@@ -266,6 +289,25 @@ fn collect_comment_tags(
         let text = node.utf8_text(source).map_err(|err| {
             SyncError::Validation(format!("invalid utf8 comment in {}: {err}", path.display()))
         })?;
+
+        if !text.contains("@rat") {
+            return Ok(());
+        }
+
+        if old_id_re.is_match(text) {
+            return Err(SyncError::Validation(format!(
+                "legacy @rat:id syntax is not supported in {}:{}; use // @rat, <type>",
+                path.display(),
+                node.start_position().row + 1
+            )));
+        }
+        if old_type_re.is_match(text) {
+            return Err(SyncError::Validation(format!(
+                "legacy @rat, type= syntax is not supported in {}:{}; use // @rat, <type>",
+                path.display(),
+                node.start_position().row + 1
+            )));
+        }
 
         let mut matches = tag_re.captures_iter(text);
         let first = matches.next();
@@ -284,41 +326,15 @@ fn collect_comment_tags(
             return Ok(());
         };
 
-        let raw_id = cap.get(1).map(|value| value.as_str()).ok_or_else(|| {
+        let raw_packet_type = cap.get(1).map(|value| value.as_str()).unwrap_or("plot");
+        let packet_type = normalize_packet_type(raw_packet_type).map_err(|reason| {
             SyncError::Validation(format!(
-                "missing packet id capture at {}:{}",
+                "invalid @rat type in {}:{} ({})",
                 path.display(),
-                node.start_position().row + 1
+                node.start_position().row + 1,
+                reason
             ))
         })?;
-        let packet_type = cap
-            .get(2)
-            .map(|value| value.as_str().to_string())
-            .ok_or_else(|| {
-                SyncError::Validation(format!(
-                    "missing packet type capture at {}:{}",
-                    path.display(),
-                    node.start_position().row + 1
-                ))
-            })?;
-        let packet_id =
-            u16::from_str_radix(raw_id.trim_start_matches("0x"), 16).map_err(|err| {
-                SyncError::Validation(format!(
-                    "invalid packet id {} at {}:{} ({})",
-                    raw_id,
-                    path.display(),
-                    node.start_position().row + 1,
-                    err
-                ))
-            })?;
-        if packet_id > 0xFF {
-            return Err(SyncError::Validation(format!(
-                "packet id out of range {} at {}:{}",
-                raw_id,
-                path.display(),
-                node.start_position().row + 1
-            )));
-        }
 
         let matched = cap.get(0).ok_or_else(|| {
             SyncError::Validation(format!(
@@ -327,17 +343,33 @@ fn collect_comment_tags(
                 node.start_position().row + 1
             ))
         })?;
+
         tags.push(TagMatch {
             end_byte: node.start_byte() + matched.end(),
-            id: packet_id,
             packet_type,
             line: node.start_position().row + 1,
         });
         Ok(())
     })?;
 
-    tags.sort_by_key(|tag| (tag.end_byte, tag.id));
+    tags.sort_by_key(|tag| tag.end_byte);
     Ok(tags)
+}
+
+fn normalize_packet_type(raw: &str) -> Result<String, &'static str> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return Ok("plot".to_string());
+    }
+
+    match normalized.as_str() {
+        "plot" => Ok("plot".to_string()),
+        "quat" => Ok("quat".to_string()),
+        "pose" => Ok("quat".to_string()),
+        "image" => Ok("image".to_string()),
+        "log" => Ok("log".to_string()),
+        _ => Err("supported types: plot|quat|pose|image|log"),
+    }
 }
 
 fn collect_type_definitions(
@@ -600,40 +632,203 @@ fn extract_declarator_name(node: Node, source: &[u8]) -> Result<String, &'static
     Ok(name)
 }
 
-fn merge_packets(existing: &[PacketDef], discovered: Vec<DiscoveredPacket>) -> Vec<PacketDef> {
-    let existing_by_id: HashMap<u16, &PacketDef> =
-        existing.iter().map(|packet| (packet.id, packet)).collect();
+fn allocate_packet_ids(
+    discovered: &[DiscoveredPacket],
+    previous: &[GeneratedPacketDef],
+) -> Result<Vec<GeneratedPacketDef>, SyncError> {
+    let previous_by_signature: HashMap<u64, u16> = previous
+        .iter()
+        .filter_map(|packet| {
+            parse_signature_hex(&packet.signature_hash).map(|signature| (signature, packet.id))
+        })
+        .collect();
 
-    let mut merged = Vec::with_capacity(discovered.len());
+    let mut used_ids = BTreeSet::new();
+    let mut assigned = Vec::with_capacity(discovered.len());
+
     for packet in discovered {
-        let foxglove = existing_by_id
-            .get(&packet.id)
-            .and_then(|old| old.foxglove.clone())
-            .or_else(|| Some(default_foxglove_topic(&packet.struct_name)));
+        let mut chosen = previous_by_signature
+            .get(&packet.signature_hash)
+            .copied()
+            .filter(|id| (RAT_ID_MIN..=RAT_ID_MAX).contains(id) && !used_ids.contains(id));
 
-        merged.push(PacketDef {
-            id: packet.id,
-            struct_name: packet.struct_name,
-            packet_type: packet.packet_type,
+        if chosen.is_none() {
+            chosen = Some(select_fresh_packet_id(packet.signature_hash, &used_ids));
+        }
+
+        let id = chosen.ok_or_else(|| {
+            SyncError::Validation(format!(
+                "failed to assign packet id for {} ({})",
+                packet.struct_name, packet.source
+            ))
+        })?;
+
+        if !used_ids.insert(id) {
+            return Err(SyncError::Validation(format!(
+                "duplicate assigned packet id 0x{:02X}",
+                id
+            )));
+        }
+
+        assigned.push(GeneratedPacketDef {
+            id,
+            signature_hash: format!("0x{:016X}", packet.signature_hash),
+            struct_name: packet.struct_name.clone(),
+            packet_type: packet.packet_type.clone(),
             packed: packet.packed,
             byte_size: packet.byte_size,
-            source: packet.source,
-            fields: packet.fields,
-            foxglove,
+            source: packet.source.clone(),
+            fields: packet.fields.clone(),
         });
     }
 
-    merged.sort_by_key(|packet| packet.id);
-    merged
+    Ok(assigned)
 }
 
-fn default_foxglove_topic(struct_name: &str) -> BTreeMap<String, toml::Value> {
-    let mut map = BTreeMap::new();
-    map.insert(
-        "topic".to_string(),
-        toml::Value::String(format!("/rat/{}", struct_name.to_ascii_lowercase())),
+fn select_fresh_packet_id(signature_hash: u64, used_ids: &BTreeSet<u16>) -> u16 {
+    let mut candidate = ((signature_hash % 254) as u16) + 1;
+    while used_ids.contains(&candidate) {
+        candidate = if candidate >= RAT_ID_MAX {
+            RAT_ID_MIN
+        } else {
+            candidate + 1
+        };
+    }
+    candidate
+}
+
+fn compute_signature_hash(packet: &DiscoveredPacket) -> u64 {
+    let mut signature = String::new();
+    let _ = write!(
+        signature,
+        "{}|{}|{}|{}|{}",
+        packet.struct_name, packet.packet_type, packet.packed, packet.byte_size, packet.source
     );
-    map
+    for field in &packet.fields {
+        let _ = write!(
+            signature,
+            "|{}:{}:{}:{}",
+            field.name, field.c_type, field.offset, field.size
+        );
+    }
+    fnv1a64(signature.as_bytes())
+}
+
+fn compute_fingerprint(packets: &[GeneratedPacketDef]) -> u64 {
+    let mut ordered = packets.to_vec();
+    ordered.sort_by_key(|packet| packet.id);
+
+    let mut input = String::new();
+    for packet in &ordered {
+        let _ = write!(
+            input,
+            "{:02X}|{}|{}|{}|{};",
+            packet.id,
+            packet.signature_hash,
+            packet.struct_name,
+            packet.packet_type,
+            packet.byte_size
+        );
+    }
+    fnv1a64(input.as_bytes())
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn parse_signature_hex(raw: &str) -> Option<u64> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let hex = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .unwrap_or(trimmed);
+    u64::from_str_radix(hex, 16).ok()
+}
+
+fn parse_fingerprint_hex(raw: &str) -> Option<u64> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let hex = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .unwrap_or(trimmed);
+    u64::from_str_radix(hex, 16).ok()
+}
+
+fn write_generated_header(path: &Path, generated: &GeneratedConfig) -> Result<(), SyncError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| SyncError::WriteHeader {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    }
+
+    let mut out = String::new();
+    out.push_str("#ifndef RAT_GEN_H\n");
+    out.push_str("#define RAT_GEN_H\n\n");
+    out.push_str("/* This file is generated by rat-sync. */\n");
+    let header_fingerprint = parse_fingerprint_hex(&generated.meta.fingerprint).unwrap_or(0);
+    let _ = writeln!(
+        out,
+        "#define RAT_GEN_FINGERPRINT 0x{:016X}ULL",
+        header_fingerprint
+    );
+    let _ = writeln!(
+        out,
+        "#define RAT_GEN_PACKET_COUNT {}u",
+        generated.packets.len()
+    );
+    out.push('\n');
+
+    let mut name_counts: HashMap<String, usize> = HashMap::new();
+    for packet in &generated.packets {
+        let base = macroize_struct_name(&packet.struct_name);
+        let count = name_counts
+            .entry(base.clone())
+            .and_modify(|value| *value += 1)
+            .or_insert(1);
+        let macro_name = if *count == 1 {
+            format!("RAT_ID_{base}")
+        } else {
+            format!("RAT_ID_{}_{}", base, count)
+        };
+        let _ = writeln!(out, "#define {macro_name} 0x{:02X}u", packet.id);
+    }
+
+    out.push_str("\n#endif  /* RAT_GEN_H */\n");
+
+    fs::write(path, out).map_err(|source| SyncError::WriteHeader {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn macroize_struct_name(value: &str) -> String {
+    let mut out = String::new();
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_uppercase());
+        } else {
+            out.push('_');
+        }
+    }
+
+    while out.contains("__") {
+        out = out.replace("__", "_");
+    }
+
+    out.trim_matches('_').to_string()
 }
 
 fn resolve_scan_root(config_path: &Path, scan_root_override: &Path) -> PathBuf {
@@ -736,12 +931,99 @@ fn align_up(value: usize, align: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::Path;
+
     use super::*;
+
+    #[test]
+    fn packet_type_normalization_supports_default_and_alias() {
+        assert_eq!(normalize_packet_type("plot").expect("plot"), "plot");
+        assert_eq!(normalize_packet_type("quat").expect("quat"), "quat");
+        assert_eq!(normalize_packet_type("pose").expect("pose"), "quat");
+        assert_eq!(normalize_packet_type("").expect("default"), "plot");
+        assert!(normalize_packet_type("json").is_err());
+    }
 
     #[test]
     fn alignment_works() {
         assert_eq!(align_up(5, 4), 8);
         assert_eq!(align_up(8, 4), 8);
         assert_eq!(align_up(9, 1), 9);
+    }
+
+    #[test]
+    fn id_allocator_avoids_reserved_ids() {
+        let used = BTreeSet::from([1_u16, 2, 3, 0xFE]);
+        let id = select_fresh_packet_id(0, &used);
+        assert!((RAT_ID_MIN..=RAT_ID_MAX).contains(&id));
+        assert!(!used.contains(&id));
+    }
+
+    #[test]
+    fn fnv_hash_is_stable() {
+        assert_eq!(fnv1a64(b"ratitude"), 0x68EDD638D6E4A56B);
+    }
+
+    fn write_test_config(path: &Path, scan_root: &str) {
+        let mut cfg = rat_config::RatitudeConfig::default();
+        cfg.project.name = "sync_test".to_string();
+        cfg.project.scan_root = scan_root.to_string();
+        cfg.generation.out_dir = ".".to_string();
+        cfg.generation.toml_name = "rat_gen.toml".to_string();
+        cfg.generation.header_name = "rat_gen.h".to_string();
+        cfg.save(path).expect("save config");
+    }
+
+    #[test]
+    fn sync_packets_accepts_new_tag_syntax_and_generates_outputs() {
+        let temp = std::env::temp_dir().join(format!("rat_sync_new_syntax_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(temp.join("src")).expect("mkdir");
+
+        let config_path = temp.join("rat.toml");
+        write_test_config(&config_path, "src");
+
+        let source = r#"
+// @rat, plot
+typedef struct {
+  int32_t value;
+  uint32_t tick;
+} RatSample;
+"#;
+        fs::write(temp.join("src").join("main.c"), source).expect("write source");
+
+        let result = sync_packets(&config_path, None).expect("sync should pass");
+        assert_eq!(result.config.packets.len(), 1);
+        assert_eq!(result.config.packets[0].packet_type, "plot");
+        assert!((RAT_ID_MIN..=RAT_ID_MAX).contains(&result.config.packets[0].id));
+
+        assert!(temp.join("rat_gen.toml").exists());
+        assert!(temp.join("rat_gen.h").exists());
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn sync_packets_rejects_legacy_tag_syntax() {
+        let temp = std::env::temp_dir().join(format!("rat_sync_legacy_tag_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(temp.join("src")).expect("mkdir");
+
+        let config_path = temp.join("rat.toml");
+        write_test_config(&config_path, "src");
+
+        let source = r#"
+// @rat:id=0x01, type=plot
+typedef struct {
+  int32_t value;
+} RatSample;
+"#;
+        fs::write(temp.join("src").join("main.c"), source).expect("write source");
+
+        let err = sync_packets(&config_path, None).expect_err("legacy syntax should fail");
+        assert!(err.to_string().contains("legacy @rat:id syntax"));
+
+        let _ = fs::remove_dir_all(&temp);
     }
 }

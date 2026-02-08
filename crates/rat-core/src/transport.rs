@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use bytes::BytesMut;
 use futures_util::StreamExt;
+use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -16,6 +17,7 @@ pub struct ListenerOptions {
     pub reconnect: Duration,
     pub reconnect_max: Duration,
     pub dial_timeout: Duration,
+    pub strip_jlink_banner: bool,
 }
 
 impl Default for ListenerOptions {
@@ -24,6 +26,7 @@ impl Default for ListenerOptions {
             reconnect: Duration::from_secs(1),
             reconnect_max: Duration::from_secs(30),
             dial_timeout: Duration::from_secs(5),
+            strip_jlink_banner: false,
         }
     }
 }
@@ -43,6 +46,14 @@ impl Decoder for ZeroDelimitedFrameCodec {
         let mut frame = src.split_to(delimiter_index + 1);
         frame.truncate(delimiter_index);
         Ok(Some(frame.to_vec()))
+    }
+
+    fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        if src.is_empty() {
+            return Ok(None);
+        }
+        src.clear();
+        Ok(None)
     }
 }
 
@@ -77,13 +88,16 @@ pub fn spawn_listener(
             attempts = 0;
             info!(%addr, "transport connected");
 
-            match handle_connection(stream, &out, shutdown.clone()).await {
+            match handle_connection(stream, &out, shutdown.clone(), options.strip_jlink_banner)
+                .await
+            {
                 Ok(()) => {
-                    info!(%addr, "transport connection closed");
+                    attempts = attempts.saturating_add(1);
+                    info!(%addr, attempt = attempts, "transport connection closed");
                 }
                 Err(err) => {
-                    attempts = 1;
-                    warn!(%addr, error = %err, "transport connection error");
+                    attempts = attempts.saturating_add(1);
+                    warn!(%addr, attempt = attempts, error = %err, "transport connection error");
                 }
             }
 
@@ -93,10 +107,15 @@ pub fn spawn_listener(
 }
 
 async fn handle_connection(
-    stream: TcpStream,
+    mut stream: TcpStream,
     out: &mpsc::Sender<Vec<u8>>,
     shutdown: CancellationToken,
+    strip_jlink_banner: bool,
 ) -> Result<(), io::Error> {
+    if strip_jlink_banner {
+        strip_jlink_banner_line(&mut stream).await?;
+    }
+
     let mut framed = FramedRead::new(stream, ZeroDelimitedFrameCodec::default());
 
     loop {
@@ -129,6 +148,45 @@ async fn handle_connection(
     }
 }
 
+async fn strip_jlink_banner_line(stream: &mut TcpStream) -> Result<(), io::Error> {
+    let mut probe = [0_u8; 128];
+    let probed =
+        match tokio::time::timeout(Duration::from_millis(200), stream.peek(&mut probe)).await {
+            Ok(Ok(count)) => count,
+            Ok(Err(err)) => return Err(err),
+            Err(_) => return Ok(()),
+        };
+
+    if probed == 0 || !looks_like_jlink_banner(&probe[..probed]) {
+        return Ok(());
+    }
+
+    let mut consumed = 0_usize;
+    let mut byte = [0_u8; 1];
+    while consumed < 1024 {
+        let read = tokio::time::timeout(Duration::from_secs(1), stream.read(&mut byte)).await;
+        let read = match read {
+            Ok(Ok(size)) => size,
+            Ok(Err(err)) => return Err(err),
+            Err(_) => break,
+        };
+
+        if read == 0 {
+            break;
+        }
+        consumed += read;
+        if byte[0] == b'\n' {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+fn looks_like_jlink_banner(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"SEGGER J-Link")
+}
+
 async fn wait_backoff(shutdown: &CancellationToken, options: &ListenerOptions, attempts: u32) {
     if attempts == 0 {
         return;
@@ -142,5 +200,18 @@ async fn wait_backoff(shutdown: &CancellationToken, options: &ListenerOptions, a
     tokio::select! {
         _ = shutdown.cancelled() => {}
         _ = tokio::time::sleep(wait) => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn looks_like_jlink_banner_matches_prefix() {
+        assert!(looks_like_jlink_banner(
+            b"SEGGER J-Link V9.16a - Real time terminal output\r\n"
+        ));
+        assert!(!looks_like_jlink_banner(b"\x00\x01\x02"));
     }
 }
