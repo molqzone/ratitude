@@ -69,5 +69,5 @@ typedef struct {
 
 - `tools/openocd_rtt_mock.py` 只读取 `rat_gen.toml` 中声明过的包
 - mock 不会内置“额外默认包”或隐藏 ID
-- `image` 包会派生 `/rat/{struct_name}/image` 图像通道（foxglove.RawImage）
+- `image` 包会派生 `/rat/{struct_name}/image` 图像通道（foxglove.RawImage，数据由声明字段派生，不是原始图像 payload 透传）
 - mock 使用声明字段（如 `width/height/frame_idx/luma`）生成可视化动态图像

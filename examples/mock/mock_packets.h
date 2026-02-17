@@ -23,7 +23,7 @@ typedef struct {
 } Waveform;
 
 // @rat, image
-typedef struct {
+typedef struct __attribute__((packed)) {
   uint16_t width;
   uint16_t height;
   uint32_t frame_idx;

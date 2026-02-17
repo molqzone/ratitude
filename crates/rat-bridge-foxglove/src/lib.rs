@@ -7,10 +7,11 @@ use foxglove::schemas::{RawImage, Timestamp};
 use foxglove::{Channel, Context, PartialMetadata, RawChannel, Schema, WebSocketServer};
 use rat_config::{FieldDef, PacketDef};
 use rat_core::Hub;
-use rat_protocol::{PacketData, QuatPacket, RatPacket};
+use rat_protocol::{PacketData, RatPacket};
 use serde_json::{json, Value};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use tracing::info;
 
 pub const DEFAULT_MARKER_SCHEMA: &str = r#"{
   "type": "object",
@@ -162,6 +163,14 @@ struct PacketChannels {
     binding: PacketBinding,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct Quaternion {
+    x: f32,
+    y: f32,
+    z: f32,
+    w: f32,
+}
+
 pub async fn run_bridge(
     cfg: BridgeConfig,
     packets: Vec<PacketDef>,
@@ -176,6 +185,7 @@ pub async fn run_bridge(
     let (host, port) = split_host_port(&cfg.ws_addr)?;
 
     let bindings = build_packet_bindings(&packets)?;
+    log_derived_image_channels(&bindings);
     let channels = build_packet_channels(&context, &bindings)?;
 
     let channel_map: Arc<HashMap<u8, PacketChannels>> = Arc::new(
@@ -373,6 +383,22 @@ fn build_packet_channels(
     Ok(out)
 }
 
+fn log_derived_image_channels(bindings: &[PacketBinding]) {
+    let derived_topics = bindings
+        .iter()
+        .filter_map(|binding| binding.image_topic.clone())
+        .collect::<Vec<String>>();
+    if derived_topics.is_empty() {
+        return;
+    }
+
+    info!(
+        derived_image_channels = derived_topics.len(),
+        topics = ?derived_topics,
+        "image channels publish derived mono8 frames from dynamic fields (width/height/frame_idx/luma), not raw payload image bytes"
+    );
+}
+
 fn spawn_packet_publish_task(
     mut receiver: tokio::sync::broadcast::Receiver<RatPacket>,
     channels: Arc<HashMap<u8, PacketChannels>>,
@@ -473,16 +499,7 @@ fn publish_json(channel: &Arc<RawChannel>, ts: SystemTime, value: &Value) {
 fn packet_data_to_json(data: &PacketData) -> Option<Value> {
     match data {
         PacketData::Dynamic(map) => Some(Value::Object(map.clone())),
-        PacketData::Quat(quat) => Some(json!({
-            "x": quat.x,
-            "y": quat.y,
-            "z": quat.z,
-            "w": quat.w,
-        })),
-        PacketData::Temperature(temp) => Some(json!({
-            "celsius": temp.celsius,
-        })),
-        _ => None,
+        PacketData::Text(_) => None,
     }
 }
 
@@ -491,10 +508,18 @@ fn build_image_message(packet: &RatPacket, frame_id: &str) -> Option<RawImage> {
         return None;
     };
 
-    let width = number_to_u32(map.get("width")).unwrap_or(320).clamp(1, 1024);
-    let height = number_to_u32(map.get("height")).unwrap_or(240).clamp(1, 1024);
-    let frame_idx = number_to_u32(map.get("frame_idx")).or_else(|| number_to_u32(map.get("frame"))).unwrap_or(0);
-    let luma = number_to_u8(map.get("luma")).or_else(|| number_to_u8(map.get("gray"))).unwrap_or(128);
+    let width = number_to_u32(map.get("width"))
+        .unwrap_or(320)
+        .clamp(1, 1024);
+    let height = number_to_u32(map.get("height"))
+        .unwrap_or(240)
+        .clamp(1, 1024);
+    let frame_idx = number_to_u32(map.get("frame_idx"))
+        .or_else(|| number_to_u32(map.get("frame")))
+        .unwrap_or(0);
+    let luma = number_to_u8(map.get("luma"))
+        .or_else(|| number_to_u8(map.get("gray")))
+        .unwrap_or(128);
 
     let step = width;
     let size = width.checked_mul(height)? as usize;
@@ -535,39 +560,28 @@ fn number_to_u8(value: Option<&Value>) -> Option<u8> {
     number_to_u32(value).and_then(|v| u8::try_from(v).ok())
 }
 
-fn extract_quaternion(packet: &RatPacket) -> Option<QuatPacket> {
-    match &packet.data {
-        PacketData::Quat(quat) => Some(quat.clone()),
-        PacketData::Dynamic(map) => {
-            let x = number_to_f32(map.get("x"));
-            let y = number_to_f32(map.get("y"));
-            let z = number_to_f32(map.get("z"));
-            let w = number_to_f32(map.get("w"));
-            if let (Some(x), Some(y), Some(z), Some(w)) = (x, y, z, w) {
-                return Some(QuatPacket { x, y, z, w });
-            }
+fn extract_quaternion(packet: &RatPacket) -> Option<Quaternion> {
+    let PacketData::Dynamic(map) = &packet.data else {
+        return None;
+    };
 
-            let qx = number_to_f32(map.get("q_x"));
-            let qy = number_to_f32(map.get("q_y"));
-            let qz = number_to_f32(map.get("q_z"));
-            let qw = number_to_f32(map.get("q_w"));
-            if let (Some(x), Some(y), Some(z), Some(w)) = (qx, qy, qz, qw) {
-                return Some(QuatPacket { x, y, z, w });
-            }
-            None
-        }
-        _ => {
-            if packet.payload.len() < 16 {
-                return None;
-            }
-            Some(QuatPacket {
-                w: f32::from_bits(u32::from_le_bytes(packet.payload[0..4].try_into().ok()?)),
-                x: f32::from_bits(u32::from_le_bytes(packet.payload[4..8].try_into().ok()?)),
-                y: f32::from_bits(u32::from_le_bytes(packet.payload[8..12].try_into().ok()?)),
-                z: f32::from_bits(u32::from_le_bytes(packet.payload[12..16].try_into().ok()?)),
-            })
-        }
+    let x = number_to_f32(map.get("x"));
+    let y = number_to_f32(map.get("y"));
+    let z = number_to_f32(map.get("z"));
+    let w = number_to_f32(map.get("w"));
+    if let (Some(x), Some(y), Some(z), Some(w)) = (x, y, z, w) {
+        return Some(Quaternion { x, y, z, w });
     }
+
+    let qx = number_to_f32(map.get("q_x"));
+    let qy = number_to_f32(map.get("q_y"));
+    let qz = number_to_f32(map.get("q_z"));
+    let qw = number_to_f32(map.get("q_w"));
+    if let (Some(x), Some(y), Some(z), Some(w)) = (qx, qy, qz, qw) {
+        return Some(Quaternion { x, y, z, w });
+    }
+
+    None
 }
 
 fn number_to_f32(value: Option<&Value>) -> Option<f32> {
@@ -643,7 +657,6 @@ mod tests {
                 byte_size: 16,
                 source: String::new(),
                 fields: sample_fields(),
-                foxglove: None,
             },
             PacketDef {
                 id: 0x11,
@@ -653,14 +666,16 @@ mod tests {
                 byte_size: 8,
                 source: String::new(),
                 fields: sample_fields(),
-                foxglove: None,
             },
         ];
 
         let bindings = build_packet_bindings(&packets).expect("bindings");
         assert_eq!(bindings[0].topic, "/rat/Attitude");
         assert_eq!(bindings[1].topic, "/rat/Attitude_0x11");
-        assert_eq!(bindings[0].marker_topic.as_deref(), Some("/rat/Attitude/marker"));
+        assert_eq!(
+            bindings[0].marker_topic.as_deref(),
+            Some("/rat/Attitude/marker")
+        );
         assert!(bindings[0].image_topic.is_none());
         assert!(bindings[1].marker_topic.is_none());
         assert!(bindings[1].image_topic.is_none());
@@ -677,8 +692,6 @@ mod tests {
         assert!(packet_schema_json(&fields).is_err());
     }
 
-
-
     #[test]
     fn image_binding_has_derived_image_topic() {
         let packets = vec![PacketDef {
@@ -694,22 +707,24 @@ mod tests {
                 offset: 0,
                 size: 2,
             }],
-            foxglove: None,
         }];
 
         let bindings = build_packet_bindings(&packets).expect("bindings");
-        assert_eq!(bindings[0].image_topic.as_deref(), Some("/rat/CameraStats/image"));
+        assert_eq!(
+            bindings[0].image_topic.as_deref(),
+            Some("/rat/CameraStats/image")
+        );
     }
 
     #[test]
-    fn packet_data_to_json_supports_quat() {
-        let value = packet_data_to_json(&PacketData::Quat(QuatPacket {
-            x: 0.1,
-            y: 0.2,
-            z: 0.3,
-            w: 0.9,
-        }))
-        .expect("quat value");
+    fn packet_data_to_json_supports_dynamic() {
+        let value = packet_data_to_json(&PacketData::Dynamic(serde_json::Map::from_iter([
+            ("x".to_string(), json!(0.1)),
+            ("y".to_string(), json!(0.2)),
+            ("z".to_string(), json!(0.3)),
+            ("w".to_string(), json!(0.9)),
+        ])))
+        .expect("dynamic value");
 
         let x = value.get("x").and_then(Value::as_f64).expect("x");
         let w = value.get("w").and_then(Value::as_f64).expect("w");

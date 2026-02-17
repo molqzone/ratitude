@@ -18,6 +18,7 @@ pub struct ListenerOptions {
     pub reconnect_max: Duration,
     pub dial_timeout: Duration,
     pub strip_jlink_banner: bool,
+    pub reader_buf_bytes: usize,
 }
 
 impl Default for ListenerOptions {
@@ -27,6 +28,7 @@ impl Default for ListenerOptions {
             reconnect_max: Duration::from_secs(30),
             dial_timeout: Duration::from_secs(5),
             strip_jlink_banner: false,
+            reader_buf_bytes: 65_536,
         }
     }
 }
@@ -65,6 +67,7 @@ pub fn spawn_listener(
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut attempts: u32 = 0;
+        let reader_buf_bytes = normalize_reader_buf_bytes(options.reader_buf_bytes);
 
         while !shutdown.is_cancelled() {
             let stream =
@@ -88,8 +91,14 @@ pub fn spawn_listener(
             attempts = 0;
             info!(%addr, "transport connected");
 
-            match handle_connection(stream, &out, shutdown.clone(), options.strip_jlink_banner)
-                .await
+            match handle_connection(
+                stream,
+                &out,
+                shutdown.clone(),
+                options.strip_jlink_banner,
+                reader_buf_bytes,
+            )
+            .await
             {
                 Ok(()) => {
                     attempts = attempts.saturating_add(1);
@@ -111,12 +120,14 @@ async fn handle_connection(
     out: &mpsc::Sender<Vec<u8>>,
     shutdown: CancellationToken,
     strip_jlink_banner: bool,
+    reader_buf_bytes: usize,
 ) -> Result<(), io::Error> {
     if strip_jlink_banner {
         strip_jlink_banner_line(&mut stream).await?;
     }
 
-    let mut framed = FramedRead::new(stream, ZeroDelimitedFrameCodec::default());
+    let mut framed =
+        FramedRead::with_capacity(stream, ZeroDelimitedFrameCodec::default(), reader_buf_bytes);
 
     loop {
         tokio::select! {
@@ -187,6 +198,10 @@ fn looks_like_jlink_banner(bytes: &[u8]) -> bool {
     bytes.starts_with(b"SEGGER J-Link")
 }
 
+fn normalize_reader_buf_bytes(value: usize) -> usize {
+    value.max(1)
+}
+
 async fn wait_backoff(shutdown: &CancellationToken, options: &ListenerOptions, attempts: u32) {
     if attempts == 0 {
         return;
@@ -213,5 +228,11 @@ mod tests {
             b"SEGGER J-Link V9.16a - Real time terminal output\r\n"
         ));
         assert!(!looks_like_jlink_banner(b"\x00\x01\x02"));
+    }
+
+    #[test]
+    fn reader_buffer_is_normalized() {
+        assert_eq!(normalize_reader_buf_bytes(0), 1);
+        assert_eq!(normalize_reader_buf_bytes(4096), 4096);
     }
 }

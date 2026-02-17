@@ -67,8 +67,5 @@ fn packet_data_json(data: &PacketData) -> (Option<Value>, Option<String>) {
     match data {
         PacketData::Text(text) => (Some(Value::String(text.clone())), Some(text.clone())),
         PacketData::Dynamic(map) => (Some(Value::Object(map.clone())), None),
-        PacketData::Quat(value) => (serde_json::to_value(value).ok(), None),
-        PacketData::Temperature(value) => (serde_json::to_value(value).ok(), None),
-        PacketData::Raw(raw) => (serde_json::to_value(raw).ok(), None),
     }
 }

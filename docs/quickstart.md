@@ -24,10 +24,11 @@ typedef struct {
 
 - `@rat` 可以不写类型，默认是 `plot`
 - 旧语法 `@rat:id=...` / `@rat, type=...` 已废弃
+- `@rat` 结构体不支持 `aligned(...)` / `#pragma pack` 自定义对齐；非 `packed` 且存在 padding/8字节字段风险会被 `sync` 直接阻断
 
 ## 第 2 步：准备配置
 
-确认 `rat.toml` 存在，例如：
+确认 `rat.toml` 存在（默认路径是当前目录 `./rat.toml`），例如：
 
 - `firmware/example/stm32f4_rtt/rat.toml`
 
@@ -78,11 +79,12 @@ cargo run -p rttd -- server --config firmware/example/stm32f4_rtt/rat.toml --log
 - `out.jsonl` 持续增长
 - `foxglove` 模式下能看到实时数据
 
-## Foxglove 模式说明（声明驱动）
+## 运行模式说明（声明驱动）
 
+- `rttd server` 与 `rttd foxglove` 都严格依赖 `rat_gen.toml`
+- `rat_gen.toml` 缺失或 `packets=[]` 时，两种模式都会直接失败
 - `rttd foxglove` 仅保留运行参数：`--config --addr --ws-addr --reconnect --buf --backend* --openocd* --jlink*`
 - 数据通道和 schema 完全由 `rat_gen.toml` 决定
-- `rat_gen.toml` 缺失或 `packets=[]` 时会直接失败
 
 ## 无硬件 Mock 联调（推荐先验链路）
 
@@ -96,12 +98,12 @@ cargo run -p rttd -- server --config firmware/example/stm32f4_rtt/rat.toml --log
 
 ```bash
 python -X utf8 tools/openocd_rtt_mock.py --config examples/mock/rat.toml --verbose
-cargo run -p rttd -- foxglove --config examples/mock/rat.toml --addr 127.0.0.1:19021 --ws-addr 127.0.0.1:8765 --backend none --no-auto-start-backend
+cargo run -p rttd -- foxglove --config examples/mock/rat.toml --addr 127.0.0.1:19021 --ws-addr 127.0.0.1:8765 --backend none --no-auto-start-backend --no-auto-sync
 ```
 
 说明：
 
 - mock 数据包严格来自 `examples/mock/rat_gen.toml`
 - 默认平衡频率：`quat=50Hz`、`waveform=50Hz`、`temperature=5Hz`、`image=2Hz`
-- `image` 包会自动派生 `/rat/{struct_name}/image` 真图像流（foxglove.RawImage, mono8）
+- `image` 包会自动派生 `/rat/{struct_name}/image` 派生图像帧（foxglove.RawImage, mono8，非原始 payload 图像字节）
 - mock 默认用 `width/height/frame_idx/luma` 字段生成动态图像帧

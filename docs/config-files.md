@@ -50,8 +50,15 @@ ws_addr = "127.0.0.1:8765"
 
 - 不建议人工编辑
 - 每次 `rttd sync` 可能更新
-- `rttd foxglove` 运行时**仅按它**决定数据通道、schema 与映射
-- `rat_gen.toml` 缺失或 `packets=[]` 时，`rttd foxglove` 会直接失败
+- `rttd server` / `rttd foxglove` 运行时都只使用它作为解码声明来源
+- `rat_gen.toml` 缺失或 `packets=[]` 时，两种模式都会直接失败
+- `packets[*].source` 仅用于审计溯源（声明来自哪个源文件），不参与 packet 身份签名与 ID 分配
+
+`rttd.server.reader_buf` 语义：
+
+- 作用于 RTT 传输层零分隔帧读取缓冲区（bytes）
+- 必须 `> 0`
+- `server` 可通过 `--reader-buf` 临时覆盖该值
 
 ## `rat_gen.h`（自动生成，固件编译使用）
 

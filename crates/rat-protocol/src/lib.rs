@@ -5,7 +5,6 @@ use nom::number::complete::{
     le_f32, le_f64, le_i16, le_i32, le_i64, le_i8, le_u16, le_u32, le_u64, le_u8,
 };
 use nom::IResult;
-use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use thiserror::Error;
 
@@ -15,8 +14,6 @@ pub enum ProtocolError {
     InvalidCobsCode,
     #[error("cobs frame truncated")]
     TruncatedFrame,
-    #[error("unsupported type size for id 0x{0:02X}")]
-    UnsupportedTypeSize(u8),
     #[error("payload size mismatch for id 0x{id:02X}: got {got}, expected {expected}")]
     PayloadSizeMismatch { id: u8, got: usize, expected: usize },
     #[error("dynamic packet requires at least one field")]
@@ -35,34 +32,14 @@ pub enum ProtocolError {
     DynamicFieldOutOfRange { name: String },
     #[error("dynamic field {name} has invalid offset {offset}")]
     DynamicFieldOffset { name: String, offset: usize },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct QuatPacket {
-    pub w: f32,
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TemperaturePacket {
-    pub celsius: f32,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RawPacket {
-    pub id: String,
-    pub payload_hex: String,
+    #[error("unknown packet id: 0x{0:02X}")]
+    UnknownPacketId(u8),
 }
 
 #[derive(Clone, Debug)]
 pub enum PacketData {
     Text(String),
     Dynamic(Map<String, Value>),
-    Quat(QuatPacket),
-    Temperature(TemperaturePacket),
-    Raw(RawPacket),
 }
 
 #[derive(Clone, Debug)]
@@ -91,15 +68,8 @@ pub struct DynamicPacketDef {
 }
 
 #[derive(Clone, Debug)]
-enum StaticPacketKind {
-    Quat,
-    Temperature,
-}
-
-#[derive(Clone, Debug)]
 pub struct ProtocolContext {
     text_packet_id: u8,
-    static_registry: HashMap<u8, StaticPacketKind>,
     dynamic_registry: HashMap<u8, DynamicPacketDef>,
 }
 
@@ -113,7 +83,6 @@ impl ProtocolContext {
     pub fn new() -> Self {
         Self {
             text_packet_id: 0xFF,
-            static_registry: HashMap::new(),
             dynamic_registry: HashMap::new(),
         }
     }
@@ -124,19 +93,6 @@ impl ProtocolContext {
 
     pub fn text_packet_id(&self) -> u8 {
         self.text_packet_id
-    }
-
-    pub fn clear_static_registry(&mut self) {
-        self.static_registry.clear();
-    }
-
-    pub fn register_static_quat(&mut self, id: u8) {
-        self.static_registry.insert(id, StaticPacketKind::Quat);
-    }
-
-    pub fn register_static_temperature(&mut self, id: u8) {
-        self.static_registry
-            .insert(id, StaticPacketKind::Temperature);
     }
 
     pub fn clear_dynamic_registry(&mut self) {
@@ -201,19 +157,7 @@ impl ProtocolContext {
             return Ok(PacketData::Dynamic(decoded));
         }
 
-        if let Some(kind) = self.static_registry.get(&id) {
-            return match kind {
-                StaticPacketKind::Quat => Ok(PacketData::Quat(parse_quat_payload(id, payload)?)),
-                StaticPacketKind::Temperature => Ok(PacketData::Temperature(
-                    parse_temperature_payload(id, payload)?,
-                )),
-            };
-        }
-
-        Ok(PacketData::Raw(RawPacket {
-            id: format!("0x{:02x}", id),
-            payload_hex: hex::encode(payload),
-        }))
+        Err(ProtocolError::UnknownPacketId(id))
     }
 
     fn parse_dynamic_packet(
@@ -267,66 +211,6 @@ pub fn parse_text(payload: &[u8]) -> String {
     String::from_utf8_lossy(&payload[..end])
         .trim_end_matches('\0')
         .to_string()
-}
-
-fn parse_quat_payload(id: u8, payload: &[u8]) -> Result<QuatPacket, ProtocolError> {
-    if payload.len() != 16 {
-        return Err(ProtocolError::PayloadSizeMismatch {
-            id,
-            got: payload.len(),
-            expected: 16,
-        });
-    }
-
-    let w = parse_nom_exact(payload.get(0..4).unwrap_or_default(), le_f32).ok_or_else(|| {
-        ProtocolError::PayloadSizeMismatch {
-            id,
-            got: payload.len(),
-            expected: 16,
-        }
-    })?;
-    let x = parse_nom_exact(payload.get(4..8).unwrap_or_default(), le_f32).ok_or_else(|| {
-        ProtocolError::PayloadSizeMismatch {
-            id,
-            got: payload.len(),
-            expected: 16,
-        }
-    })?;
-    let y = parse_nom_exact(payload.get(8..12).unwrap_or_default(), le_f32).ok_or_else(|| {
-        ProtocolError::PayloadSizeMismatch {
-            id,
-            got: payload.len(),
-            expected: 16,
-        }
-    })?;
-    let z = parse_nom_exact(payload.get(12..16).unwrap_or_default(), le_f32).ok_or_else(|| {
-        ProtocolError::PayloadSizeMismatch {
-            id,
-            got: payload.len(),
-            expected: 16,
-        }
-    })?;
-
-    Ok(QuatPacket { w, x, y, z })
-}
-
-fn parse_temperature_payload(id: u8, payload: &[u8]) -> Result<TemperaturePacket, ProtocolError> {
-    if payload.len() != 4 {
-        return Err(ProtocolError::PayloadSizeMismatch {
-            id,
-            got: payload.len(),
-            expected: 4,
-        });
-    }
-
-    let celsius =
-        parse_nom_exact(payload, le_f32).ok_or_else(|| ProtocolError::PayloadSizeMismatch {
-            id,
-            got: payload.len(),
-            expected: 4,
-        })?;
-
-    Ok(TemperaturePacket { celsius })
 }
 
 fn parse_nom_exact<'a, O, F>(input: &'a [u8], mut parser: F) -> Option<O>
@@ -428,10 +312,10 @@ mod tests {
         ctx_b.set_text_packet_id(0x02);
 
         let data_a = ctx_a.parse_packet(0x01, b"abc").expect("ctx_a parse");
-        let data_b = ctx_b.parse_packet(0x01, b"abc").expect("ctx_b parse");
+        let data_b = ctx_b.parse_packet(0x01, b"abc");
 
         assert!(matches!(data_a, PacketData::Text(_)));
-        assert!(matches!(data_b, PacketData::Raw(_)));
+        assert!(matches!(data_b, Err(ProtocolError::UnknownPacketId(0x01))));
     }
 
     #[test]
@@ -459,7 +343,7 @@ mod tests {
         let payload = 42_i32.to_le_bytes();
 
         let data_a = ctx_a.parse_packet(0x20, &payload).expect("ctx_a parse");
-        let data_b = ctx_b.parse_packet(0x20, &payload).expect("ctx_b parse");
+        let data_b = ctx_b.parse_packet(0x20, &payload);
 
         match data_a {
             PacketData::Dynamic(map) => {
@@ -467,6 +351,15 @@ mod tests {
             }
             other => panic!("unexpected packet kind: {other:?}"),
         }
-        assert!(matches!(data_b, PacketData::Raw(_)));
+        assert!(matches!(data_b, Err(ProtocolError::UnknownPacketId(0x20))));
+    }
+
+    #[test]
+    fn unknown_packet_id_returns_error() {
+        let ctx = ProtocolContext::new();
+        let err = ctx
+            .parse_packet(0x42, &[0x01, 0x02])
+            .expect_err("should fail");
+        assert!(matches!(err, ProtocolError::UnknownPacketId(0x42)));
     }
 }
