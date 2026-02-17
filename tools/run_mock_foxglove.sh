@@ -39,4 +39,5 @@ cargo run -p rttd -- foxglove \
   --addr "${MOCK_HOST}:${MOCK_PORT}" \
   --ws-addr "${FOXGLOVE_WS_ADDR}" \
   --backend none \
-  --no-auto-start-backend
+  --no-auto-start-backend \
+  --no-auto-sync

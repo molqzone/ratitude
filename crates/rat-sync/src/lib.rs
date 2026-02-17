@@ -39,6 +39,7 @@ pub enum SyncError {
 pub struct SyncResult {
     pub config: RatitudeConfig,
     pub changed: bool,
+    pub layout_warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +84,14 @@ pub fn sync_packets(
     let (mut cfg, _) = rat_config::load_or_default(config_path)?;
 
     let discovered = discover_packets(&cfg, scan_root_override)?;
+    let layout_blockers = collect_layout_blockers(&discovered);
+    if !layout_blockers.is_empty() {
+        return Err(SyncError::Validation(format!(
+            "layout validation failed:\n- {}",
+            layout_blockers.join("\n- ")
+        )));
+    }
+    let layout_warnings = collect_layout_warnings(&discovered);
 
     let generated_path = cfg.generated_toml_path().to_path_buf();
     let generated_header_path = cfg.generated_header_path().to_path_buf();
@@ -113,6 +122,7 @@ pub fn sync_packets(
     Ok(SyncResult {
         config: cfg,
         changed,
+        layout_warnings,
     })
 }
 
@@ -427,13 +437,12 @@ fn parse_type_definition_node(
         ))
     })?;
 
-    let whole = node
-        .utf8_text(source)
-        .map_err(|err| {
-            SyncError::Validation(format!("invalid utf8 typedef in {}: {err}", path.display()))
-        })?
-        .to_ascii_lowercase();
-    let packed = whole.contains("packed");
+    let line = node.start_position().row + 1;
+    let whole = node.utf8_text(source).map_err(|err| {
+        SyncError::Validation(format!("invalid utf8 typedef in {}: {err}", path.display()))
+    })?;
+    let packed = detect_packed_layout(whole);
+    validate_layout_modifiers(whole, path, line, &name)?;
 
     let (fields, byte_size) = parse_struct_fields(body_node, source, packed, path, &name)?;
 
@@ -495,6 +504,134 @@ fn parse_struct_fields(
     };
 
     Ok((fields, byte_size))
+}
+
+fn compact_ascii_lowercase(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| !ch.is_ascii_whitespace())
+        .map(|ch| ch.to_ascii_lowercase())
+        .collect()
+}
+
+fn is_identifier_byte(byte: u8) -> bool {
+    byte == b'_' || byte.is_ascii_alphanumeric()
+}
+
+fn contains_identifier_token(haystack: &str, token: &str) -> bool {
+    let haystack_bytes = haystack.as_bytes();
+    let token_bytes = token.as_bytes();
+    if token_bytes.is_empty() || token_bytes.len() > haystack_bytes.len() {
+        return false;
+    }
+
+    for idx in 0..=(haystack_bytes.len() - token_bytes.len()) {
+        if &haystack_bytes[idx..idx + token_bytes.len()] != token_bytes {
+            continue;
+        }
+
+        let left_ok = idx == 0 || !is_identifier_byte(haystack_bytes[idx - 1]);
+        let right_idx = idx + token_bytes.len();
+        let right_ok =
+            right_idx == haystack_bytes.len() || !is_identifier_byte(haystack_bytes[right_idx]);
+        if left_ok && right_ok {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn detect_packed_layout(raw_typedef: &str) -> bool {
+    let lowered = raw_typedef.to_ascii_lowercase();
+    let compact = compact_ascii_lowercase(raw_typedef);
+    if compact.contains("__attribute__((packed") || compact.contains("__attribute__((__packed__") {
+        return true;
+    }
+    contains_identifier_token(&lowered, "__packed")
+        || contains_identifier_token(&lowered, "__packed__")
+        || compact.contains("__packedstruct")
+        || compact.contains("__packed__struct")
+        || compact.contains("struct__packed")
+        || compact.contains("struct__packed__")
+        || contains_identifier_token(&compact, "__packed")
+        || contains_identifier_token(&compact, "__packed__")
+}
+
+fn validate_layout_modifiers(
+    raw_typedef: &str,
+    path: &Path,
+    line: usize,
+    struct_name: &str,
+) -> Result<(), SyncError> {
+    let compact = compact_ascii_lowercase(raw_typedef);
+    let has_custom_alignment = compact.contains("aligned(")
+        || compact.contains("__align(")
+        || compact.contains("alignas(")
+        || compact.contains("#pragmapack")
+        || compact.contains("pragmapack(");
+    if has_custom_alignment {
+        return Err(SyncError::Validation(format!(
+            "unsupported layout modifier in {} ({}) at line {}: aligned/pragma-pack is not supported for @rat structs; use natural layout or packed only",
+            path.display(),
+            struct_name,
+            line
+        )));
+    }
+    Ok(())
+}
+
+fn collect_layout_warnings(_discovered: &[DiscoveredPacket]) -> Vec<String> {
+    // High-risk non-packed layout drift is blocked in `collect_layout_blockers`.
+    // Keep warning channel for future low-risk diagnostics.
+    Vec::new()
+}
+
+fn collect_layout_blockers(discovered: &[DiscoveredPacket]) -> Vec<String> {
+    let mut blockers = Vec::new();
+    for packet in discovered {
+        if packet.packed {
+            continue;
+        }
+
+        let reasons = collect_layout_risk_reasons(packet);
+        if reasons.is_empty() {
+            continue;
+        }
+
+        blockers.push(format!(
+            "packet {} ({}) uses non-packed layout and {}; declare it packed or remove ABI-sensitive fields",
+            packet.struct_name,
+            packet.source,
+            reasons.join(" + ")
+        ));
+    }
+    blockers
+}
+
+fn collect_layout_risk_reasons(packet: &DiscoveredPacket) -> Vec<&'static str> {
+    let mut reasons: Vec<&'static str> = Vec::new();
+    let has_wide_fields = packet.fields.iter().any(|field| field.size >= 8);
+    if has_wide_fields {
+        reasons.push("contains >=8-byte fields");
+    }
+
+    let mut expected_end = 0usize;
+    let mut has_internal_padding = false;
+    let mut payload_sum = 0usize;
+    for field in &packet.fields {
+        if field.offset > expected_end {
+            has_internal_padding = true;
+        }
+        let field_end = field.offset.saturating_add(field.size);
+        expected_end = expected_end.max(field_end);
+        payload_sum = payload_sum.saturating_add(field.size);
+    }
+    let has_tail_padding = packet.byte_size > payload_sum;
+    if has_internal_padding || has_tail_padding {
+        reasons.push("includes compiler-dependent padding");
+    }
+    reasons
 }
 
 fn parse_field_declaration(
@@ -635,12 +772,18 @@ fn allocate_packet_ids(
     discovered: &[DiscoveredPacket],
     previous: &[GeneratedPacketDef],
 ) -> Result<Vec<GeneratedPacketDef>, SyncError> {
-    let previous_by_signature: HashMap<u64, u16> = previous
-        .iter()
-        .filter_map(|packet| {
-            parse_signature_hex(&packet.signature_hash).map(|signature| (signature, packet.id))
-        })
-        .collect();
+    let mut previous_by_signature: HashMap<u64, u16> = HashMap::new();
+    for packet in previous {
+        if let Some(old_signature) = parse_signature_hex(&packet.signature_hash) {
+            previous_by_signature
+                .entry(old_signature)
+                .or_insert(packet.id);
+        }
+        let semantic_signature = compute_generated_packet_signature_hash(packet);
+        previous_by_signature
+            .entry(semantic_signature)
+            .or_insert(packet.id);
+    }
 
     let mut used_ids = BTreeSet::new();
     let mut assigned = Vec::with_capacity(discovered.len());
@@ -697,13 +840,39 @@ fn select_fresh_packet_id(signature_hash: u64, used_ids: &BTreeSet<u16>) -> u16 
 }
 
 fn compute_signature_hash(packet: &DiscoveredPacket) -> u64 {
+    compute_signature_hash_parts(
+        &packet.struct_name,
+        &packet.packet_type,
+        packet.packed,
+        packet.byte_size,
+        &packet.fields,
+    )
+}
+
+fn compute_generated_packet_signature_hash(packet: &GeneratedPacketDef) -> u64 {
+    compute_signature_hash_parts(
+        &packet.struct_name,
+        &packet.packet_type,
+        packet.packed,
+        packet.byte_size,
+        &packet.fields,
+    )
+}
+
+fn compute_signature_hash_parts(
+    struct_name: &str,
+    packet_type: &str,
+    packed: bool,
+    byte_size: usize,
+    fields: &[FieldDef],
+) -> u64 {
     let mut signature = String::new();
     let _ = write!(
         signature,
-        "{}|{}|{}|{}|{}",
-        packet.struct_name, packet.packet_type, packet.packed, packet.byte_size, packet.source
+        "{}|{}|{}|{}",
+        struct_name, packet_type, packed, byte_size
     );
-    for field in &packet.fields {
+    for field in fields {
         let _ = write!(
             signature,
             "|{}:{}:{}:{}",
@@ -930,6 +1099,7 @@ fn align_up(value: usize, align: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
     use std::fs;
     use std::path::Path;
 
@@ -962,6 +1132,112 @@ mod tests {
     #[test]
     fn fnv_hash_is_stable() {
         assert_eq!(fnv1a64(b"ratitude"), 0x68EDD638D6E4A56B);
+    }
+
+    fn sample_fields() -> Vec<FieldDef> {
+        vec![
+            FieldDef {
+                name: "value".to_string(),
+                c_type: "int32_t".to_string(),
+                offset: 0,
+                size: 4,
+            },
+            FieldDef {
+                name: "tick".to_string(),
+                c_type: "uint32_t".to_string(),
+                offset: 4,
+                size: 4,
+            },
+        ]
+    }
+
+    fn legacy_signature_hash(packet: &DiscoveredPacket) -> u64 {
+        let mut signature = String::new();
+        let _ = write!(
+            signature,
+            "{}|{}|{}|{}|{}",
+            packet.struct_name, packet.packet_type, packet.packed, packet.byte_size, packet.source
+        );
+        for field in &packet.fields {
+            let _ = write!(
+                signature,
+                "|{}:{}:{}:{}",
+                field.name, field.c_type, field.offset, field.size
+            );
+        }
+        fnv1a64(signature.as_bytes())
+    }
+
+    #[test]
+    fn signature_hash_ignores_source_path() {
+        let base = DiscoveredPacket {
+            signature_hash: 0,
+            struct_name: "RatSample".to_string(),
+            packet_type: "plot".to_string(),
+            packed: false,
+            byte_size: 8,
+            source: "src/a.c".to_string(),
+            fields: sample_fields(),
+        };
+        let moved = DiscoveredPacket {
+            source: "src/sub/main.c".to_string(),
+            ..base.clone()
+        };
+
+        assert_eq!(
+            compute_signature_hash(&base),
+            compute_signature_hash(&moved),
+            "signature should depend on packet semantics, not source path"
+        );
+    }
+
+    #[test]
+    fn allocator_reuses_previous_id_from_legacy_source_based_signature() {
+        let mut discovered = DiscoveredPacket {
+            signature_hash: 0,
+            struct_name: "RatSample".to_string(),
+            packet_type: "plot".to_string(),
+            packed: false,
+            byte_size: 8,
+            source: "new_path/main.c".to_string(),
+            fields: sample_fields(),
+        };
+        discovered.signature_hash = compute_signature_hash(&discovered);
+
+        let legacy_packet = DiscoveredPacket {
+            source: "old_path/main.c".to_string(),
+            ..discovered.clone()
+        };
+        let legacy_signature = legacy_signature_hash(&legacy_packet);
+        let previous = vec![GeneratedPacketDef {
+            id: 0x2A,
+            signature_hash: format!("0x{:016X}", legacy_signature),
+            struct_name: discovered.struct_name.clone(),
+            packet_type: discovered.packet_type.clone(),
+            packed: discovered.packed,
+            byte_size: discovered.byte_size,
+            source: legacy_packet.source.clone(),
+            fields: discovered.fields.clone(),
+        }];
+
+        let assigned = allocate_packet_ids(&[discovered], &previous).expect("allocate ids");
+        assert_eq!(assigned.len(), 1);
+        assert_eq!(
+            assigned[0].id, 0x2A,
+            "legacy signature should map to semantic signature and preserve packet id"
+        );
+    }
+
+    #[test]
+    fn packed_detection_is_explicit() {
+        let plain = "typedef struct { int32_t packed; } Foo;";
+        assert!(!detect_packed_layout(plain));
+
+        let packed_attr = "typedef struct __attribute__((packed)) { int32_t value; } Foo;";
+        assert!(detect_packed_layout(packed_attr));
+
+        let packed_keyword = "typedef __packed struct { int32_t value; } Foo;";
+        assert!(detect_packed_layout(packed_keyword));
     }
 
     fn write_test_config(path: &Path, scan_root: &str) {
@@ -1022,6 +1298,118 @@ typedef struct {
 
         let err = sync_packets(&config_path, None).expect_err("legacy syntax should fail");
         assert!(err.to_string().contains("legacy @rat:id syntax"));
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn sync_packets_rejects_non_packed_padding_layout() {
+        let temp =
+            std::env::temp_dir().join(format!("rat_sync_layout_block_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(temp.join("src")).expect("mkdir");
+
+        let config_path = temp.join("rat.toml");
+        write_test_config(&config_path, "src");
+
+        let source = r#"
+// @rat, plot
+typedef struct {
+  uint8_t a;
+  uint32_t b;
+} RatPadded;
+"#;
+        fs::write(temp.join("src").join("main.c"), source).expect("write source");
+
+        let err = sync_packets(&config_path, None).expect_err("sync should fail");
+        assert!(
+            err.to_string().contains("compiler-dependent padding"),
+            "expected padding blocker, got {err:#}"
+        );
+        assert!(
+            err.to_string().contains("layout validation failed"),
+            "expected validation summary, got {err:#}"
+        );
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn sync_packets_rejects_non_packed_wide_field_layout() {
+        let temp =
+            std::env::temp_dir().join(format!("rat_sync_layout_wide_block_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(temp.join("src")).expect("mkdir");
+
+        let config_path = temp.join("rat.toml");
+        write_test_config(&config_path, "src");
+
+        let source = r#"
+// @rat, plot
+typedef struct {
+  uint64_t tick;
+} RatWide;
+"#;
+        fs::write(temp.join("src").join("main.c"), source).expect("write source");
+
+        let err = sync_packets(&config_path, None).expect_err("sync should fail");
+        assert!(
+            err.to_string().contains("contains >=8-byte fields"),
+            "expected wide field blocker, got {err:#}"
+        );
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn sync_packets_accepts_packed_layout_with_wide_fields() {
+        let temp =
+            std::env::temp_dir().join(format!("rat_sync_layout_packed_ok_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(temp.join("src")).expect("mkdir");
+
+        let config_path = temp.join("rat.toml");
+        write_test_config(&config_path, "src");
+
+        let source = r#"
+// @rat, plot
+typedef struct __attribute__((packed)) {
+  uint8_t a;
+  uint64_t tick;
+} RatPacked;
+"#;
+        fs::write(temp.join("src").join("main.c"), source).expect("write source");
+
+        let result = sync_packets(&config_path, None).expect("packed layout should pass");
+        assert!(
+            result.layout_warnings.is_empty(),
+            "packed layout should not produce blockers/warnings: {:?}",
+            result.layout_warnings
+        );
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn sync_packets_rejects_aligned_layout_modifier() {
+        let temp =
+            std::env::temp_dir().join(format!("rat_sync_layout_reject_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(temp.join("src")).expect("mkdir");
+
+        let config_path = temp.join("rat.toml");
+        write_test_config(&config_path, "src");
+
+        let source = r#"
+// @rat, plot
+typedef struct __attribute__((aligned(8))) {
+  int32_t value;
+} RatAligned;
+"#;
+        fs::write(temp.join("src").join("main.c"), source).expect("write source");
+
+        let err = sync_packets(&config_path, None).expect_err("aligned modifier should fail");
+        assert!(err.to_string().contains("unsupported layout modifier"));
 
         let _ = fs::remove_dir_all(&temp);
     }

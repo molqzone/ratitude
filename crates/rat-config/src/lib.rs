@@ -1,11 +1,10 @@
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub const DEFAULT_CONFIG_PATH: &str = "firmware/example/stm32f4_rtt/rat.toml";
+pub const DEFAULT_CONFIG_PATH: &str = "rat.toml";
 pub const DEFAULT_GENERATED_TOML_NAME: &str = "rat_gen.toml";
 pub const DEFAULT_GENERATED_HEADER_NAME: &str = "rat_gen.h";
 
@@ -277,8 +276,6 @@ pub struct PacketDef {
     pub source: String,
     #[serde(default)]
     pub fields: Vec<FieldDef>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub foxglove: Option<BTreeMap<String, toml::Value>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -330,7 +327,6 @@ impl GeneratedPacketDef {
             byte_size: self.byte_size,
             source: self.source.clone(),
             fields: self.fields.clone(),
-            foxglove: None,
         }
     }
 }
@@ -450,6 +446,11 @@ impl RatitudeConfig {
         if self.rttd.server.backend.startup_timeout_ms == 0 {
             return Err(ConfigError::Validation(
                 "rttd.server.backend.startup_timeout_ms must be > 0".to_string(),
+            ));
+        }
+        if self.rttd.server.reader_buf == 0 {
+            return Err(ConfigError::Validation(
+                "rttd.server.reader_buf must be > 0".to_string(),
             ));
         }
         if self.rttd.server.backend.openocd.speed == 0 {
@@ -651,7 +652,7 @@ mod tests {
 
     #[test]
     fn default_path_uses_rat_toml() {
-        assert_eq!(DEFAULT_CONFIG_PATH, "firmware/example/stm32f4_rtt/rat.toml");
+        assert_eq!(DEFAULT_CONFIG_PATH, "rat.toml");
     }
 
     #[test]
@@ -752,6 +753,16 @@ mod tests {
         assert!(err
             .to_string()
             .contains("generation.header_name must not be empty"));
+    }
+
+    #[test]
+    fn validate_rejects_zero_reader_buffer() {
+        let mut cfg = RatitudeConfig::default();
+        cfg.rttd.server.reader_buf = 0;
+        let err = cfg.validate().expect_err("validation should fail");
+        assert!(err
+            .to_string()
+            .contains("rttd.server.reader_buf must be > 0"));
     }
 
     #[test]

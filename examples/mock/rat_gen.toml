@@ -1,10 +1,10 @@
 [meta]
 project = "mock_foxglove"
-fingerprint = "0xB0418E460F2BEDAA"
+fingerprint = "0x6DC228D8526C7443"
 
 [[packets]]
 id = 116
-signature_hash = "0xD502DE5A7EDFE2B5"
+signature_hash = "0x9DA9E86895C83F6F"
 struct_name = "Attitude"
 type = "quat"
 packed = false
@@ -37,7 +37,7 @@ size = 4
 
 [[packets]]
 id = 34
-signature_hash = "0xE9362C8E7333E16B"
+signature_hash = "0xF5A76B438F2F04CB"
 struct_name = "Temperature"
 type = "plot"
 packed = false
@@ -58,7 +58,7 @@ size = 4
 
 [[packets]]
 id = 118
-signature_hash = "0x4A47EFE0AEDC0C05"
+signature_hash = "0x0A01715AEE3396BB"
 struct_name = "Waveform"
 type = "plot"
 packed = false
@@ -78,12 +78,12 @@ offset = 4
 size = 4
 
 [[packets]]
-id = 212
-signature_hash = "0xEE8A89BD08BF3645"
+id = 217
+signature_hash = "0x2594BCBFB090629C"
 struct_name = "ImageStats"
 type = "image"
-packed = false
-byte_size = 12
+packed = true
+byte_size = 9
 source = "mock_packets.h"
 
 [[packets.fields]]

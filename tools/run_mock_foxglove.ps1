@@ -40,7 +40,8 @@ try {
         --addr "$Host`:$Port" `
         --ws-addr "$WsAddr" `
         --backend none `
-        --no-auto-start-backend
+        --no-auto-start-backend `
+        --no-auto-sync
 
     exit $LASTEXITCODE
 }

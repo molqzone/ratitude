@@ -20,6 +20,11 @@ C 源码(@rat) -> rttd sync -> rat_gen.toml + rat_gen.h
 rttd sync --config <path/to/rat.toml>
 ```
 
+补充：
+
+- `rttd server` / `rttd foxglove` 默认会在启动前自动执行一次 `sync`
+- 可通过 `--no-auto-sync` 显式关闭该自动步骤（例如只读环境或你希望完全手动控制生成时）
+
 行为：
 
 1. 扫描 `project.scan_root` 下源码文件
@@ -29,6 +34,9 @@ rttd sync --config <path/to/rat.toml>
 5. 生成：
    - `rat_gen.toml`（主机解码定义）
    - `rat_gen.h`（固件 packet id 宏 + 指纹宏）
+6. 布局边界校验：
+   - `@rat` 结构体不支持 `aligned(...)` / `#pragma pack` 等自定义对齐修饰
+   - 对非 `packed` 且存在潜在 ABI 漂移风险（如填充、8字节字段）的结构，`sync` 会直接失败（阻断）
 
 ### 阶段 B：固件运行（在线）
 
@@ -45,10 +53,11 @@ rttd sync --config <path/to/rat.toml>
 1. `rttd` 从 RTT TCP 地址读取字节流
 2. 去除 J-Link banner（若启用 J-Link backend）
 3. COBS 解码得到 `id + payload`
-4. 若是 init magic：记录日志并跳过业务解析
+4. 若是 init magic：先校验与 `rat_gen.toml` 指纹一致；不一致立即 fail-fast，一致才记录日志并跳过业务解析
 5. 否则按 `rat_gen.toml` 的字段布局动态解析
-6. `foxglove` 模式严格按 `rat_gen.toml` 发布声明驱动通道（逐包 topic/schema）
-7. `image` 类型额外派生 `/rat/{struct_name}/image` 真图像流（RawImage）
+6. `server` / `foxglove` 模式都严格依赖 `rat_gen.toml`（缺失或空包会直接失败）
+7. `foxglove` 模式严格按 `rat_gen.toml` 发布声明驱动通道（逐包 topic/schema）
+8. `image` 类型额外派生 `/rat/{struct_name}/image` 派生图像帧通道（RawImage，非原始 payload 图像字节）
 
 ### 阶段 D：无硬件联调（OpenOCD 字节流 mock）
 
@@ -96,13 +105,29 @@ rttd server --config firmware/example/stm32f4_rtt/rat.toml --log out.jsonl
 - 固件是否在持续 `rat_emit`
 - 包结构是否与 `rat_gen.toml` 一致
 
-### foxglove 启动即失败
+### 启动后提示 init magic fingerprint mismatch
+
+优先检查：
+
+- 重新执行 `rttd sync --config <path/to/rat.toml>` 生成最新 `rat_gen.*`
+- 固件是否重新编译并烧录（确保 `rat_gen.h` 与主机一致）
+- 固件发包是否使用最新 `RAT_ID_*` 宏，未硬编码旧 ID
+
+### server/foxglove 启动即失败
 
 优先检查：
 
 - `rat_gen.toml` 是否存在
 - `rat_gen.toml` 的 `packets` 是否为空
-- `[rttd.foxglove]` 是否仅包含 `ws_addr`
+- `[rttd.foxglove]` 是否仅包含 `ws_addr`（foxglove 场景）
+
+### sync 报 layout validation failed
+
+优先检查：
+
+- 是否使用了非 `packed` 结构且字段顺序会引入填充
+- 是否包含 `double` / `int64_t` / `uint64_t` 等 8 字节字段
+- 如需跨工具链稳定布局，优先改为 `packed`，并重新 `sync`
 
 ### mock 服务启动失败
 

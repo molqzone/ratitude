@@ -46,6 +46,7 @@ cargo build -p rttd
 - `rat_gen.toml` is auto-generated from `@rat` declarations and should not be edited manually.
 - `rat_gen.h` is auto-generated for firmware packet IDs and fingerprint.
 - Runtime precedence: `flags > TOML > built-in defaults`.
+- Default config path is `./rat.toml`; for example projects, prefer explicit `--config <path>`.
 
 ### C annotation format
 
@@ -100,21 +101,21 @@ Backend process should be started first, then `rttd` attaches to the TCP endpoin
 
 ```bash
 powershell -ExecutionPolicy Bypass -File tools/openocd_rtt_server.ps1
-rttd server --addr 127.0.0.1:19021 --log out.jsonl
+rttd server --config firmware/example/stm32f4_rtt/rat.toml --addr 127.0.0.1:19021 --log out.jsonl
 ```
 
 ### J-Link RTT server
 
 ```bash
 ./tools/jlink_rtt_server.sh --device STM32F407ZG --if SWD --speed 4000 --rtt-port 19021
-rttd server --addr 127.0.0.1:19021 --log out.jsonl
+rttd server --config firmware/example/stm32f4_rtt/rat.toml --addr 127.0.0.1:19021 --log out.jsonl
 ```
 
 On Windows:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools/jlink_rtt_server.ps1 -Device STM32F407ZG -Interface SWD -Speed 4000 -RttTelnetPort 19021
-rttd server --addr 127.0.0.1:19021 --log out.jsonl
+rttd server --config firmware/example/stm32f4_rtt/rat.toml --addr 127.0.0.1:19021 --log out.jsonl
 ```
 
 You can also let `rttd` auto-start backend via config/flags (`--backend`, `--auto-start-backend`).
@@ -124,40 +125,47 @@ When `--backend jlink` is selected, `rttd` strips the SEGGER RTT banner line bef
 ## `rttd server`
 
 ```bash
-rttd server --addr 127.0.0.1:19021 --log out.jsonl
+rttd server --config firmware/example/stm32f4_rtt/rat.toml --addr 127.0.0.1:19021 --log out.jsonl
 ```
 
 Common flags:
 
-- `--config`: TOML config path
+- `--config`: TOML config path (default: `./rat.toml`)
 - `--addr`: TCP source address
 - `--log`: JSONL output file path (default stdout)
 - `--text-id`: text packet id
 - `--reconnect`: reconnect interval (example: `1s`)
 - `--buf`: frame channel buffer size
-- `--reader-buf`: reader buffer size
+- `--reader-buf`: zero-delimited frame reader buffer size (bytes)
 - `--backend`: backend type (`none` / `openocd` / `jlink`)
 - `--auto-start-backend`: let `rttd` auto-start backend process
 - `--no-auto-start-backend`: force disable backend auto-start
 - `--backend-timeout-ms`: backend startup wait timeout
 - `--openocd-*`: override OpenOCD backend options
 - `--jlink-*`: override J-Link backend options
+- `--no-auto-sync`: disable startup auto `rttd sync` for this run (default is auto-sync enabled)
+
+Server mode is also declaration-driven:
+
+- Runtime packet decoding is generated only from `rat_gen.toml`.
+- If `rat_gen.toml` is missing or `packets=[]`, startup fails immediately.
 
 ## `rttd foxglove`
 
 ```bash
-rttd foxglove --addr 127.0.0.1:19021 --ws-addr 127.0.0.1:8765
+rttd foxglove --config firmware/example/stm32f4_rtt/rat.toml --addr 127.0.0.1:19021 --ws-addr 127.0.0.1:8765
 ```
 
 Common flags:
 
-- `--config`: TOML config path
+- `--config`: TOML config path (default: `./rat.toml`)
 - `--addr`: RTT TCP source address
 - `--ws-addr`: WebSocket listen address
 - `--reconnect`: reconnect interval
 - `--buf`: frame channel buffer size
 - `--backend` / `--auto-start-backend` / `--no-auto-start-backend` / `--backend-timeout-ms`
 - `--openocd-*` / `--jlink-*`
+- `--no-auto-sync`: disable startup auto `rttd sync` for this run
 
 Foxglove mode is strictly declaration-driven:
 
@@ -173,7 +181,7 @@ The bridge uses the official `foxglove` Rust SDK and publishes declaration-drive
 - Data topic: `/rat/{struct_name}`
 - Schema name: `ratitude.{struct_name}`
 - For every `quat` packet: additional `/rat/{struct_name}/marker` and `/rat/{struct_name}/tf`
-- For every `image` packet: additional `/rat/{struct_name}/image` (foxglove.RawImage, mono8)
+- For every `image` packet: additional `/rat/{struct_name}/image` (foxglove.RawImage, mono8, derived from declaration fields; not raw payload image bytes)
 
 Open Foxglove, connect to `ws://127.0.0.1:8765`, then subscribe in panels.
 
