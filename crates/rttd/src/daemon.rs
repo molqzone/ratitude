@@ -416,7 +416,6 @@ async fn start_ingest_runtime(
             reconnect,
             reconnect_max: Duration::from_secs(30),
             dial_timeout: Duration::from_secs(5),
-            strip_jlink_banner: true,
             reader_buf_bytes: reader_buf,
         },
     );
