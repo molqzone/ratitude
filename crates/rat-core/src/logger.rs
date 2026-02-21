@@ -1,13 +1,14 @@
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 
-use rat_protocol::{PacketData, RatPacket};
 use serde::Serialize;
 use serde_json::Value;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
+
+use crate::{PacketEnvelope, PacketPayload};
 
 #[derive(Serialize)]
 struct JsonRecord {
@@ -21,7 +22,7 @@ struct JsonRecord {
 }
 
 pub fn spawn_jsonl_writer(
-    mut receiver: broadcast::Receiver<RatPacket>,
+    mut receiver: broadcast::Receiver<PacketEnvelope>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -63,9 +64,9 @@ fn format_timestamp(ts: std::time::SystemTime) -> String {
         .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string())
 }
 
-fn packet_data_json(data: &PacketData) -> (Option<Value>, Option<String>) {
+fn packet_data_json(data: &PacketPayload) -> (Option<Value>, Option<String>) {
     match data {
-        PacketData::Text(text) => (Some(Value::String(text.clone())), Some(text.clone())),
-        PacketData::Dynamic(map) => (Some(Value::Object(map.clone())), None),
+        PacketPayload::Text(text) => (Some(Value::String(text.clone())), Some(text.clone())),
+        PacketPayload::Dynamic(map) => (Some(Value::Object(map.clone())), None),
     }
 }

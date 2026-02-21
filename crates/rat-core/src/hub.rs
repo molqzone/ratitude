@@ -1,9 +1,10 @@
-use rat_protocol::RatPacket;
 use tokio::sync::broadcast;
+
+use crate::PacketEnvelope;
 
 #[derive(Clone)]
 pub struct Hub {
-    tx: broadcast::Sender<RatPacket>,
+    tx: broadcast::Sender<PacketEnvelope>,
 }
 
 impl Hub {
@@ -13,11 +14,11 @@ impl Hub {
         Self { tx }
     }
 
-    pub fn publish(&self, packet: RatPacket) {
+    pub fn publish(&self, packet: PacketEnvelope) {
         let _ = self.tx.send(packet);
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<RatPacket> {
+    pub fn subscribe(&self) -> broadcast::Receiver<PacketEnvelope> {
         self.tx.subscribe()
     }
 }

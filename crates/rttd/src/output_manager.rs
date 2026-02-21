@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
@@ -23,43 +24,37 @@ struct SinkContext {
     packets: Vec<PacketDef>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum SinkKey {
+    Jsonl,
+    Foxglove,
+}
+
 trait PacketSink {
-    fn sync(&mut self, context: Option<&SinkContext>) -> Result<()>;
+    fn key(&self) -> SinkKey;
+    fn sync(&mut self, desired: &OutputState, context: Option<&SinkContext>) -> Result<()>;
     fn shutdown(&mut self);
 }
 
 struct JsonlSink {
-    enabled: bool,
-    path: Option<String>,
     task: Option<JoinHandle<()>>,
 }
 
 impl JsonlSink {
     fn new() -> Self {
-        Self {
-            enabled: false,
-            path: None,
-            task: None,
-        }
-    }
-
-    fn set_desired(&mut self, enabled: bool, path: Option<String>) {
-        self.enabled = enabled;
-        if let Some(path) = path {
-            self.path = if path.trim().is_empty() {
-                None
-            } else {
-                Some(path)
-            };
-        }
+        Self { task: None }
     }
 }
 
 impl PacketSink for JsonlSink {
-    fn sync(&mut self, context: Option<&SinkContext>) -> Result<()> {
+    fn key(&self) -> SinkKey {
+        SinkKey::Jsonl
+    }
+
+    fn sync(&mut self, desired: &OutputState, context: Option<&SinkContext>) -> Result<()> {
         self.shutdown();
 
-        if !self.enabled {
+        if !desired.jsonl_enabled {
             return Ok(());
         }
 
@@ -67,7 +62,7 @@ impl PacketSink for JsonlSink {
             return Ok(());
         };
 
-        let writer: Box<dyn Write + Send> = if let Some(path) = &self.path {
+        let writer: Box<dyn Write + Send> = if let Some(path) = &desired.jsonl_path {
             Box::new(
                 File::create(path).with_context(|| format!("failed to open jsonl file {path}"))?,
             )
@@ -88,37 +83,28 @@ impl PacketSink for JsonlSink {
 }
 
 struct FoxgloveSink {
-    enabled: bool,
-    ws_addr: String,
     task: Option<JoinHandle<Result<()>>>,
     shutdown: Option<CancellationToken>,
 }
 
 impl FoxgloveSink {
-    fn new(ws_addr: String) -> Self {
+    fn new() -> Self {
         Self {
-            enabled: false,
-            ws_addr,
             task: None,
             shutdown: None,
-        }
-    }
-
-    fn set_desired(&mut self, enabled: bool, ws_addr: Option<String>) {
-        self.enabled = enabled;
-        if let Some(ws_addr) = ws_addr {
-            if !ws_addr.trim().is_empty() {
-                self.ws_addr = ws_addr;
-            }
         }
     }
 }
 
 impl PacketSink for FoxgloveSink {
-    fn sync(&mut self, context: Option<&SinkContext>) -> Result<()> {
+    fn key(&self) -> SinkKey {
+        SinkKey::Foxglove
+    }
+
+    fn sync(&mut self, desired: &OutputState, context: Option<&SinkContext>) -> Result<()> {
         self.shutdown();
 
-        if !self.enabled {
+        if !desired.foxglove_enabled {
             return Ok(());
         }
 
@@ -128,7 +114,7 @@ impl PacketSink for FoxgloveSink {
 
         let shutdown = CancellationToken::new();
         let bridge_cfg = BridgeConfig {
-            ws_addr: self.ws_addr.clone(),
+            ws_addr: desired.foxglove_ws_addr.clone(),
         };
         let task = tokio::spawn(run_bridge(
             bridge_cfg,
@@ -155,8 +141,7 @@ impl PacketSink for FoxgloveSink {
 pub struct OutputManager {
     desired: OutputState,
     context: Option<SinkContext>,
-    jsonl_sink: JsonlSink,
-    foxglove_sink: FoxgloveSink,
+    sinks: Vec<Box<dyn PacketSink>>,
 }
 
 impl OutputManager {
@@ -173,20 +158,14 @@ impl OutputManager {
             foxglove_ws_addr: cfg.rttd.outputs.foxglove.ws_addr.clone(),
         };
 
-        let mut jsonl_sink = JsonlSink::new();
-        jsonl_sink.set_desired(desired.jsonl_enabled, desired.jsonl_path.clone());
-
-        let mut foxglove_sink = FoxgloveSink::new(desired.foxglove_ws_addr.clone());
-        foxglove_sink.set_desired(
-            desired.foxglove_enabled,
-            Some(desired.foxglove_ws_addr.clone()),
-        );
+        let sinks: Vec<Box<dyn PacketSink>> =
+            vec![Box::new(JsonlSink::new()), Box::new(FoxgloveSink::new())];
+        validate_unique_sink_keys(&sinks);
 
         Self {
             desired,
             context: None,
-            jsonl_sink,
-            foxglove_sink,
+            sinks,
         }
     }
 
@@ -203,8 +182,6 @@ impl OutputManager {
                 Some(path)
             };
         }
-        self.jsonl_sink
-            .set_desired(self.desired.jsonl_enabled, self.desired.jsonl_path.clone());
         self.reconcile()
     }
 
@@ -215,10 +192,6 @@ impl OutputManager {
                 self.desired.foxglove_ws_addr = ws_addr;
             }
         }
-        self.foxglove_sink.set_desired(
-            self.desired.foxglove_enabled,
-            Some(self.desired.foxglove_ws_addr.clone()),
-        );
         self.reconcile()
     }
 
@@ -229,13 +202,23 @@ impl OutputManager {
 
     pub async fn shutdown(&mut self) {
         self.context = None;
-        self.jsonl_sink.shutdown();
-        self.foxglove_sink.shutdown();
+        for sink in &mut self.sinks {
+            sink.shutdown();
+        }
     }
 
     fn reconcile(&mut self) -> Result<()> {
-        self.jsonl_sink.sync(self.context.as_ref())?;
-        self.foxglove_sink.sync(self.context.as_ref())?;
+        for sink in &mut self.sinks {
+            sink.sync(&self.desired, self.context.as_ref())?;
+        }
         Ok(())
+    }
+}
+
+fn validate_unique_sink_keys(sinks: &[Box<dyn PacketSink>]) {
+    let mut seen = BTreeSet::new();
+    for sink in sinks {
+        let inserted = seen.insert(sink.key());
+        debug_assert!(inserted, "duplicate sink key in OutputManager");
     }
 }

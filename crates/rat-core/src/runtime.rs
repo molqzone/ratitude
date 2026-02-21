@@ -2,15 +2,16 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use rat_protocol::{
-    cobs_decode, DynamicFieldDef, DynamicPacketDef, ProtocolContext, ProtocolError, RatPacket,
-};
 use thiserror::Error;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
+use crate::protocol_engine::{
+    build_dynamic_packet_def, decode_frame, PacketEnvelope, ProtocolEngine, ProtocolEngineError,
+    RatProtocolEngine, RuntimeDynamicFieldDef,
+};
 use crate::{spawn_listener, Hub, ListenerOptions};
 
 const INIT_MAGIC_PACKET_ID: u8 = 0x00;
@@ -113,7 +114,7 @@ impl IngestRuntime {
 }
 
 pub async fn start_ingest_runtime(cfg: IngestRuntimeConfig) -> Result<IngestRuntime, RuntimeError> {
-    let protocol = Arc::new(build_protocol_context(&cfg)?);
+    let protocol = Arc::new(build_protocol_engine(&cfg)?);
 
     let shutdown = CancellationToken::new();
     let hub = Hub::new(cfg.hub_buffer.max(1));
@@ -142,8 +143,8 @@ pub async fn start_ingest_runtime(cfg: IngestRuntimeConfig) -> Result<IngestRunt
     })
 }
 
-fn build_protocol_context(cfg: &IngestRuntimeConfig) -> Result<ProtocolContext, RuntimeError> {
-    let mut protocol = ProtocolContext::new();
+fn build_protocol_engine(cfg: &IngestRuntimeConfig) -> Result<RatProtocolEngine, RuntimeError> {
+    let mut protocol = RatProtocolEngine::new();
     protocol.set_text_packet_id(cfg.text_packet_id);
 
     protocol.clear_dynamic_registry();
@@ -160,39 +161,43 @@ fn build_protocol_context(cfg: &IngestRuntimeConfig) -> Result<ProtocolContext, 
         let fields = packet
             .fields
             .iter()
-            .map(|field| DynamicFieldDef {
+            .map(|field| RuntimeDynamicFieldDef {
                 name: field.name.clone(),
                 c_type: field.c_type.clone(),
                 offset: field.offset,
                 size: field.size,
             })
-            .collect::<Vec<DynamicFieldDef>>();
+            .collect::<Vec<RuntimeDynamicFieldDef>>();
 
         protocol
-            .register_dynamic(
+            .register_dynamic(build_dynamic_packet_def(
                 packet.id as u8,
-                DynamicPacketDef {
-                    id: packet.id as u8,
-                    struct_name: packet.struct_name.clone(),
-                    packed: packet.packed,
-                    byte_size: packet.byte_size,
-                    fields,
-                },
-            )
+                packet.struct_name.clone(),
+                packet.packed,
+                packet.byte_size,
+                fields,
+            ))
             .map_err(|err| RuntimeError::PacketRegisterFailed {
                 id: packet.id,
                 struct_name: packet.struct_name.clone(),
-                reason: err.to_string(),
+                reason: format_protocol_register_error(err),
             })?;
     }
 
     Ok(protocol)
 }
 
+fn format_protocol_register_error(error: ProtocolEngineError) -> String {
+    match error {
+        ProtocolEngineError::Register(reason) => reason,
+        other => other.to_string(),
+    }
+}
+
 fn spawn_frame_consumer_monitor(
     receiver: mpsc::Receiver<Vec<u8>>,
     hub: Hub,
-    protocol: Arc<ProtocolContext>,
+    protocol: Arc<RatProtocolEngine>,
     shutdown: CancellationToken,
     expected_fingerprint: u64,
     unknown_window: Duration,
@@ -229,7 +234,7 @@ fn spawn_frame_consumer_monitor(
 async fn run_frame_consumer(
     mut receiver: mpsc::Receiver<Vec<u8>>,
     hub: Hub,
-    protocol: Arc<ProtocolContext>,
+    protocol: Arc<RatProtocolEngine>,
     shutdown: CancellationToken,
     expected_fingerprint: u64,
     unknown_window: Duration,
@@ -245,7 +250,7 @@ async fn run_frame_consumer(
                 let Some(frame) = maybe_frame else {
                     return Err(RuntimeError::FrameConsumerStopped);
                 };
-                let decoded = match cobs_decode(&frame) {
+                let decoded = match decode_frame(&frame) {
                     Ok(decoded) => decoded,
                     Err(err) => {
                         debug!(error = %err, frame_len = frame.len(), "dropping invalid COBS frame");
@@ -282,7 +287,7 @@ async fn run_frame_consumer(
 
                 let data = match protocol.parse_packet(id, &payload) {
                     Ok(data) => data,
-                    Err(ProtocolError::UnknownPacketId(unknown_id)) => {
+                    Err(ProtocolEngineError::UnknownPacketId(unknown_id)) => {
                         let observation = unknown_monitor.record(unknown_id);
                         if let Some(report) = observation.rolled_over {
                             warn!(
@@ -317,7 +322,7 @@ async fn run_frame_consumer(
                     }
                 };
 
-                hub.publish(RatPacket {
+                hub.publish(PacketEnvelope {
                     id,
                     timestamp: SystemTime::now(),
                     payload,
@@ -416,11 +421,11 @@ impl UnknownPacketMonitor {
 mod tests {
     use std::collections::BTreeMap;
 
-    use rat_protocol::PacketData;
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpListener;
 
     use super::*;
+    use crate::PacketPayload;
 
     fn encode_frame(decoded: &[u8]) -> Vec<u8> {
         let mut encoded = cobs::encode_vec(decoded);
@@ -512,7 +517,7 @@ mod tests {
             .expect("recv packet");
 
         assert_eq!(packet.id, 0x21);
-        let PacketData::Dynamic(map) = packet.data else {
+        let PacketPayload::Dynamic(map) = packet.data else {
             panic!("expected dynamic packet");
         };
         let expected = BTreeMap::from([("value".to_string(), serde_json::Value::from(1_u64))]);
