@@ -1,9 +1,10 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
-use rat_sync::sync_packets_fs;
+use anyhow::{anyhow, Result};
 use tokio::sync::Mutex;
+
+use crate::sync_executor::{FsSyncExecutor, SyncExecutionResult, SyncExecutor};
 
 #[derive(Debug, Clone)]
 pub struct SyncOutcome {
@@ -22,15 +23,20 @@ struct SyncState {
 
 #[derive(Clone)]
 pub struct SyncController {
-    config_path: String,
+    executor: Arc<dyn SyncExecutor>,
     debounce: Duration,
     state: Arc<Mutex<SyncState>>,
 }
 
 impl SyncController {
     pub fn new(config_path: String, debounce_ms: u64) -> Self {
+        let executor: Arc<dyn SyncExecutor> = Arc::new(FsSyncExecutor::new(config_path));
+        Self::new_with_executor(executor, debounce_ms)
+    }
+
+    pub fn new_with_executor(executor: Arc<dyn SyncExecutor>, debounce_ms: u64) -> Self {
         Self {
-            config_path,
+            executor,
             debounce: Duration::from_millis(debounce_ms.max(1)),
             state: Arc::new(Mutex::new(SyncState {
                 last_success: None,
@@ -65,8 +71,8 @@ impl SyncController {
             guard.in_flight = true;
         }
 
-        let config_path = self.config_path.clone();
-        let join = tokio::task::spawn_blocking(move || sync_packets_fs(&config_path, None));
+        let executor = Arc::clone(&self.executor);
+        let join = tokio::task::spawn_blocking(move || executor.execute());
         let result = match join.await {
             Ok(Ok(result)) => result,
             Ok(Err(err)) => {
@@ -77,7 +83,7 @@ impl SyncController {
             Err(err) => {
                 let mut guard = self.state.lock().await;
                 guard.in_flight = false;
-                return Err(err.into());
+                return Err(anyhow!("sync executor join failed: {err}"));
             }
         };
 
@@ -89,8 +95,8 @@ impl SyncController {
 
         Ok(SyncOutcome {
             changed: result.changed,
-            packets: result.config.packets.len(),
-            warnings: result.layout_warnings,
+            packets: result.packets,
+            warnings: result.warnings,
             skipped: false,
             reason: reason.to_string(),
         })
@@ -99,20 +105,27 @@ impl SyncController {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::Arc;
 
     use super::*;
+    use crate::sync_executor::SyncExecutor;
 
-    fn unique_temp_dir(prefix: &str) -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("{prefix}_{unique}"));
-        fs::create_dir_all(&dir).expect("mkdir temp dir");
-        dir
+    struct StaticSuccessExecutor {
+        result: SyncExecutionResult,
+    }
+
+    impl SyncExecutor for StaticSuccessExecutor {
+        fn execute(&self) -> Result<SyncExecutionResult> {
+            Ok(self.result.clone())
+        }
+    }
+
+    struct StaticFailureExecutor;
+
+    impl SyncExecutor for StaticFailureExecutor {
+        fn execute(&self) -> Result<SyncExecutionResult> {
+            Err(anyhow!("mock sync failure"))
+        }
     }
 
     #[tokio::test]
@@ -129,12 +142,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_sync_is_not_blocked_by_debounce() {
-        let dir = unique_temp_dir("rttd_sync_failure_debounce");
-        let config_path = dir.join("rat.toml");
-        fs::write(&config_path, "invalid = [").expect("write invalid config");
+    async fn mock_executor_success_maps_outcome_fields() {
+        let executor: Arc<dyn SyncExecutor> = Arc::new(StaticSuccessExecutor {
+            result: SyncExecutionResult {
+                changed: true,
+                packets: 7,
+                warnings: vec!["layout warning".to_string()],
+            },
+        });
+        let controller = SyncController::new_with_executor(executor, 5_000);
 
-        let controller = SyncController::new(config_path.to_string_lossy().to_string(), 60_000);
+        let outcome = controller.trigger("manual").await.expect("sync success");
+        assert!(!outcome.skipped);
+        assert!(outcome.changed);
+        assert_eq!(outcome.packets, 7);
+        assert_eq!(outcome.warnings, vec!["layout warning".to_string()]);
+        assert_eq!(outcome.reason, "manual");
+    }
+
+    #[tokio::test]
+    async fn failed_execution_does_not_update_last_success() {
+        let controller =
+            SyncController::new_with_executor(Arc::new(StaticFailureExecutor), 60_000);
 
         let first = controller.trigger("first").await;
         assert!(first.is_err());
@@ -151,9 +180,5 @@ mod tests {
             guard.last_success.is_none(),
             "failed sync should not update debounce timestamp"
         );
-
-        drop(guard);
-        let _ = fs::remove_file(&config_path);
-        let _ = fs::remove_dir_all(dir);
     }
 }

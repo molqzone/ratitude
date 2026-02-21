@@ -9,7 +9,7 @@ use tracing::{info, warn};
 use crate::cli::Cli;
 use crate::console::{print_help, spawn_console_reader, ConsoleCommand};
 use crate::output_manager::OutputManager;
-use crate::runtime_spec::build_runtime_spec;
+use crate::runtime_spec::{build_runtime_spec, load_runtime_material};
 use crate::source_scan::{discover_sources, render_candidates, SourceCandidate};
 use crate::sync_controller::{SyncController, SyncOutcome};
 
@@ -293,9 +293,10 @@ async fn start_runtime(
     config_path: &str,
     addr: &str,
 ) -> Result<IngestRuntime> {
+    let material = load_runtime_material(cfg, config_path)?;
     let spec = build_runtime_spec(
         cfg,
-        config_path,
+        &material,
         addr,
         UNKNOWN_PACKET_WINDOW,
         UNKNOWN_PACKET_THRESHOLD,
@@ -336,6 +337,42 @@ mod tests {
     fn parse_generated_fingerprint_supports_prefixed_hex() {
         let parsed = crate::runtime_spec::parse_generated_fingerprint("0xAA").expect("parse");
         assert_eq!(parsed, 0xAA);
+    }
+
+    #[tokio::test]
+    async fn start_runtime_failure_does_not_mutate_cfg_packets() {
+        let dir = unique_temp_dir("rttd_start_runtime_failure_packets");
+        let config_path = dir.join("rat.toml");
+        let mut cfg = RatitudeConfig::default();
+        cfg.project.name = "runtime_failure_test".to_string();
+        cfg.packets = vec![PacketDef {
+            id: 0x2A,
+            struct_name: "PreExisting".to_string(),
+            packet_type: "plot".to_string(),
+            packed: true,
+            byte_size: 4,
+            source: "src/old.c".to_string(),
+            fields: vec![],
+        }];
+        ConfigStore::new(&config_path)
+            .save(&cfg)
+            .expect("save config");
+
+        let before_packets = cfg.packets.clone();
+        let result = start_runtime(
+            &mut cfg,
+            &config_path.to_string_lossy(),
+            "127.0.0.1:19021",
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "missing generated file should fail before runtime starts"
+        );
+        assert_eq!(cfg.packets, before_packets);
+
+        let _ = fs::remove_file(&config_path);
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

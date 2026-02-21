@@ -5,6 +5,7 @@ mod output_manager;
 mod runtime_spec;
 mod source_scan;
 mod sync_controller;
+mod sync_executor;
 
 use anyhow::Result;
 use tracing::error;
