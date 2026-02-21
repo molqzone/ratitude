@@ -3,7 +3,7 @@
 ## 1. 准备
 
 - 已有 `@rat` 声明的 C/C++ 源码
-- 可用 RTT backend（OpenOCD/J-Link）
+- 已存在可连接的 RTT 端点（例如由 OpenOCD/J-Link 预先提供）
 - `rat.toml` 使用 v0.2 结构
 
 ## 2. 启动 daemon

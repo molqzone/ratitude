@@ -136,100 +136,12 @@ impl Default for RttdConfig {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum BackendType {
-    None,
-    Openocd,
-    Jlink,
-}
-
-impl Default for BackendType {
-    fn default() -> Self {
-        Self::None
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
-pub struct BackendConfig {
-    #[serde(rename = "type")]
-    pub backend_type: BackendType,
-    pub auto_start: bool,
-    pub startup_timeout_ms: u64,
-    pub openocd: OpenOcdBackendConfig,
-    pub jlink: JlinkBackendConfig,
-}
-
-impl Default for BackendConfig {
-    fn default() -> Self {
-        Self {
-            backend_type: BackendType::None,
-            auto_start: false,
-            startup_timeout_ms: 5_000,
-            openocd: OpenOcdBackendConfig::default(),
-            jlink: JlinkBackendConfig::default(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
-pub struct OpenOcdBackendConfig {
-    pub elf: String,
-    pub symbol: String,
-    pub interface: String,
-    pub target: String,
-    pub transport: String,
-    pub speed: u32,
-    pub polling: u32,
-    pub disable_debug_ports: bool,
-}
-
-impl Default for OpenOcdBackendConfig {
-    fn default() -> Self {
-        Self {
-            elf: String::new(),
-            symbol: "_SEGGER_RTT".to_string(),
-            interface: "interface/cmsis-dap.cfg".to_string(),
-            target: "target/stm32f4x.cfg".to_string(),
-            transport: "swd".to_string(),
-            speed: 8_000,
-            polling: 1,
-            disable_debug_ports: true,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
-pub struct JlinkBackendConfig {
-    pub device: String,
-    pub interface: String,
-    pub speed: u32,
-    pub serial: String,
-    pub ip: String,
-}
-
-impl Default for JlinkBackendConfig {
-    fn default() -> Self {
-        Self {
-            device: "STM32F407ZG".to_string(),
-            interface: "SWD".to_string(),
-            speed: 4_000,
-            serial: String::new(),
-            ip: String::new(),
-        }
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct RttdSourceConfig {
     pub auto_scan: bool,
     pub scan_timeout_ms: u64,
     pub last_selected_addr: String,
-    pub backend: BackendConfig,
 }
 
 impl Default for RttdSourceConfig {
@@ -238,7 +150,6 @@ impl Default for RttdSourceConfig {
             auto_scan: true,
             scan_timeout_ms: 300,
             last_selected_addr: "127.0.0.1:19021".to_string(),
-            backend: BackendConfig::default(),
         }
     }
 }
@@ -523,36 +434,6 @@ impl RatitudeConfig {
             ));
         }
 
-        if self.rttd.source.backend.startup_timeout_ms == 0 {
-            return Err(ConfigError::Validation(
-                "rttd.source.backend.startup_timeout_ms must be > 0".to_string(),
-            ));
-        }
-        if self.rttd.source.backend.openocd.speed == 0 {
-            return Err(ConfigError::Validation(
-                "rttd.source.backend.openocd.speed must be > 0".to_string(),
-            ));
-        }
-        if self.rttd.source.backend.openocd.polling == 0 {
-            return Err(ConfigError::Validation(
-                "rttd.source.backend.openocd.polling must be > 0".to_string(),
-            ));
-        }
-        if self.rttd.source.backend.jlink.device.trim().is_empty() {
-            return Err(ConfigError::Validation(
-                "rttd.source.backend.jlink.device must not be empty".to_string(),
-            ));
-        }
-        if self.rttd.source.backend.jlink.interface.trim().is_empty() {
-            return Err(ConfigError::Validation(
-                "rttd.source.backend.jlink.interface must not be empty".to_string(),
-            ));
-        }
-        if self.rttd.source.backend.jlink.speed == 0 {
-            return Err(ConfigError::Validation(
-                "rttd.source.backend.jlink.speed must be > 0".to_string(),
-            ));
-        }
         if self.rttd.outputs.foxglove.ws_addr.trim().is_empty() {
             return Err(ConfigError::Validation(
                 "rttd.outputs.foxglove.ws_addr must not be empty".to_string(),
@@ -746,14 +627,10 @@ fn reject_deprecated_config_keys(raw: &str) -> Result<(), ConfigError> {
         if rttd
             .get("source")
             .and_then(toml::Value::as_table)
-            .and_then(|source| source.get("backend"))
-            .and_then(toml::Value::as_table)
-            .and_then(|backend| backend.get("jlink"))
-            .and_then(toml::Value::as_table)
-            .map(|jlink| jlink.contains_key("rtt_telnet_port"))
+            .map(|source| source.contains_key("backend"))
             .unwrap_or(false)
         {
-            deprecated_keys.push("rttd.source.backend.jlink.rtt_telnet_port");
+            deprecated_keys.push("[rttd.source.backend]");
         }
     }
 
@@ -996,8 +873,8 @@ header_name = "rat_gen.h"
     }
 
     #[test]
-    fn jlink_rtt_telnet_port_is_rejected_with_source_addr_hint() {
-        let dir = unique_temp_dir("ratitude_cfg_jlink_rtt_port");
+    fn source_backend_section_is_rejected_with_migration_hint() {
+        let dir = unique_temp_dir("ratitude_cfg_source_backend");
         let path = dir.join("rat.toml");
         let raw = r#"
 [project]
@@ -1018,22 +895,16 @@ scan_timeout_ms = 300
 last_selected_addr = "127.0.0.1:19021"
 
 [rttd.source.backend]
-type = "jlink"
+type = "none"
 auto_start = false
 startup_timeout_ms = 5000
-
-[rttd.source.backend.jlink]
-device = "STM32F407ZG"
-interface = "SWD"
-speed = 4000
-rtt_telnet_port = 19021
 "#;
         fs::write(&path, raw).expect("write config");
 
-        let err = load_or_default(&path).expect_err("rtt_telnet_port should fail");
+        let err = load_or_default(&path).expect_err("source backend section should fail");
         let msg = err.to_string();
         assert!(msg.contains("deprecated config keys removed in v0.2.0"));
-        assert!(msg.contains("rttd.source.backend.jlink.rtt_telnet_port"));
+        assert!(msg.contains("[rttd.source.backend]"));
 
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir_all(dir);

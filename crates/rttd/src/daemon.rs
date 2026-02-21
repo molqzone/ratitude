@@ -3,10 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{anyhow, Context, Result};
-use rat_config::{
-    load_generated_or_default, load_or_default, BackendConfig, BackendType, FieldDef, PacketDef,
-    RatitudeConfig,
-};
+use rat_config::{load_generated_or_default, load_or_default, FieldDef, PacketDef, RatitudeConfig};
 use rat_core::{spawn_listener, Hub, ListenerOptions};
 use rat_protocol::{
     cobs_decode, DynamicFieldDef, DynamicPacketDef, ProtocolContext, ProtocolError, RatPacket,
@@ -16,7 +13,6 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::backend::BackendRuntime;
 use crate::cli::Cli;
 use crate::console::{print_help, spawn_console_reader, ConsoleCommand};
 use crate::output_manager::OutputManager;
@@ -46,7 +42,6 @@ struct IngestRuntime {
     listener_task: JoinHandle<()>,
     consume_task: JoinHandle<Result<()>>,
     events_rx: mpsc::Receiver<RuntimeEvent>,
-    backend_runtime: BackendRuntime,
 }
 
 #[derive(Clone, Debug)]
@@ -346,7 +341,7 @@ fn select_active_source(
         return Ok(candidate.addr.clone());
     }
     Err(anyhow!(
-        "no reachable RTT source detected; start backend/device first"
+        "no reachable RTT source detected; start RTT endpoint first"
     ))
 }
 
@@ -379,22 +374,16 @@ async fn start_runtime(cfg: &mut RatitudeConfig, addr: &str) -> Result<IngestRun
     let reconnect = parse_duration(&cfg.rttd.behavior.reconnect)?;
     let buf = cfg.rttd.behavior.buf;
     let reader_buf = cfg.rttd.behavior.reader_buf;
-    let backend_cfg = resolve_backend(cfg);
 
     start_ingest_runtime(
         addr.to_string(),
         reconnect,
         buf,
         reader_buf,
-        &backend_cfg,
         protocol,
         expected_fingerprint,
     )
     .await
-}
-
-fn resolve_backend(cfg: &RatitudeConfig) -> BackendConfig {
-    cfg.rttd.source.backend.clone()
 }
 
 async fn start_ingest_runtime(
@@ -402,7 +391,6 @@ async fn start_ingest_runtime(
     reconnect: Duration,
     buf: usize,
     reader_buf: usize,
-    backend_cfg: &BackendConfig,
     protocol: Arc<ProtocolContext>,
     expected_fingerprint: u64,
 ) -> Result<IngestRuntime> {
@@ -411,7 +399,6 @@ async fn start_ingest_runtime(
     let (frame_tx, frame_rx) = mpsc::channel::<Vec<u8>>(buf.max(1));
     let (event_tx, event_rx) = mpsc::channel::<RuntimeEvent>(8);
 
-    let backend_runtime = BackendRuntime::start(backend_cfg, &addr).await?;
     let listener_task = spawn_listener(
         shutdown.clone(),
         addr,
@@ -420,7 +407,7 @@ async fn start_ingest_runtime(
             reconnect,
             reconnect_max: Duration::from_secs(30),
             dial_timeout: Duration::from_secs(5),
-            strip_jlink_banner: matches!(backend_cfg.backend_type, BackendType::Jlink),
+            strip_jlink_banner: true,
             reader_buf_bytes: reader_buf,
         },
     );
@@ -440,7 +427,6 @@ async fn start_ingest_runtime(
         listener_task,
         consume_task,
         events_rx: event_rx,
-        backend_runtime,
     })
 }
 
@@ -450,7 +436,6 @@ async fn shutdown_ingest_runtime(runtime: IngestRuntime, join_consumer: bool) {
         hub: _hub,
         listener_task,
         consume_task,
-        mut backend_runtime,
         events_rx: _events_rx,
     } = runtime;
 
@@ -460,7 +445,6 @@ async fn shutdown_ingest_runtime(runtime: IngestRuntime, join_consumer: bool) {
     if join_consumer {
         let _ = consume_task.await;
     }
-    backend_runtime.shutdown().await;
 }
 
 fn load_generated_packets(cfg: &mut RatitudeConfig) -> Result<u64> {
@@ -736,7 +720,9 @@ mod tests {
             },
         ];
         let err = select_active_source(&candidates, "127.0.0.1:19021").expect_err("must fail");
-        assert!(err.to_string().contains("no reachable RTT source detected"));
+        assert!(err
+            .to_string()
+            .contains("no reachable RTT source detected; start RTT endpoint first"));
     }
 
     #[test]
