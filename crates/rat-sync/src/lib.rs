@@ -6,6 +6,7 @@ use thiserror::Error;
 #[cfg(test)]
 use rat_config::GeneratedPacketDef;
 
+mod assembler;
 mod ast;
 mod discover;
 mod fs_adapter;
@@ -14,12 +15,17 @@ mod ids;
 mod layout;
 mod model;
 mod parser;
+mod parser_runner;
 mod pipeline;
+mod scanner;
 
 pub use fs_adapter::sync_packets_fs;
 pub use model::{DiscoveredPacket, SyncFsResult, SyncPipelineInput, SyncPipelineOutput};
 pub use pipeline::run_sync_pipeline;
 
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use assembler::*;
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use ast::*;
@@ -46,7 +52,13 @@ pub(crate) use model::*;
 pub(crate) use parser::*;
 #[cfg(test)]
 #[allow(unused_imports)]
+pub(crate) use parser_runner::*;
+#[cfg(test)]
+#[allow(unused_imports)]
 pub(crate) use pipeline::*;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use scanner::*;
 
 pub(crate) const RAT_ID_MIN: u16 = 1;
 pub(crate) const RAT_ID_MAX: u16 = 0xFE;
