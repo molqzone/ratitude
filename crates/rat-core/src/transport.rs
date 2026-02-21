@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use bytes::BytesMut;
 use futures_util::StreamExt;
-use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -17,7 +16,6 @@ pub struct ListenerOptions {
     pub reconnect: Duration,
     pub reconnect_max: Duration,
     pub dial_timeout: Duration,
-    pub strip_jlink_banner: bool,
     pub reader_buf_bytes: usize,
 }
 
@@ -27,20 +25,43 @@ impl Default for ListenerOptions {
             reconnect: Duration::from_secs(1),
             reconnect_max: Duration::from_secs(30),
             dial_timeout: Duration::from_secs(5),
-            strip_jlink_banner: false,
             reader_buf_bytes: 65_536,
         }
     }
 }
 
-#[derive(Default)]
-struct ZeroDelimitedFrameCodec;
+const JLINK_BANNER_PREFIX: &[u8] = b"SEGGER J-Link";
+const JLINK_BANNER_MAX_BYTES: usize = 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum BannerStripState {
+    #[default]
+    Pending,
+    Done,
+}
+
+#[derive(Debug, Default)]
+struct ZeroDelimitedFrameCodec {
+    banner_strip_state: BannerStripState,
+}
 
 impl Decoder for ZeroDelimitedFrameCodec {
     type Item = Vec<u8>;
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        if self.banner_strip_state == BannerStripState::Pending {
+            match try_strip_initial_jlink_banner(src) {
+                BannerStripOutcome::NeedMore => return Ok(None),
+                BannerStripOutcome::Consumed => {
+                    self.banner_strip_state = BannerStripState::Done;
+                }
+                BannerStripOutcome::Skip => {
+                    self.banner_strip_state = BannerStripState::Done;
+                }
+            }
+        }
+
         let Some(delimiter_index) = src.iter().position(|byte| *byte == 0) else {
             return Ok(None);
         };
@@ -91,15 +112,7 @@ pub fn spawn_listener(
             attempts = 0;
             info!(%addr, "transport connected");
 
-            match handle_connection(
-                stream,
-                &out,
-                shutdown.clone(),
-                options.strip_jlink_banner,
-                reader_buf_bytes,
-            )
-            .await
-            {
+            match handle_connection(stream, &out, shutdown.clone(), reader_buf_bytes).await {
                 Ok(()) => {
                     attempts = attempts.saturating_add(1);
                     info!(%addr, attempt = attempts, "transport connection closed");
@@ -116,16 +129,11 @@ pub fn spawn_listener(
 }
 
 async fn handle_connection(
-    mut stream: TcpStream,
+    stream: TcpStream,
     out: &mpsc::Sender<Vec<u8>>,
     shutdown: CancellationToken,
-    strip_jlink_banner: bool,
     reader_buf_bytes: usize,
 ) -> Result<(), io::Error> {
-    if strip_jlink_banner {
-        strip_jlink_banner_line(&mut stream).await?;
-    }
-
     let mut framed =
         FramedRead::with_capacity(stream, ZeroDelimitedFrameCodec::default(), reader_buf_bytes);
 
@@ -159,43 +167,62 @@ async fn handle_connection(
     }
 }
 
-async fn strip_jlink_banner_line(stream: &mut TcpStream) -> Result<(), io::Error> {
-    let mut probe = [0_u8; 128];
-    let probed =
-        match tokio::time::timeout(Duration::from_millis(200), stream.peek(&mut probe)).await {
-            Ok(Ok(count)) => count,
-            Ok(Err(err)) => return Err(err),
-            Err(_) => return Ok(()),
-        };
-
-    if probed == 0 || !looks_like_jlink_banner(&probe[..probed]) {
-        return Ok(());
-    }
-
-    let mut consumed = 0_usize;
-    let mut byte = [0_u8; 1];
-    while consumed < 1024 {
-        let read = tokio::time::timeout(Duration::from_secs(1), stream.read(&mut byte)).await;
-        let read = match read {
-            Ok(Ok(size)) => size,
-            Ok(Err(err)) => return Err(err),
-            Err(_) => break,
-        };
-
-        if read == 0 {
-            break;
-        }
-        consumed += read;
-        if byte[0] == b'\n' {
-            break;
-        }
-    }
-
-    Ok(())
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BannerStripOutcome {
+    NeedMore,
+    Consumed,
+    Skip,
 }
 
-fn looks_like_jlink_banner(bytes: &[u8]) -> bool {
-    bytes.starts_with(b"SEGGER J-Link")
+fn try_strip_initial_jlink_banner(src: &mut BytesMut) -> BannerStripOutcome {
+    if src.is_empty() {
+        return BannerStripOutcome::NeedMore;
+    }
+
+    if !looks_like_jlink_banner_prefix(src) {
+        debug!("jlink banner strip skipped: non-banner prefix");
+        return BannerStripOutcome::Skip;
+    }
+
+    let line_end = src.iter().position(|byte| *byte == b'\n');
+    let delimiter_index = src.iter().position(|byte| *byte == 0);
+    if let Some(delimiter) = delimiter_index {
+        if line_end.map(|line| delimiter < line).unwrap_or(true) {
+            debug!("jlink banner strip skipped: frame delimiter before banner line ending");
+            return BannerStripOutcome::Skip;
+        }
+    }
+
+    if let Some(line_end) = line_end {
+        if line_end + 1 > JLINK_BANNER_MAX_BYTES {
+            debug!(
+                line_bytes = line_end + 1,
+                "jlink banner strip skipped: banner line exceeds safe limit"
+            );
+            return BannerStripOutcome::Skip;
+        }
+        let _ = src.split_to(line_end + 1);
+        debug!(line_bytes = line_end + 1, "jlink banner line consumed");
+        return BannerStripOutcome::Consumed;
+    }
+
+    if src.len() > JLINK_BANNER_MAX_BYTES {
+        debug!(
+            buffered_bytes = src.len(),
+            "jlink banner strip skipped: no newline within safe limit"
+        );
+        return BannerStripOutcome::Skip;
+    }
+
+    BannerStripOutcome::NeedMore
+}
+
+fn looks_like_jlink_banner_prefix(bytes: &[u8]) -> bool {
+    if bytes.len() >= JLINK_BANNER_PREFIX.len() {
+        bytes.starts_with(JLINK_BANNER_PREFIX)
+    } else {
+        JLINK_BANNER_PREFIX.starts_with(bytes)
+    }
 }
 
 fn normalize_reader_buf_bytes(value: usize) -> usize {
@@ -220,19 +247,76 @@ async fn wait_backoff(shutdown: &CancellationToken, options: &ListenerOptions, a
 
 #[cfg(test)]
 mod tests {
+    use bytes::BufMut;
+
     use super::*;
 
     #[test]
     fn looks_like_jlink_banner_matches_prefix() {
-        assert!(looks_like_jlink_banner(
+        assert!(looks_like_jlink_banner_prefix(
             b"SEGGER J-Link V9.16a - Real time terminal output\r\n"
         ));
-        assert!(!looks_like_jlink_banner(b"\x00\x01\x02"));
+        assert!(!looks_like_jlink_banner_prefix(b"\x00\x01\x02"));
+        assert!(looks_like_jlink_banner_prefix(b"SEGGER J-"));
     }
 
     #[test]
     fn reader_buffer_is_normalized() {
         assert_eq!(normalize_reader_buf_bytes(0), 1);
         assert_eq!(normalize_reader_buf_bytes(4096), 4096);
+    }
+
+    #[test]
+    fn codec_strips_jlink_banner_then_decodes_first_frame() {
+        let mut codec = ZeroDelimitedFrameCodec::default();
+        let mut src = BytesMut::from(
+            &b"SEGGER J-Link V9.16a - Real time terminal output\r\nabc\x00rest\x00"[..],
+        );
+
+        let first = codec.decode(&mut src).expect("decode first");
+        let second = codec.decode(&mut src).expect("decode second");
+
+        assert_eq!(first, Some(b"abc".to_vec()));
+        assert_eq!(second, Some(b"rest".to_vec()));
+    }
+
+    #[test]
+    fn codec_keeps_non_banner_payload_unchanged() {
+        let mut codec = ZeroDelimitedFrameCodec::default();
+        let mut src = BytesMut::from(&b"payload\x00"[..]);
+
+        let frame = codec.decode(&mut src).expect("decode");
+        assert_eq!(frame, Some(b"payload".to_vec()));
+    }
+
+    #[test]
+    fn codec_handles_partial_banner_prefix_across_chunks() {
+        let mut codec = ZeroDelimitedFrameCodec::default();
+        let mut src = BytesMut::from(&b"SEGGER J-"[..]);
+
+        let first = codec.decode(&mut src).expect("decode first");
+        assert!(first.is_none());
+
+        src.put_slice(b"Link V9.16a - Real time terminal output\r\nxyz\x00");
+        let second = codec.decode(&mut src).expect("decode second");
+        assert_eq!(second, Some(b"xyz".to_vec()));
+    }
+
+    #[test]
+    fn codec_fallbacks_when_banner_line_exceeds_limit() {
+        let mut codec = ZeroDelimitedFrameCodec::default();
+        let mut raw = Vec::new();
+        raw.extend_from_slice(JLINK_BANNER_PREFIX);
+        raw.extend(std::iter::repeat(b'A').take(JLINK_BANNER_MAX_BYTES + 32));
+        raw.push(0);
+        let mut src = BytesMut::from(raw.as_slice());
+
+        let frame = codec.decode(&mut src).expect("decode");
+        let frame = frame.expect("frame");
+        assert!(frame.starts_with(JLINK_BANNER_PREFIX));
+        assert_eq!(
+            frame.len(),
+            JLINK_BANNER_PREFIX.len() + JLINK_BANNER_MAX_BYTES + 32
+        );
     }
 }
