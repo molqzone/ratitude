@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use glob::Pattern;
 use rat_config::RatitudeConfig;
@@ -9,8 +9,15 @@ use walkdir::WalkDir;
 
 use crate::ast::resolve_scan_root;
 use crate::ids::compute_signature_hash;
+use crate::model::DiscoveredPacket;
 use crate::parser::{collect_comment_tags, collect_type_definitions};
-use crate::{DiscoveredPacket, RttdIgnoreMatcher, SyncError};
+use crate::SyncError;
+
+#[derive(Debug, Clone)]
+struct RttdIgnoreMatcher {
+    root: PathBuf,
+    patterns: Vec<Pattern>,
+}
 
 pub(crate) fn discover_packets(
     cfg: &RatitudeConfig,
@@ -95,7 +102,7 @@ impl RttdIgnoreMatcher {
     }
 }
 
-pub(crate) fn load_rttdignore(config_path: &Path) -> Result<Option<RttdIgnoreMatcher>, SyncError> {
+fn load_rttdignore(config_path: &Path) -> Result<Option<RttdIgnoreMatcher>, SyncError> {
     let root = config_path
         .parent()
         .unwrap_or_else(|| Path::new("."))

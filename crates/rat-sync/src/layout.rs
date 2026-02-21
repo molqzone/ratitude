@@ -1,6 +1,7 @@
 use std::path::Path;
 
-use crate::{DiscoveredPacket, SyncError};
+use crate::model::DiscoveredPacket;
+use crate::SyncError;
 
 fn compact_ascii_lowercase(value: &str) -> String {
     value
