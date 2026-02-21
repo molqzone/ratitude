@@ -44,6 +44,7 @@ cargo run -p rttd -- --config <path/to/rat.toml>
 
 - 命令台是主配置入口之一。
 - `$source use`、`$foxglove on|off`、`$jsonl on|off [path]` 会持久化写回 `rat.toml`。
+- 运行时重启会重建 JSONL writer；当 `$jsonl on <path>` 生效时，目标文件按清空重写处理（非追加）。
 - `$sync` 只更新生成物（`rat_gen.toml`/`rat_gen.h`），不写 `rttd.outputs`/`rttd.source` 运行配置。
 
 ## 4. 同步与一致性
