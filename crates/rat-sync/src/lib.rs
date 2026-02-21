@@ -3,6 +3,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use glob::Pattern;
 use rat_config::{
     self, load_generated_or_default, save_generated, ConfigError, FieldDef, GeneratedConfig,
     GeneratedMeta, GeneratedPacketDef, RatitudeConfig,
@@ -10,7 +11,7 @@ use rat_config::{
 use regex::Regex;
 use thiserror::Error;
 use tree_sitter::{Node, Parser, Tree};
-use walkdir::{DirEntry, WalkDir};
+use walkdir::WalkDir;
 
 const RAT_ID_MIN: u16 = 1;
 const RAT_ID_MAX: u16 = 0xFE;
@@ -74,6 +75,12 @@ struct FieldSpec {
     name: String,
     c_type: String,
     size: usize,
+}
+
+#[derive(Debug, Clone)]
+struct RttdIgnoreMatcher {
+    root: PathBuf,
+    patterns: Vec<Pattern>,
 }
 
 pub fn sync_packets(
@@ -142,7 +149,7 @@ fn discover_packets(
         .iter()
         .map(|ext| ext.to_ascii_lowercase())
         .collect();
-    let ignore_dirs: HashSet<String> = cfg.project.ignore_dirs.iter().cloned().collect();
+    let rttd_ignore = load_rttdignore(cfg.config_path())?;
 
     let mut walker = WalkDir::new(&scan_root)
         .follow_links(false)
@@ -156,11 +163,24 @@ fn discover_packets(
     let mut iter = walker.into_iter();
     while let Some(entry) = iter.next() {
         let entry = entry.map_err(|err| SyncError::Validation(err.to_string()))?;
-        if should_skip_dir(&entry, &scan_root, &ignore_dirs) {
-            iter.skip_current_dir();
+        if entry.file_type().is_dir() {
+            let skip_by_pattern = rttd_ignore
+                .as_ref()
+                .map(|matcher| matcher.is_ignored(entry.path()))
+                .unwrap_or(false);
+            if skip_by_pattern {
+                iter.skip_current_dir();
+            }
             continue;
         }
         if !entry.file_type().is_file() {
+            continue;
+        }
+        if rttd_ignore
+            .as_ref()
+            .map(|matcher| matcher.is_ignored(entry.path()))
+            .unwrap_or(false)
+        {
             continue;
         }
 
@@ -183,17 +203,60 @@ fn discover_packets(
     Ok(discovered)
 }
 
-fn should_skip_dir(entry: &DirEntry, scan_root: &Path, ignore_dirs: &HashSet<String>) -> bool {
-    if !entry.file_type().is_dir() {
-        return false;
+impl RttdIgnoreMatcher {
+    fn is_ignored(&self, path: &Path) -> bool {
+        let relative = path
+            .strip_prefix(&self.root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        self.patterns
+            .iter()
+            .any(|pattern| pattern.matches(&relative))
     }
-    if entry.path() == scan_root {
-        return false;
+}
+
+fn load_rttdignore(config_path: &Path) -> Result<Option<RttdIgnoreMatcher>, SyncError> {
+    let root = config_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    let ignore_path = root.join(".rttdignore");
+    if !ignore_path.exists() {
+        return Ok(None);
     }
-    match entry.file_name().to_str() {
-        Some(name) => ignore_dirs.contains(name),
-        None => false,
+
+    let raw = fs::read_to_string(&ignore_path).map_err(|source_err| SyncError::ReadSource {
+        path: ignore_path.clone(),
+        source: source_err,
+    })?;
+    let mut patterns = Vec::new();
+    for (idx, line) in raw.lines().enumerate() {
+        let line_no = idx + 1;
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if trimmed.starts_with('!') {
+            return Err(SyncError::Validation(format!(
+                ".rttdignore does not support negate patterns in {}:{}",
+                ignore_path.display(),
+                line_no
+            )));
+        }
+
+        let pattern = Pattern::new(trimmed).map_err(|err| {
+            SyncError::Validation(format!(
+                "invalid .rttdignore pattern in {}:{} ({})",
+                ignore_path.display(),
+                line_no,
+                err
+            ))
+        })?;
+        patterns.push(pattern);
     }
+
+    Ok(Some(RttdIgnoreMatcher { root, patterns }))
 }
 
 fn parse_tagged_file(path: &Path, scan_root: &Path) -> Result<Vec<DiscoveredPacket>, SyncError> {
@@ -1410,6 +1473,150 @@ typedef struct __attribute__((aligned(8))) {
 
         let err = sync_packets(&config_path, None).expect_err("aligned modifier should fail");
         assert!(err.to_string().contains("unsupported layout modifier"));
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn sync_packets_respects_rttdignore_glob_rules() {
+        let temp =
+            std::env::temp_dir().join(format!("rat_sync_ignore_glob_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(temp.join("src")).expect("mkdir");
+
+        let config_path = temp.join("rat.toml");
+        write_test_config(&config_path, "src");
+
+        fs::write(
+            temp.join(".rttdignore"),
+            "# ignore sensor packet\nsrc/ignore_me.c\n",
+        )
+        .expect("write .rttdignore");
+
+        let kept = r#"
+// @rat, plot
+typedef struct {
+  int32_t value;
+  uint32_t tick;
+} KeepPacket;
+"#;
+        let ignored = r#"
+// @rat, plot
+typedef struct {
+  int32_t value;
+  uint32_t tick;
+} IgnoredPacket;
+"#;
+        fs::write(temp.join("src").join("keep.c"), kept).expect("write kept source");
+        fs::write(temp.join("src").join("ignore_me.c"), ignored).expect("write ignored source");
+
+        let result = sync_packets(&config_path, None).expect("sync should pass");
+        assert_eq!(result.config.packets.len(), 1);
+        assert_eq!(result.config.packets[0].struct_name, "KeepPacket");
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn sync_packets_rttdignore_supports_comments_and_blank_lines() {
+        let temp =
+            std::env::temp_dir().join(format!("rat_sync_ignore_comments_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(temp.join("src")).expect("mkdir");
+
+        let config_path = temp.join("rat.toml");
+        write_test_config(&config_path, "src");
+
+        fs::write(temp.join(".rttdignore"), "\n# comment\n\nsrc/skip.c\n")
+            .expect("write .rttdignore");
+
+        let keep = r#"
+// @rat, plot
+typedef struct {
+  int32_t value;
+  uint32_t tick;
+} KeepPacket;
+"#;
+        let skip = r#"
+// @rat, plot
+typedef struct {
+  int32_t value;
+  uint32_t tick;
+} SkipPacket;
+"#;
+        fs::write(temp.join("src").join("keep.c"), keep).expect("write keep");
+        fs::write(temp.join("src").join("skip.c"), skip).expect("write skip");
+
+        let result = sync_packets(&config_path, None).expect("sync should pass");
+        assert_eq!(result.config.packets.len(), 1);
+        assert_eq!(result.config.packets[0].struct_name, "KeepPacket");
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn sync_packets_rttdignore_supports_directory_glob() {
+        let temp =
+            std::env::temp_dir().join(format!("rat_sync_ignore_dir_glob_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(temp.join("src").join("generated")).expect("mkdir generated");
+        fs::create_dir_all(temp.join("src").join("live")).expect("mkdir live");
+
+        let config_path = temp.join("rat.toml");
+        write_test_config(&config_path, "src");
+        fs::write(temp.join(".rttdignore"), "src/generated/**\n").expect("write .rttdignore");
+
+        let keep = r#"
+// @rat, plot
+typedef struct {
+  int32_t value;
+  uint32_t tick;
+} LivePacket;
+"#;
+        let skip = r#"
+// @rat, plot
+typedef struct {
+  int32_t value;
+  uint32_t tick;
+} GeneratedPacket;
+"#;
+        fs::write(temp.join("src").join("live").join("keep.c"), keep).expect("write keep");
+        fs::write(temp.join("src").join("generated").join("skip.c"), skip).expect("write skip");
+
+        let result = sync_packets(&config_path, None).expect("sync should pass");
+        assert_eq!(result.config.packets.len(), 1);
+        assert_eq!(result.config.packets[0].struct_name, "LivePacket");
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn sync_packets_rejects_rttdignore_negate_pattern() {
+        let temp =
+            std::env::temp_dir().join(format!("rat_sync_ignore_negate_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(temp.join("src")).expect("mkdir");
+
+        let config_path = temp.join("rat.toml");
+        write_test_config(&config_path, "src");
+        fs::write(temp.join(".rttdignore"), "!src/*.c\n").expect("write .rttdignore");
+        fs::write(
+            temp.join("src").join("main.c"),
+            r#"
+// @rat, plot
+typedef struct {
+  int32_t value;
+  uint32_t tick;
+} KeepPacket;
+"#,
+        )
+        .expect("write source");
+
+        let err = sync_packets(&config_path, None).expect_err("negate pattern should fail");
+        assert!(
+            err.to_string().contains("does not support negate patterns"),
+            "unexpected error: {err:#}"
+        );
 
         let _ = fs::remove_dir_all(&temp);
     }

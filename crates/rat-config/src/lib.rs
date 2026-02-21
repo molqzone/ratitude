@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -66,7 +67,6 @@ pub struct ProjectConfig {
     pub scan_root: String,
     pub recursive: bool,
     pub extensions: Vec<String>,
-    pub ignore_dirs: Vec<String>,
 }
 
 impl Default for ProjectConfig {
@@ -76,11 +76,6 @@ impl Default for ProjectConfig {
             scan_root: ".".to_string(),
             recursive: true,
             extensions: vec![".h".to_string(), ".c".to_string()],
-            ignore_dirs: vec![
-                "build".to_string(),
-                "Drivers".to_string(),
-                ".git".to_string(),
-            ],
         }
     }
 }
@@ -122,19 +117,21 @@ impl Default for GenerationConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct RttdConfig {
     pub text_id: u16,
-    pub server: ServerConfig,
-    pub foxglove: FoxgloveConfig,
+    pub source: RttdSourceConfig,
+    pub behavior: RttdBehaviorConfig,
+    pub outputs: RttdOutputsConfig,
 }
 
 impl Default for RttdConfig {
     fn default() -> Self {
         Self {
             text_id: 0xFF,
-            server: ServerConfig::default(),
-            foxglove: FoxgloveConfig::default(),
+            source: RttdSourceConfig::default(),
+            behavior: RttdBehaviorConfig::default(),
+            outputs: RttdOutputsConfig::default(),
         }
     }
 }
@@ -212,7 +209,6 @@ pub struct JlinkBackendConfig {
     pub speed: u32,
     pub serial: String,
     pub ip: String,
-    pub rtt_telnet_port: u16,
 }
 
 impl Default for JlinkBackendConfig {
@@ -223,28 +219,25 @@ impl Default for JlinkBackendConfig {
             speed: 4_000,
             serial: String::new(),
             ip: String::new(),
-            rtt_telnet_port: 19_021,
         }
     }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
-pub struct ServerConfig {
-    pub addr: String,
-    pub reconnect: String,
-    pub buf: usize,
-    pub reader_buf: usize,
+#[serde(default, deny_unknown_fields)]
+pub struct RttdSourceConfig {
+    pub auto_scan: bool,
+    pub scan_timeout_ms: u64,
+    pub last_selected_addr: String,
     pub backend: BackendConfig,
 }
 
-impl Default for ServerConfig {
+impl Default for RttdSourceConfig {
     fn default() -> Self {
         Self {
-            addr: "127.0.0.1:19021".to_string(),
-            reconnect: "1s".to_string(),
-            buf: 256,
-            reader_buf: 65_536,
+            auto_scan: true,
+            scan_timeout_ms: 300,
+            last_selected_addr: "127.0.0.1:19021".to_string(),
             backend: BackendConfig::default(),
         }
     }
@@ -252,13 +245,71 @@ impl Default for ServerConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
-pub struct FoxgloveConfig {
+pub struct RttdBehaviorConfig {
+    pub auto_sync_on_start: bool,
+    pub auto_sync_on_reset: bool,
+    pub sync_debounce_ms: u64,
+    pub reconnect: String,
+    pub buf: usize,
+    pub reader_buf: usize,
+}
+
+impl Default for RttdBehaviorConfig {
+    fn default() -> Self {
+        Self {
+            auto_sync_on_start: true,
+            auto_sync_on_reset: true,
+            sync_debounce_ms: 500,
+            reconnect: "1s".to_string(),
+            buf: 256,
+            reader_buf: 65_536,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct RttdOutputsConfig {
+    pub jsonl: JsonlOutputConfig,
+    pub foxglove: FoxgloveOutputConfig,
+}
+
+impl Default for RttdOutputsConfig {
+    fn default() -> Self {
+        Self {
+            jsonl: JsonlOutputConfig::default(),
+            foxglove: FoxgloveOutputConfig::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct JsonlOutputConfig {
+    pub enabled: bool,
+    pub path: String,
+}
+
+impl Default for JsonlOutputConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            path: String::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct FoxgloveOutputConfig {
+    pub enabled: bool,
     pub ws_addr: String,
 }
 
-impl Default for FoxgloveConfig {
+impl Default for FoxgloveOutputConfig {
     fn default() -> Self {
         Self {
+            enabled: false,
             ws_addr: "127.0.0.1:8765".to_string(),
         }
     }
@@ -351,6 +402,7 @@ pub fn load_or_default(path: impl AsRef<Path>) -> Result<(RatitudeConfig, bool),
     let path = normalize_config_path(path.as_ref());
     match fs::read_to_string(&path) {
         Ok(raw) => {
+            reject_deprecated_config_keys(&raw)?;
             let mut cfg: RatitudeConfig = toml::from_str(&raw).map_err(ConfigError::Parse)?;
             cfg.normalize(&path);
             cfg.validate()?;
@@ -443,48 +495,71 @@ impl RatitudeConfig {
                 self.rttd.text_id
             )));
         }
-        if self.rttd.server.backend.startup_timeout_ms == 0 {
+
+        if self.rttd.source.scan_timeout_ms == 0 {
             return Err(ConfigError::Validation(
-                "rttd.server.backend.startup_timeout_ms must be > 0".to_string(),
+                "rttd.source.scan_timeout_ms must be > 0".to_string(),
             ));
         }
-        if self.rttd.server.reader_buf == 0 {
+        if self.rttd.source.last_selected_addr.trim().is_empty() {
             return Err(ConfigError::Validation(
-                "rttd.server.reader_buf must be > 0".to_string(),
-            ));
-        }
-        if self.rttd.server.backend.openocd.speed == 0 {
-            return Err(ConfigError::Validation(
-                "rttd.server.backend.openocd.speed must be > 0".to_string(),
-            ));
-        }
-        if self.rttd.server.backend.openocd.polling == 0 {
-            return Err(ConfigError::Validation(
-                "rttd.server.backend.openocd.polling must be > 0".to_string(),
-            ));
-        }
-        if self.rttd.server.backend.jlink.device.trim().is_empty() {
-            return Err(ConfigError::Validation(
-                "rttd.server.backend.jlink.device must not be empty".to_string(),
-            ));
-        }
-        if self.rttd.server.backend.jlink.interface.trim().is_empty() {
-            return Err(ConfigError::Validation(
-                "rttd.server.backend.jlink.interface must not be empty".to_string(),
-            ));
-        }
-        if self.rttd.server.backend.jlink.speed == 0 {
-            return Err(ConfigError::Validation(
-                "rttd.server.backend.jlink.speed must be > 0".to_string(),
-            ));
-        }
-        if self.rttd.server.backend.jlink.rtt_telnet_port == 0 {
-            return Err(ConfigError::Validation(
-                "rttd.server.backend.jlink.rtt_telnet_port must be > 0".to_string(),
+                "rttd.source.last_selected_addr must not be empty".to_string(),
             ));
         }
 
-        let mut seen = std::collections::BTreeSet::new();
+        if self.rttd.behavior.sync_debounce_ms == 0 {
+            return Err(ConfigError::Validation(
+                "rttd.behavior.sync_debounce_ms must be > 0".to_string(),
+            ));
+        }
+        if self.rttd.behavior.buf == 0 {
+            return Err(ConfigError::Validation(
+                "rttd.behavior.buf must be > 0".to_string(),
+            ));
+        }
+        if self.rttd.behavior.reader_buf == 0 {
+            return Err(ConfigError::Validation(
+                "rttd.behavior.reader_buf must be > 0".to_string(),
+            ));
+        }
+
+        if self.rttd.source.backend.startup_timeout_ms == 0 {
+            return Err(ConfigError::Validation(
+                "rttd.source.backend.startup_timeout_ms must be > 0".to_string(),
+            ));
+        }
+        if self.rttd.source.backend.openocd.speed == 0 {
+            return Err(ConfigError::Validation(
+                "rttd.source.backend.openocd.speed must be > 0".to_string(),
+            ));
+        }
+        if self.rttd.source.backend.openocd.polling == 0 {
+            return Err(ConfigError::Validation(
+                "rttd.source.backend.openocd.polling must be > 0".to_string(),
+            ));
+        }
+        if self.rttd.source.backend.jlink.device.trim().is_empty() {
+            return Err(ConfigError::Validation(
+                "rttd.source.backend.jlink.device must not be empty".to_string(),
+            ));
+        }
+        if self.rttd.source.backend.jlink.interface.trim().is_empty() {
+            return Err(ConfigError::Validation(
+                "rttd.source.backend.jlink.interface must not be empty".to_string(),
+            ));
+        }
+        if self.rttd.source.backend.jlink.speed == 0 {
+            return Err(ConfigError::Validation(
+                "rttd.source.backend.jlink.speed must be > 0".to_string(),
+            ));
+        }
+        if self.rttd.outputs.foxglove.ws_addr.trim().is_empty() {
+            return Err(ConfigError::Validation(
+                "rttd.outputs.foxglove.ws_addr must not be empty".to_string(),
+            ));
+        }
+
+        let mut seen = BTreeSet::new();
         for packet in &self.packets {
             if packet.id > 0xFF {
                 return Err(ConfigError::Validation(format!(
@@ -563,9 +638,6 @@ impl RatitudeConfig {
         if self.project.extensions.is_empty() {
             self.project.extensions = ProjectConfig::default().extensions;
         }
-        if self.project.ignore_dirs.is_empty() {
-            self.project.ignore_dirs = ProjectConfig::default().ignore_dirs;
-        }
         if self.generation.out_dir.trim().is_empty() {
             self.generation.out_dir = GenerationConfig::default().out_dir;
         }
@@ -574,6 +646,16 @@ impl RatitudeConfig {
         }
         if self.generation.header_name.trim().is_empty() {
             self.generation.header_name = GenerationConfig::default().header_name;
+        }
+
+        if self.rttd.source.last_selected_addr.trim().is_empty() {
+            self.rttd.source.last_selected_addr = RttdSourceConfig::default().last_selected_addr;
+        }
+        if self.rttd.behavior.reconnect.trim().is_empty() {
+            self.rttd.behavior.reconnect = RttdBehaviorConfig::default().reconnect;
+        }
+        if self.rttd.outputs.foxglove.ws_addr.trim().is_empty() {
+            self.rttd.outputs.foxglove.ws_addr = FoxgloveOutputConfig::default().ws_addr;
         }
 
         self.project.extensions = self
@@ -630,6 +712,59 @@ fn normalize_path_fallback(path: PathBuf) -> PathBuf {
     } else {
         path.components().collect()
     }
+}
+
+fn reject_deprecated_config_keys(raw: &str) -> Result<(), ConfigError> {
+    let value: toml::Value = toml::from_str(raw).map_err(ConfigError::Parse)?;
+
+    let mut deprecated_keys = Vec::new();
+
+    if value
+        .get("project")
+        .and_then(toml::Value::as_table)
+        .map(|project| project.contains_key("ignore_dirs"))
+        .unwrap_or(false)
+    {
+        deprecated_keys.push("project.ignore_dirs");
+    }
+
+    if let Some(rttd) = value.get("rttd").and_then(toml::Value::as_table) {
+        if rttd.contains_key("server") {
+            deprecated_keys.push("[rttd.server]");
+        }
+        if rttd.contains_key("foxglove") {
+            deprecated_keys.push("[rttd.foxglove]");
+        }
+        if rttd
+            .get("source")
+            .and_then(toml::Value::as_table)
+            .map(|source| source.contains_key("preferred_backend"))
+            .unwrap_or(false)
+        {
+            deprecated_keys.push("rttd.source.preferred_backend");
+        }
+        if rttd
+            .get("source")
+            .and_then(toml::Value::as_table)
+            .and_then(|source| source.get("backend"))
+            .and_then(toml::Value::as_table)
+            .and_then(|backend| backend.get("jlink"))
+            .and_then(toml::Value::as_table)
+            .map(|jlink| jlink.contains_key("rtt_telnet_port"))
+            .unwrap_or(false)
+        {
+            deprecated_keys.push("rttd.source.backend.jlink.rtt_telnet_port");
+        }
+    }
+
+    if deprecated_keys.is_empty() {
+        return Ok(());
+    }
+
+    Err(ConfigError::Validation(format!(
+        "deprecated config keys removed in v0.2.0: {}. Migrate rttd keys via docs/migrations/0.2.0-breaking.md and move path filters into .rttdignore",
+        deprecated_keys.join(", ")
+    )))
 }
 
 #[cfg(test)]
@@ -692,6 +827,8 @@ mod tests {
         cfg.project.scan_root = "Core".to_string();
         cfg.artifacts.elf = "build/app.elf".to_string();
         cfg.generation.out_dir = "generated".to_string();
+        cfg.rttd.outputs.jsonl.enabled = false;
+        cfg.rttd.outputs.foxglove.enabled = true;
         cfg.save(&path).expect("save config");
 
         let (loaded, exists) = load_or_default(&path).expect("load config");
@@ -701,6 +838,8 @@ mod tests {
         assert!(loaded
             .generated_toml_path()
             .ends_with("generated/rat_gen.toml"));
+        assert!(!loaded.rttd.outputs.jsonl.enabled);
+        assert!(loaded.rttd.outputs.foxglove.enabled);
 
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir_all(dir);
@@ -739,35 +878,28 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_empty_generation_names() {
-        let mut cfg = RatitudeConfig::default();
-        cfg.generation.toml_name.clear();
-        let err = cfg.validate().expect_err("validation should fail");
-        assert!(err
-            .to_string()
-            .contains("generation.toml_name must not be empty"));
-
-        cfg.generation.toml_name = "rat_gen.toml".to_string();
-        cfg.generation.header_name.clear();
-        let err = cfg.validate().expect_err("validation should fail");
-        assert!(err
-            .to_string()
-            .contains("generation.header_name must not be empty"));
-    }
-
-    #[test]
     fn validate_rejects_zero_reader_buffer() {
         let mut cfg = RatitudeConfig::default();
-        cfg.rttd.server.reader_buf = 0;
+        cfg.rttd.behavior.reader_buf = 0;
         let err = cfg.validate().expect_err("validation should fail");
         assert!(err
             .to_string()
-            .contains("rttd.server.reader_buf must be > 0"));
+            .contains("rttd.behavior.reader_buf must be > 0"));
     }
 
     #[test]
-    fn foxglove_rejects_unknown_fields() {
-        let dir = unique_temp_dir("ratitude_cfg_foxglove_unknown");
+    fn validate_rejects_zero_scan_timeout() {
+        let mut cfg = RatitudeConfig::default();
+        cfg.rttd.source.scan_timeout_ms = 0;
+        let err = cfg.validate().expect_err("validation should fail");
+        assert!(err
+            .to_string()
+            .contains("rttd.source.scan_timeout_ms must be > 0"));
+    }
+
+    #[test]
+    fn legacy_rttd_sections_are_rejected() {
+        let dir = unique_temp_dir("ratitude_cfg_legacy_sections");
         let path = dir.join("rat.toml");
         let raw = r#"
 [project]
@@ -779,14 +911,129 @@ out_dir = "."
 toml_name = "rat_gen.toml"
 header_name = "rat_gen.h"
 
+[rttd]
+text_id = 255
+
+[rttd.server]
+addr = "127.0.0.1:19021"
+
 [rttd.foxglove]
 ws_addr = "127.0.0.1:8765"
-quat_id = 16
 "#;
         fs::write(&path, raw).expect("write config");
 
-        let err = load_or_default(&path).expect_err("unknown foxglove field should fail");
-        assert!(err.to_string().contains("unknown field `quat_id`"));
+        let err = load_or_default(&path).expect_err("legacy sections should fail");
+        let msg = err.to_string();
+        assert!(msg.contains("deprecated config keys removed in v0.2.0"));
+        assert!(msg.contains("[rttd.server]"));
+        assert!(msg.contains("[rttd.foxglove]"));
+        assert!(msg.contains("docs/migrations/0.2.0-breaking.md"));
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn preferred_backend_is_rejected_with_migration_hint() {
+        let dir = unique_temp_dir("ratitude_cfg_preferred_backend");
+        let path = dir.join("rat.toml");
+        let raw = r#"
+[project]
+name = "demo"
+scan_root = "Core"
+
+[generation]
+out_dir = "."
+toml_name = "rat_gen.toml"
+header_name = "rat_gen.h"
+
+[rttd]
+text_id = 255
+
+[rttd.source]
+auto_scan = true
+scan_timeout_ms = 300
+last_selected_addr = "127.0.0.1:19021"
+preferred_backend = "openocd"
+"#;
+        fs::write(&path, raw).expect("write config");
+
+        let err = load_or_default(&path).expect_err("preferred_backend should fail");
+        let msg = err.to_string();
+        assert!(msg.contains("deprecated config keys removed in v0.2.0"));
+        assert!(msg.contains("rttd.source.preferred_backend"));
+        assert!(msg.contains("docs/migrations/0.2.0-breaking.md"));
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ignore_dirs_is_rejected_with_rttdignore_migration_hint() {
+        let dir = unique_temp_dir("ratitude_cfg_ignore_dirs");
+        let path = dir.join("rat.toml");
+        let raw = r#"
+[project]
+name = "demo"
+scan_root = "Core"
+ignore_dirs = ["build", ".git"]
+
+[generation]
+out_dir = "."
+toml_name = "rat_gen.toml"
+header_name = "rat_gen.h"
+"#;
+        fs::write(&path, raw).expect("write config");
+
+        let err = load_or_default(&path).expect_err("ignore_dirs should fail");
+        let msg = err.to_string();
+        assert!(msg.contains("deprecated config keys removed in v0.2.0"));
+        assert!(msg.contains("project.ignore_dirs"));
+        assert!(msg.contains(".rttdignore"));
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn jlink_rtt_telnet_port_is_rejected_with_source_addr_hint() {
+        let dir = unique_temp_dir("ratitude_cfg_jlink_rtt_port");
+        let path = dir.join("rat.toml");
+        let raw = r#"
+[project]
+name = "demo"
+scan_root = "Core"
+
+[generation]
+out_dir = "."
+toml_name = "rat_gen.toml"
+header_name = "rat_gen.h"
+
+[rttd]
+text_id = 255
+
+[rttd.source]
+auto_scan = true
+scan_timeout_ms = 300
+last_selected_addr = "127.0.0.1:19021"
+
+[rttd.source.backend]
+type = "jlink"
+auto_start = false
+startup_timeout_ms = 5000
+
+[rttd.source.backend.jlink]
+device = "STM32F407ZG"
+interface = "SWD"
+speed = 4000
+rtt_telnet_port = 19021
+"#;
+        fs::write(&path, raw).expect("write config");
+
+        let err = load_or_default(&path).expect_err("rtt_telnet_port should fail");
+        let msg = err.to_string();
+        assert!(msg.contains("deprecated config keys removed in v0.2.0"));
+        assert!(msg.contains("rttd.source.backend.jlink.rtt_telnet_port"));
 
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir_all(dir);

@@ -1,18 +1,20 @@
-# 配置与生成文件说明
+# 配置与生成文件说明（v0.2）
 
 ## 文件分工
 
-## `rat.toml`（手工维护）
+## `rat.toml`（手工维护 + 命令台持久化）
 
-用途：项目级配置与运行配置。
+用途：运行时 wiring 与扫描范围配置。
 
-关键区块：
+核心区块：
 
 - `[project]`：源码扫描范围
-- `[artifacts]`：elf/hex/bin 路径
-- `[generation]`：`rat_gen.*` 生成位置与文件名
-- `[rttd.server.*]`：RTT 连接参数与 backend 启动参数
-- `[rttd.foxglove]`：仅保留 `ws_addr`（严格拒绝未知字段）
+- `[artifacts]`：产物路径
+- `[generation]`：生成文件位置
+- `[rttd.source]`：source 扫描与后台设置
+- `[rttd.behavior]`：自动同步与 runtime 行为
+- `[rttd.outputs.jsonl]`：JSONL 输出
+- `[rttd.outputs.foxglove]`：Foxglove 输出
 
 示例：
 
@@ -22,68 +24,81 @@ name = "stm32f4_rtt"
 scan_root = "Core"
 recursive = true
 extensions = [".h", ".c"]
-ignore_dirs = ["build", "Drivers", ".git"]
-
-[artifacts]
-elf = "build/Debug/stm32f4_rtt.elf"
 
 [generation]
 out_dir = "."
 toml_name = "rat_gen.toml"
 header_name = "rat_gen.h"
 
-[rttd.server]
-addr = "127.0.0.1:19021"
+[rttd]
+text_id = 255
+
+[rttd.source]
+auto_scan = true
+scan_timeout_ms = 300
+last_selected_addr = "127.0.0.1:19021"
+
+[rttd.source.backend]
+type = "none"
+auto_start = false
+startup_timeout_ms = 5000
+
+[rttd.behavior]
+auto_sync_on_start = true
+auto_sync_on_reset = true
+sync_debounce_ms = 500
 reconnect = "1s"
 buf = 256
 reader_buf = 65536
 
-[rttd.foxglove]
+[rttd.outputs.jsonl]
+enabled = true
+path = ""
+
+[rttd.outputs.foxglove]
+enabled = false
 ws_addr = "127.0.0.1:8765"
 ```
 
-## `rat_gen.toml`（自动生成，主机读取）
+说明：
 
-用途：保存“声明解析结果 + 分配后的 packet id + 指纹”。
+- `last_selected_addr` 的端口号是 J-Link RTT Telnet 端口的唯一来源（`rtt_telnet_port` 已移除）。
+- 命令台是主配置入口之一：`$source use`、`$foxglove on|off`、`$jsonl on|off [path]` 会写回该文件。
+
+## `rat_gen.toml`（自动生成）
+
+用途：主机解码声明来源。
 
 特点：
 
 - 不建议人工编辑
-- 每次 `rttd sync` 可能更新
-- `rttd server` / `rttd foxglove` 运行时都只使用它作为解码声明来源
-- `rat_gen.toml` 缺失或 `packets=[]` 时，两种模式都会直接失败
-- `packets[*].source` 仅用于审计溯源（声明来自哪个源文件），不参与 packet 身份签名与 ID 分配
+- 由内部同步逻辑更新
+- `packets[*].source` 仅用于溯源，不参与签名身份
 
-`rttd.server.reader_buf` 语义：
+## `rat_gen.h`（自动生成）
 
-- 作用于 RTT 传输层零分隔帧读取缓冲区（bytes）
-- 必须 `> 0`
-- `server` 可通过 `--reader-buf` 临时覆盖该值
+用途：固件编译期 ID 与指纹宏。
 
-## `rat_gen.h`（自动生成，固件编译使用）
-
-用途：固件侧 packet id 与配置指纹宏。
-
-典型内容：
+包含：
 
 - `RAT_GEN_FINGERPRINT`
 - `RAT_GEN_PACKET_COUNT`
 - `RAT_ID_<STRUCT_NAME>`
 
-## Mock 专用配置（开箱联调）
+## `.rttdignore`
 
-新增目录：`examples/mock/`
+用途：在同步扫描时排除源码路径。
 
-- `examples/mock/rat.toml`
-- `examples/mock/rat_gen.toml`
+示例：
 
-用途：
+```gitignore
+build/**
+Drivers/**
+.git/**
+```
 
-- 为 `tools/openocd_rtt_mock.py` 和 `rttd foxglove` 提供一套独立、可复现的本地联调配置
-- 所有 mock 发包 ID 与字段结构严格来源于 `examples/mock/rat_gen.toml`
+规则：
 
-## 路径解析规则
-
-- 相对路径按 `rat.toml` 所在目录解析
-- `generation.out_dir` 也是相对 `rat.toml` 目录
-- mock 场景建议直接使用 `examples/mock/rat.toml`，避免污染真实固件工程配置
+- 支持注释行（`#`）和空行
+- 支持 glob
+- 不支持 `!` 反选

@@ -1,8 +1,7 @@
 param(
     [string]$Config = "examples/mock/rat.toml",
     [string]$Host = "127.0.0.1",
-    [int]$Port = 19021,
-    [string]$WsAddr = "127.0.0.1:8765"
+    [int]$Port = 19021
 )
 
 $repoRoot = (Resolve-Path (Join-Path "${PSScriptRoot}" "..")).Path
@@ -14,12 +13,6 @@ $configPath = (Resolve-Path $configPath).Path
 $mockScript = Join-Path $repoRoot "tools/openocd_rtt_mock.py"
 
 Push-Location $repoRoot
-
-cargo run -p rttd -- sync --config "$configPath"
-if ($LASTEXITCODE -ne 0) {
-    Pop-Location
-    exit $LASTEXITCODE
-}
 
 $mockProc = $null
 try {
@@ -35,14 +28,7 @@ try {
 
     Start-Sleep -Milliseconds 300
 
-    cargo run -p rttd -- foxglove `
-        --config "$configPath" `
-        --addr "$Host`:$Port" `
-        --ws-addr "$WsAddr" `
-        --backend none `
-        --no-auto-start-backend `
-        --no-auto-sync
-
+    cargo run -p rttd -- --config "$configPath"
     exit $LASTEXITCODE
 }
 finally {

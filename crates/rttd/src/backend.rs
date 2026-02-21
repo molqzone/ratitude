@@ -40,7 +40,7 @@ impl BackendRuntime {
                 Ok(runtime)
             }
             BackendType::Jlink => {
-                let child = spawn_jlink(config)?;
+                let child = spawn_jlink(config, addr)?;
                 let runtime = Self {
                     child: Some(child),
                     kind: BackendType::Jlink,
@@ -96,7 +96,7 @@ fn spawn_openocd(config: &BackendConfig, addr: &str) -> Result<Child> {
     let openocd = &config.openocd;
     if openocd.elf.trim().is_empty() {
         return Err(anyhow!(
-            "openocd backend requires rttd.server.backend.openocd.elf"
+            "openocd backend requires rttd.source.backend.openocd.elf"
         ));
     }
 
@@ -156,8 +156,9 @@ fn spawn_openocd(config: &BackendConfig, addr: &str) -> Result<Child> {
         .context("failed to start openocd backend process")
 }
 
-fn spawn_jlink(config: &BackendConfig) -> Result<Child> {
+fn spawn_jlink(config: &BackendConfig, addr: &str) -> Result<Child> {
     let jlink = &config.jlink;
+    let rtt_telnet_port = parse_port(addr)?;
 
     let mut command = Command::new("JLinkGDBServerCLExe");
     command
@@ -168,7 +169,7 @@ fn spawn_jlink(config: &BackendConfig) -> Result<Child> {
         .arg("-device")
         .arg(&jlink.device)
         .arg("-RTTTelnetPort")
-        .arg(jlink.rtt_telnet_port.to_string())
+        .arg(rtt_telnet_port.to_string())
         .arg("-silent")
         .arg("-singlerun");
 
@@ -183,7 +184,7 @@ fn spawn_jlink(config: &BackendConfig) -> Result<Child> {
         device = %jlink.device,
         interface = %jlink.interface,
         speed = jlink.speed,
-        rtt_port = jlink.rtt_telnet_port,
+        rtt_port = rtt_telnet_port,
         "starting J-Link RTT backend"
     );
 

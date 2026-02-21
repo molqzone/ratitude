@@ -1,0 +1,3 @@
+# Keep sync scope focused on source files used by the mock demo.
+target/**
+.git/**
