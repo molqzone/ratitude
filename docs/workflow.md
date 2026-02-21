@@ -21,7 +21,7 @@ cargo run -p rttd -- --config <path/to/rat.toml>
 启动行为：
 
 1. 读取 `rat.toml`
-2. 自动扫描 source 候选地址
+2. 扫描 source 候选地址（`auto_scan=false` 时仅探测 `last_selected_addr`）
 3. 选择 source 并持久化
 4. 触发启动自动同步（可在配置关闭）
 5. 加载 `rat_gen.toml` 并校验指纹
@@ -43,6 +43,8 @@ cargo run -p rttd -- --config <path/to/rat.toml>
 持久化规则：
 
 - 命令台是主配置入口之一。
+- `$source list` 与 `$source use` 每次执行前都会实时刷新候选源，可达性不是启动快照。
+- 候选索引会随刷新结果变化；`$source use <index>` 以刷新后的列表为准。
 - `$source use`、`$foxglove on|off`、`$jsonl on|off [path]` 会持久化写回 `rat.toml`。
 - 运行时重启会重建 JSONL writer；当 `$jsonl on <path>` 生效时，目标文件按清空重写处理（非追加）。
 - `$sync` 只更新生成物（`rat_gen.toml`/`rat_gen.h`），不写 `rttd.outputs`/`rttd.source` 运行配置。

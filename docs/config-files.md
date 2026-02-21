@@ -59,6 +59,7 @@ ws_addr = "127.0.0.1:8765"
 
 - `rttd` 不再负责启动/管理 backend 进程；仅连接既有 RTT 端口。
 - `last_selected_addr` 的端口号是 J-Link RTT Telnet 端口的唯一来源（`rtt_telnet_port` 已移除）。
+- `rttd.source.auto_scan = false` 时，只会探测 `last_selected_addr`，不再注入默认端口候选；`reachable` 始终来自实时探测结果。
 - 命令台是主配置入口之一：`$source use`、`$foxglove on|off`、`$jsonl on|off [path]` 会写回该文件。
 - 设计约束：runtime 每次重启都会重新创建 JSONL writer；当 `rttd.outputs.jsonl.enabled = true` 且配置了 `path` 时，目标文件会被清空重写（非追加）。
 

@@ -16,18 +16,10 @@ pub async fn discover_sources(config: &RttdSourceConfig) -> Vec<SourceCandidate>
         addresses.insert(config.last_selected_addr.trim().to_string());
     }
 
-    addresses.insert("127.0.0.1:19021".to_string());
-    addresses.insert("127.0.0.1:2331".to_string());
-    addresses.insert("127.0.0.1:9090".to_string());
-
-    if !config.auto_scan {
-        return addresses
-            .into_iter()
-            .map(|addr| SourceCandidate {
-                reachable: addr == config.last_selected_addr,
-                addr,
-            })
-            .collect();
+    if config.auto_scan {
+        addresses.insert("127.0.0.1:19021".to_string());
+        addresses.insert("127.0.0.1:2331".to_string());
+        addresses.insert("127.0.0.1:9090".to_string());
     }
 
     let timeout = Duration::from_millis(config.scan_timeout_ms.max(1));
@@ -81,6 +73,9 @@ async fn probe_addr(addr: &str, timeout: Duration) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use rat_config::RttdSourceConfig;
+    use tokio::net::TcpListener;
+
     use super::*;
 
     #[test]
@@ -107,5 +102,58 @@ mod tests {
             select_default_source(&[], "127.0.0.1:19021"),
             "127.0.0.1:19021"
         );
+    }
+
+    #[tokio::test]
+    async fn auto_scan_false_only_probes_last_selected_addr_when_reachable() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("local addr").to_string();
+
+        let config = RttdSourceConfig {
+            auto_scan: false,
+            scan_timeout_ms: 100,
+            last_selected_addr: addr.clone(),
+        };
+        let candidates = discover_sources(&config).await;
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].addr, addr);
+        assert!(candidates[0].reachable);
+    }
+
+    #[tokio::test]
+    async fn auto_scan_false_only_probes_last_selected_addr_when_unreachable() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("local addr").to_string();
+        drop(listener);
+
+        let config = RttdSourceConfig {
+            auto_scan: false,
+            scan_timeout_ms: 100,
+            last_selected_addr: addr.clone(),
+        };
+        let candidates = discover_sources(&config).await;
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].addr, addr);
+        assert!(!candidates[0].reachable);
+    }
+
+    #[tokio::test]
+    async fn auto_scan_true_keeps_default_candidate_set() {
+        let config = RttdSourceConfig {
+            auto_scan: true,
+            scan_timeout_ms: 1,
+            last_selected_addr: String::new(),
+        };
+        let candidates = discover_sources(&config).await;
+        let addresses = candidates
+            .into_iter()
+            .map(|item| item.addr)
+            .collect::<Vec<_>>();
+
+        assert!(addresses.contains(&"127.0.0.1:19021".to_string()));
+        assert!(addresses.contains(&"127.0.0.1:2331".to_string()));
+        assert!(addresses.contains(&"127.0.0.1:9090".to_string()));
     }
 }

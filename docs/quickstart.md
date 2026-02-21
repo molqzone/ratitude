@@ -29,6 +29,7 @@ $jsonl on out.jsonl
 ```
 
 这些命令中，`$source use`、`$foxglove on|off`、`$jsonl on|off [path]` 会持久化写回 `rat.toml`。
+注意：`$source list` / `$source use` 执行前会实时刷新候选，索引可能随可达性变化。
 
 停止：
 

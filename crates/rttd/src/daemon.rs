@@ -209,11 +209,13 @@ async fn handle_console_command(
             );
         }
         ConsoleCommand::SourceList => {
-            render_candidates(&state.source_candidates);
+            refresh_source_candidates(state, true).await;
         }
         ConsoleCommand::SourceUse(index) => {
+            refresh_source_candidates(state, false).await;
             let Some(candidate) = state.source_candidates.get(index) else {
                 println!("invalid source index: {}", index);
+                render_candidates(&state.source_candidates);
                 return Ok(action);
             };
             state.active_source = candidate.addr.clone();
@@ -280,6 +282,13 @@ async fn handle_console_command(
     }
 
     Ok(action)
+}
+
+async fn refresh_source_candidates(state: &mut DaemonState, render: bool) {
+    state.source_candidates = discover_sources(&state.config.rttd.source).await;
+    if render {
+        render_candidates(&state.source_candidates);
+    }
 }
 
 async fn activate_runtime(
@@ -668,6 +677,8 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use tokio::net::TcpListener;
+
     use super::*;
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {
@@ -777,6 +788,99 @@ mod tests {
 
         let _ = fs::remove_file(&config_path);
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn source_list_refreshes_candidates_before_render() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("local addr").to_string();
+
+        let mut cfg = RatitudeConfig::default();
+        cfg.rttd.source.auto_scan = false;
+        cfg.rttd.source.scan_timeout_ms = 100;
+        cfg.rttd.source.last_selected_addr = addr.clone();
+
+        let mut state = DaemonState {
+            config_path: String::new(),
+            config: cfg.clone(),
+            source_candidates: vec![
+                SourceCandidate {
+                    addr: "127.0.0.1:19021".to_string(),
+                    reachable: false,
+                },
+                SourceCandidate {
+                    addr: "127.0.0.1:2331".to_string(),
+                    reachable: false,
+                },
+            ],
+            active_source: addr.clone(),
+            packets: Vec::new(),
+        };
+        let mut output_manager = OutputManager::from_config(&cfg);
+        let mut sync_controller = SyncController::new("/tmp/non-existent-rat.toml".to_string(), 1);
+
+        let action = handle_console_command(
+            ConsoleCommand::SourceList,
+            &mut state,
+            &mut output_manager,
+            &mut sync_controller,
+        )
+        .await
+        .expect("source list");
+        assert!(!action.should_quit);
+        assert!(!action.restart_runtime);
+        assert_eq!(state.source_candidates.len(), 1);
+        assert_eq!(state.source_candidates[0].addr, addr);
+        assert!(state.source_candidates[0].reachable);
+    }
+
+    #[tokio::test]
+    async fn source_use_revalidates_index_against_refreshed_candidates() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("local addr").to_string();
+
+        let mut cfg = RatitudeConfig::default();
+        cfg.rttd.source.auto_scan = false;
+        cfg.rttd.source.scan_timeout_ms = 100;
+        cfg.rttd.source.last_selected_addr = addr.clone();
+
+        let original_active = addr.clone();
+        let mut state = DaemonState {
+            config_path: String::new(),
+            config: cfg.clone(),
+            source_candidates: vec![
+                SourceCandidate {
+                    addr: addr.clone(),
+                    reachable: true,
+                },
+                SourceCandidate {
+                    addr: "127.0.0.1:65535".to_string(),
+                    reachable: true,
+                },
+            ],
+            active_source: original_active.clone(),
+            packets: Vec::new(),
+        };
+        let mut output_manager = OutputManager::from_config(&cfg);
+        let mut sync_controller = SyncController::new("/tmp/non-existent-rat.toml".to_string(), 1);
+
+        let action = handle_console_command(
+            ConsoleCommand::SourceUse(1),
+            &mut state,
+            &mut output_manager,
+            &mut sync_controller,
+        )
+        .await
+        .expect("source use");
+
+        assert!(!action.should_quit);
+        assert!(
+            !action.restart_runtime,
+            "index 1 should be invalid after refresh"
+        );
+        assert_eq!(state.active_source, original_active);
+        assert_eq!(state.source_candidates.len(), 1);
+        assert_eq!(state.source_candidates[0].addr, addr);
     }
 
     #[test]
