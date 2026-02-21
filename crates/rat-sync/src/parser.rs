@@ -9,7 +9,8 @@ use crate::ast::{
     normalize_c_type, walk_nodes,
 };
 use crate::layout::{detect_packed_layout, validate_layout_modifiers};
-use crate::{FieldSpec, StructDef, SyncError, TagMatch};
+use crate::model::{FieldSpec, StructDef, TagMatch};
+use crate::SyncError;
 
 pub(crate) fn collect_comment_tags(
     tree: &Tree,

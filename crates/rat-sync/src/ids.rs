@@ -3,7 +3,8 @@ use std::fmt::Write as _;
 
 use rat_config::{FieldDef, GeneratedPacketDef};
 
-use crate::{DiscoveredPacket, SyncError, RAT_ID_MAX, RAT_ID_MIN};
+use crate::model::DiscoveredPacket;
+use crate::{SyncError, RAT_ID_MAX, RAT_ID_MIN};
 
 pub(crate) fn allocate_packet_ids(
     discovered: &[DiscoveredPacket],

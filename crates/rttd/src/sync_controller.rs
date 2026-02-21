@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use rat_sync::sync_packets;
+use rat_sync::sync_packets_fs;
 use tokio::sync::Mutex;
 
 #[derive(Debug, Clone)]
@@ -66,7 +66,7 @@ impl SyncController {
         }
 
         let config_path = self.config_path.clone();
-        let join = tokio::task::spawn_blocking(move || sync_packets(&config_path, None));
+        let join = tokio::task::spawn_blocking(move || sync_packets_fs(&config_path, None));
         let result = match join.await {
             Ok(Ok(result)) => result,
             Ok(Err(err)) => {

@@ -3,6 +3,8 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
+use rat_config::FieldDef;
+
 use super::*;
 
 #[test]
@@ -129,6 +131,118 @@ fn allocator_reuses_previous_id_from_legacy_source_based_signature() {
 }
 
 #[test]
+fn run_sync_pipeline_reuses_legacy_id_without_filesystem() {
+    let mut discovered = DiscoveredPacket {
+        signature_hash: 0,
+        struct_name: "RatSample".to_string(),
+        packet_type: "plot".to_string(),
+        packed: false,
+        byte_size: 8,
+        source: "new_path/main.c".to_string(),
+        fields: sample_fields(),
+    };
+    discovered.signature_hash = compute_signature_hash(&discovered);
+
+    let legacy_packet = DiscoveredPacket {
+        source: "old_path/main.c".to_string(),
+        ..discovered.clone()
+    };
+    let legacy_signature = legacy_signature_hash(&legacy_packet);
+    let previous_generated = rat_config::GeneratedConfig {
+        meta: rat_config::GeneratedMeta {
+            project: "sync_test".to_string(),
+            fingerprint: "0x0000000000000000".to_string(),
+        },
+        packets: vec![GeneratedPacketDef {
+            id: 0x2A,
+            signature_hash: format!("0x{:016X}", legacy_signature),
+            struct_name: discovered.struct_name.clone(),
+            packet_type: discovered.packet_type.clone(),
+            packed: discovered.packed,
+            byte_size: discovered.byte_size,
+            source: legacy_packet.source.clone(),
+            fields: discovered.fields.clone(),
+        }],
+    };
+
+    let output = run_sync_pipeline(SyncPipelineInput {
+        project_name: "sync_test".to_string(),
+        discovered_packets: vec![discovered],
+        previous_generated: Some(previous_generated),
+    })
+    .expect("pipeline should pass");
+
+    assert_eq!(output.generated.packets.len(), 1);
+    assert_eq!(output.generated.packets[0].id, 0x2A);
+}
+
+#[test]
+fn run_sync_pipeline_reports_unchanged_when_generated_matches_previous() {
+    let mut discovered = DiscoveredPacket {
+        signature_hash: 0,
+        struct_name: "RatSample".to_string(),
+        packet_type: "plot".to_string(),
+        packed: false,
+        byte_size: 8,
+        source: "src/main.c".to_string(),
+        fields: sample_fields(),
+    };
+    discovered.signature_hash = compute_signature_hash(&discovered);
+
+    let first = run_sync_pipeline(SyncPipelineInput {
+        project_name: "sync_test".to_string(),
+        discovered_packets: vec![discovered.clone()],
+        previous_generated: None,
+    })
+    .expect("first pipeline run");
+    let second = run_sync_pipeline(SyncPipelineInput {
+        project_name: "sync_test".to_string(),
+        discovered_packets: vec![discovered],
+        previous_generated: Some(first.generated),
+    })
+    .expect("second pipeline run");
+
+    assert!(
+        !second.changed,
+        "identical generated output should be unchanged"
+    );
+}
+
+#[test]
+fn run_sync_pipeline_blocks_non_packed_padding_layout_without_filesystem() {
+    let discovered = DiscoveredPacket {
+        signature_hash: 0,
+        struct_name: "RatPadded".to_string(),
+        packet_type: "plot".to_string(),
+        packed: false,
+        byte_size: 8,
+        source: "src/main.c".to_string(),
+        fields: vec![
+            FieldDef {
+                name: "a".to_string(),
+                c_type: "uint8_t".to_string(),
+                offset: 0,
+                size: 1,
+            },
+            FieldDef {
+                name: "b".to_string(),
+                c_type: "uint32_t".to_string(),
+                offset: 4,
+                size: 4,
+            },
+        ],
+    };
+
+    let err = run_sync_pipeline(SyncPipelineInput {
+        project_name: "sync_test".to_string(),
+        discovered_packets: vec![discovered],
+        previous_generated: None,
+    })
+    .expect_err("pipeline should reject non-packed padding");
+    assert!(err.to_string().contains("layout validation failed"));
+}
+
+#[test]
 fn packed_detection_is_explicit() {
     let plain = "typedef struct { int32_t packed; } Foo;";
     assert!(!detect_packed_layout(plain));
@@ -151,7 +265,7 @@ fn write_test_config(path: &Path, scan_root: &str) {
 }
 
 #[test]
-fn sync_packets_accepts_new_tag_syntax_and_generates_outputs() {
+fn sync_packets_fs_accepts_new_tag_syntax_and_generates_outputs() {
     let temp = std::env::temp_dir().join(format!("rat_sync_new_syntax_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp);
     fs::create_dir_all(temp.join("src")).expect("mkdir");
@@ -168,7 +282,7 @@ typedef struct {
 "#;
     fs::write(temp.join("src").join("main.c"), source).expect("write source");
 
-    let result = sync_packets(&config_path, None).expect("sync should pass");
+    let result = sync_packets_fs(&config_path, None).expect("sync should pass");
     assert_eq!(result.config.packets.len(), 1);
     assert_eq!(result.config.packets[0].packet_type, "plot");
     assert!((RAT_ID_MIN..=RAT_ID_MAX).contains(&result.config.packets[0].id));
@@ -180,7 +294,7 @@ typedef struct {
 }
 
 #[test]
-fn sync_packets_rejects_legacy_tag_syntax() {
+fn sync_packets_fs_rejects_legacy_tag_syntax() {
     let temp = std::env::temp_dir().join(format!("rat_sync_legacy_tag_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp);
     fs::create_dir_all(temp.join("src")).expect("mkdir");
@@ -196,14 +310,14 @@ typedef struct {
 "#;
     fs::write(temp.join("src").join("main.c"), source).expect("write source");
 
-    let err = sync_packets(&config_path, None).expect_err("legacy syntax should fail");
+    let err = sync_packets_fs(&config_path, None).expect_err("legacy syntax should fail");
     assert!(err.to_string().contains("legacy @rat:id syntax"));
 
     let _ = fs::remove_dir_all(&temp);
 }
 
 #[test]
-fn sync_packets_rejects_non_packed_padding_layout() {
+fn sync_packets_fs_rejects_non_packed_padding_layout() {
     let temp = std::env::temp_dir().join(format!("rat_sync_layout_block_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp);
     fs::create_dir_all(temp.join("src")).expect("mkdir");
@@ -220,7 +334,7 @@ typedef struct {
 "#;
     fs::write(temp.join("src").join("main.c"), source).expect("write source");
 
-    let err = sync_packets(&config_path, None).expect_err("sync should fail");
+    let err = sync_packets_fs(&config_path, None).expect_err("sync should fail");
     assert!(
         err.to_string().contains("compiler-dependent padding"),
         "expected padding blocker, got {err:#}"
@@ -234,7 +348,7 @@ typedef struct {
 }
 
 #[test]
-fn sync_packets_rejects_non_packed_wide_field_layout() {
+fn sync_packets_fs_rejects_non_packed_wide_field_layout() {
     let temp =
         std::env::temp_dir().join(format!("rat_sync_layout_wide_block_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp);
@@ -251,7 +365,7 @@ typedef struct {
 "#;
     fs::write(temp.join("src").join("main.c"), source).expect("write source");
 
-    let err = sync_packets(&config_path, None).expect_err("sync should fail");
+    let err = sync_packets_fs(&config_path, None).expect_err("sync should fail");
     assert!(
         err.to_string().contains("contains >=8-byte fields"),
         "expected wide field blocker, got {err:#}"
@@ -261,7 +375,7 @@ typedef struct {
 }
 
 #[test]
-fn sync_packets_accepts_packed_layout_with_wide_fields() {
+fn sync_packets_fs_accepts_packed_layout_with_wide_fields() {
     let temp =
         std::env::temp_dir().join(format!("rat_sync_layout_packed_ok_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp);
@@ -279,7 +393,7 @@ typedef struct __attribute__((packed)) {
 "#;
     fs::write(temp.join("src").join("main.c"), source).expect("write source");
 
-    let result = sync_packets(&config_path, None).expect("packed layout should pass");
+    let result = sync_packets_fs(&config_path, None).expect("packed layout should pass");
     assert!(
         result.layout_warnings.is_empty(),
         "packed layout should not produce blockers/warnings: {:?}",
@@ -290,7 +404,7 @@ typedef struct __attribute__((packed)) {
 }
 
 #[test]
-fn sync_packets_rejects_aligned_layout_modifier() {
+fn sync_packets_fs_rejects_aligned_layout_modifier() {
     let temp = std::env::temp_dir().join(format!("rat_sync_layout_reject_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp);
     fs::create_dir_all(temp.join("src")).expect("mkdir");
@@ -306,14 +420,14 @@ typedef struct __attribute__((aligned(8))) {
 "#;
     fs::write(temp.join("src").join("main.c"), source).expect("write source");
 
-    let err = sync_packets(&config_path, None).expect_err("aligned modifier should fail");
+    let err = sync_packets_fs(&config_path, None).expect_err("aligned modifier should fail");
     assert!(err.to_string().contains("unsupported layout modifier"));
 
     let _ = fs::remove_dir_all(&temp);
 }
 
 #[test]
-fn sync_packets_respects_rttdignore_glob_rules() {
+fn sync_packets_fs_respects_rttdignore_glob_rules() {
     let temp = std::env::temp_dir().join(format!("rat_sync_ignore_glob_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp);
     fs::create_dir_all(temp.join("src")).expect("mkdir");
@@ -344,7 +458,7 @@ typedef struct {
     fs::write(temp.join("src").join("keep.c"), kept).expect("write kept source");
     fs::write(temp.join("src").join("ignore_me.c"), ignored).expect("write ignored source");
 
-    let result = sync_packets(&config_path, None).expect("sync should pass");
+    let result = sync_packets_fs(&config_path, None).expect("sync should pass");
     assert_eq!(result.config.packets.len(), 1);
     assert_eq!(result.config.packets[0].struct_name, "KeepPacket");
 
@@ -352,7 +466,7 @@ typedef struct {
 }
 
 #[test]
-fn sync_packets_rttdignore_supports_comments_and_blank_lines() {
+fn sync_packets_fs_rttdignore_supports_comments_and_blank_lines() {
     let temp =
         std::env::temp_dir().join(format!("rat_sync_ignore_comments_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp);
@@ -380,7 +494,7 @@ typedef struct {
     fs::write(temp.join("src").join("keep.c"), keep).expect("write keep");
     fs::write(temp.join("src").join("skip.c"), skip).expect("write skip");
 
-    let result = sync_packets(&config_path, None).expect("sync should pass");
+    let result = sync_packets_fs(&config_path, None).expect("sync should pass");
     assert_eq!(result.config.packets.len(), 1);
     assert_eq!(result.config.packets[0].struct_name, "KeepPacket");
 
@@ -388,7 +502,7 @@ typedef struct {
 }
 
 #[test]
-fn sync_packets_rttdignore_supports_directory_glob() {
+fn sync_packets_fs_rttdignore_supports_directory_glob() {
     let temp =
         std::env::temp_dir().join(format!("rat_sync_ignore_dir_glob_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp);
@@ -416,7 +530,7 @@ typedef struct {
     fs::write(temp.join("src").join("live").join("keep.c"), keep).expect("write keep");
     fs::write(temp.join("src").join("generated").join("skip.c"), skip).expect("write skip");
 
-    let result = sync_packets(&config_path, None).expect("sync should pass");
+    let result = sync_packets_fs(&config_path, None).expect("sync should pass");
     assert_eq!(result.config.packets.len(), 1);
     assert_eq!(result.config.packets[0].struct_name, "LivePacket");
 
@@ -424,7 +538,7 @@ typedef struct {
 }
 
 #[test]
-fn sync_packets_rejects_rttdignore_negate_pattern() {
+fn sync_packets_fs_rejects_rttdignore_negate_pattern() {
     let temp = std::env::temp_dir().join(format!("rat_sync_ignore_negate_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp);
     fs::create_dir_all(temp.join("src")).expect("mkdir");
@@ -444,7 +558,7 @@ typedef struct {
     )
     .expect("write source");
 
-    let err = sync_packets(&config_path, None).expect_err("negate pattern should fail");
+    let err = sync_packets_fs(&config_path, None).expect_err("negate pattern should fail");
     assert!(
         err.to_string().contains("does not support negate patterns"),
         "unexpected error: {err:#}"

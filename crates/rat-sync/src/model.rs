@@ -1,0 +1,65 @@
+use rat_config::{FieldDef, GeneratedConfig, GeneratedPacketDef, RatitudeConfig};
+
+#[derive(Debug, Clone)]
+pub struct DiscoveredPacket {
+    pub signature_hash: u64,
+    pub struct_name: String,
+    pub packet_type: String,
+    pub packed: bool,
+    pub byte_size: usize,
+    pub source: String,
+    pub fields: Vec<FieldDef>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TagMatch {
+    pub(crate) end_byte: usize,
+    pub(crate) packet_type: String,
+    pub(crate) line: usize,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct StructDef {
+    pub(crate) start_byte: usize,
+    pub(crate) name: String,
+    pub(crate) packed: bool,
+    pub(crate) byte_size: usize,
+    pub(crate) fields: Vec<FieldDef>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct FieldSpec {
+    pub(crate) name: String,
+    pub(crate) c_type: String,
+    pub(crate) size: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct SyncPipelineInput {
+    pub project_name: String,
+    pub discovered_packets: Vec<DiscoveredPacket>,
+    pub previous_generated: Option<GeneratedConfig>,
+}
+
+impl SyncPipelineInput {
+    pub(crate) fn previous_generated_packets(&self) -> &[GeneratedPacketDef] {
+        self.previous_generated
+            .as_ref()
+            .map(|generated| generated.packets.as_slice())
+            .unwrap_or(&[])
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SyncPipelineOutput {
+    pub generated: GeneratedConfig,
+    pub changed: bool,
+    pub layout_warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SyncFsResult {
+    pub config: RatitudeConfig,
+    pub changed: bool,
+    pub layout_warnings: Vec<String>,
+}
