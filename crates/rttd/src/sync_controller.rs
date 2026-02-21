@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Result};
 use tokio::sync::Mutex;
 
-use crate::sync_executor::{FsSyncExecutor, SyncExecutionResult, SyncExecutor};
+use crate::sync_executor::{FsSyncExecutor, SyncExecutor};
 
 #[derive(Debug, Clone)]
 pub struct SyncOutcome {
@@ -108,7 +108,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::sync_executor::SyncExecutor;
+    use crate::sync_executor::{SyncExecutionResult, SyncExecutor};
 
     struct StaticSuccessExecutor {
         result: SyncExecutionResult,
@@ -162,8 +162,7 @@ mod tests {
 
     #[tokio::test]
     async fn failed_execution_does_not_update_last_success() {
-        let controller =
-            SyncController::new_with_executor(Arc::new(StaticFailureExecutor), 60_000);
+        let controller = SyncController::new_with_executor(Arc::new(StaticFailureExecutor), 60_000);
 
         let first = controller.trigger("first").await;
         assert!(first.is_err());
