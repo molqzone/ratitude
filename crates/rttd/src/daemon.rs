@@ -312,8 +312,7 @@ async fn activate_runtime(
 }
 
 fn load_config(config_path: &str) -> Result<RatitudeConfig> {
-    let (mut cfg, _) = load_or_default(config_path)?;
-    cfg.save(config_path)?;
+    let (cfg, _) = load_or_default(config_path)?;
     Ok(cfg)
 }
 
@@ -791,6 +790,48 @@ mod tests {
         assert!(raw.contains("last_selected_addr = \"10.10.10.10:19021\""));
 
         let _ = fs::remove_file(&config_path);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn load_config_does_not_rewrite_existing_file() {
+        let dir = unique_temp_dir("rttd_load_config_read_only");
+        let config_path = dir.join("rat.toml");
+
+        let raw = r#"# keep comment and formatting
+[project]
+name = "demo"
+scan_root = "."
+recursive = true
+extensions = [".c", ".h"]
+
+[generation]
+out_dir = "."
+toml_name = "rat_gen.toml"
+header_name = "rat_gen.h"
+
+[rttd]
+text_id = 255
+"#;
+        fs::write(&config_path, raw).expect("write config");
+
+        let _cfg = load_config(&config_path.to_string_lossy()).expect("load");
+        let after = fs::read_to_string(&config_path).expect("read config");
+        assert_eq!(after, raw);
+
+        let _ = fs::remove_file(&config_path);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn load_config_does_not_create_file_when_missing() {
+        let dir = unique_temp_dir("rttd_load_config_missing");
+        let config_path = dir.join("rat.toml");
+        assert!(!config_path.exists());
+
+        let _cfg = load_config(&config_path.to_string_lossy()).expect("load default");
+        assert!(!config_path.exists());
+
         let _ = fs::remove_dir_all(dir);
     }
 }
