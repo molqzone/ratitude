@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 bytes.workspace = true
+cobs.workspace = true
 futures-util.workspace = true
 hex.workspace = true
 rat-protocol = { path = "../rat-protocol" }
@@ -14,3 +15,4 @@ time.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
+thiserror.workspace = true

@@ -996,11 +996,13 @@ name = "rat-core"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "cobs",
  "futures-util",
  "hex",
  "rat-protocol",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
  "time",
  "tokio",
  "tokio-util",
@@ -1101,7 +1103,6 @@ dependencies = [
  "rat-bridge-foxglove",
  "rat-config",
  "rat-core",
- "rat-protocol",
  "rat-sync",
  "serde_json",
  "tokio",

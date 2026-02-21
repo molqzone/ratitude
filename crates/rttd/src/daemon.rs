@@ -1,17 +1,13 @@
-use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
-use rat_config::{load_generated_or_default, load_or_default, FieldDef, PacketDef, RatitudeConfig};
-use rat_core::{spawn_listener, Hub, ListenerOptions};
-use rat_protocol::{
-    cobs_decode, DynamicFieldDef, DynamicPacketDef, ProtocolContext, ProtocolError, RatPacket,
+use rat_config::{load_generated_or_default, load_or_default, PacketDef, RatitudeConfig};
+use rat_core::{
+    start_ingest_runtime, IngestRuntime, IngestRuntimeConfig, ListenerOptions, RuntimeFieldDef,
+    RuntimePacketDef, RuntimeSignal,
 };
-use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{info, warn};
 
 use crate::cli::Cli;
 use crate::console::{print_help, spawn_console_reader, ConsoleCommand};
@@ -29,86 +25,6 @@ pub struct DaemonState {
     pub source_candidates: Vec<SourceCandidate>,
     pub active_source: String,
     pub packets: Vec<PacketDef>,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum RuntimeEvent {
-    InitMagicVerified,
-}
-
-struct IngestRuntime {
-    shutdown: CancellationToken,
-    hub: Hub,
-    listener_task: JoinHandle<()>,
-    consume_task: JoinHandle<Result<()>>,
-    events_rx: mpsc::Receiver<RuntimeEvent>,
-}
-
-#[derive(Clone, Debug)]
-struct UnknownPacketWindowReport {
-    count: u32,
-    unique_ids: usize,
-}
-
-#[derive(Clone, Debug)]
-struct UnknownPacketObservation {
-    total_count: u64,
-    window_count: u32,
-    threshold_crossed: bool,
-    rolled_over: Option<UnknownPacketWindowReport>,
-}
-
-#[derive(Clone, Debug)]
-struct UnknownPacketMonitor {
-    window: Duration,
-    threshold: u32,
-    window_started_at: Instant,
-    window_count: u32,
-    total_count: u64,
-    per_window_ids: BTreeMap<u8, u32>,
-}
-
-impl UnknownPacketMonitor {
-    fn new(window: Duration, threshold: u32) -> Self {
-        Self {
-            window,
-            threshold: threshold.max(1),
-            window_started_at: Instant::now(),
-            window_count: 0,
-            total_count: 0,
-            per_window_ids: BTreeMap::new(),
-        }
-    }
-
-    fn record(&mut self, packet_id: u8) -> UnknownPacketObservation {
-        self.record_at(packet_id, Instant::now())
-    }
-
-    fn record_at(&mut self, packet_id: u8, now: Instant) -> UnknownPacketObservation {
-        let mut rolled_over = None;
-        if now.duration_since(self.window_started_at) >= self.window {
-            if self.window_count > 0 {
-                rolled_over = Some(UnknownPacketWindowReport {
-                    count: self.window_count,
-                    unique_ids: self.per_window_ids.len(),
-                });
-            }
-            self.window_started_at = now;
-            self.window_count = 0;
-            self.per_window_ids.clear();
-        }
-
-        self.window_count = self.window_count.saturating_add(1);
-        self.total_count = self.total_count.saturating_add(1);
-        *self.per_window_ids.entry(packet_id).or_insert(0) += 1;
-
-        UnknownPacketObservation {
-            total_count: self.total_count,
-            window_count: self.window_count,
-            threshold_crossed: self.window_count == self.threshold,
-            rolled_over,
-        }
-    }
 }
 
 pub async fn run_daemon(cli: Cli) -> Result<()> {
@@ -151,27 +67,31 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
                     runtime = activate_runtime(Some(runtime), &mut state, &mut output_manager).await?;
                 }
             }
-            maybe_event = runtime.events_rx.recv() => {
-                if let Some(RuntimeEvent::InitMagicVerified) = maybe_event {
-                    if state.config.rttd.behavior.auto_sync_on_reset {
-                        let outcome = sync_controller.trigger("reset").await?;
-                        print_sync_outcome(&outcome);
-                        if outcome.changed {
-                            runtime = activate_runtime(Some(runtime), &mut state, &mut output_manager).await?;
+            maybe_signal = runtime.recv_signal() => {
+                match maybe_signal {
+                    Some(RuntimeSignal::InitMagicVerified) => {
+                        if state.config.rttd.behavior.auto_sync_on_reset {
+                            let outcome = sync_controller.trigger("reset").await?;
+                            print_sync_outcome(&outcome);
+                            if outcome.changed {
+                                runtime = activate_runtime(Some(runtime), &mut state, &mut output_manager).await?;
+                            }
                         }
                     }
+                    Some(RuntimeSignal::Fatal(err)) => {
+                        return Err(anyhow!(err.to_string()));
+                    }
+                    None => {
+                        return Err(anyhow!("ingest runtime signal channel closed"));
+                    }
                 }
-            }
-            result = &mut runtime.consume_task => {
-                let err = frame_consumer_failure(result);
-                return Err(err);
             }
         }
     }
 
     console_shutdown.cancel();
     output_manager.shutdown().await;
-    shutdown_ingest_runtime(runtime, true).await;
+    runtime.shutdown(true).await;
     Ok(())
 }
 
@@ -298,14 +218,14 @@ async fn activate_runtime(
 ) -> Result<IngestRuntime> {
     if let Some(old_runtime) = old_runtime {
         output_manager.shutdown().await;
-        shutdown_ingest_runtime(old_runtime, false).await;
+        old_runtime.shutdown(false).await;
     }
 
     state.config = load_config(&state.config_path)?;
     let runtime = start_runtime(&mut state.config, &state.active_source).await?;
     state.packets = state.config.packets.clone();
     output_manager
-        .apply(runtime.hub.clone(), state.packets.clone())
+        .apply(runtime.hub(), state.packets.clone())
         .await?;
     info!(
         source = %state.active_source,
@@ -373,86 +293,51 @@ fn print_sync_outcome(outcome: &SyncOutcome) {
 
 async fn start_runtime(cfg: &mut RatitudeConfig, addr: &str) -> Result<IngestRuntime> {
     let expected_fingerprint = load_generated_packets(cfg)?;
-
-    let mut protocol = ProtocolContext::new();
     let text_id = parse_text_id(cfg.rttd.text_id)?;
-    protocol.set_text_packet_id(text_id);
-    register_dynamic_packets(&mut protocol, &cfg.packets)?;
-    let protocol = Arc::new(protocol);
-
     let reconnect = parse_duration(&cfg.rttd.behavior.reconnect)?;
     let buf = cfg.rttd.behavior.buf;
     let reader_buf = cfg.rttd.behavior.reader_buf;
+    let packets = map_runtime_packets(&cfg.packets);
 
-    start_ingest_runtime(
-        addr.to_string(),
-        reconnect,
-        buf,
-        reader_buf,
-        protocol,
-        expected_fingerprint,
-    )
-    .await
-}
-
-async fn start_ingest_runtime(
-    addr: String,
-    reconnect: Duration,
-    buf: usize,
-    reader_buf: usize,
-    protocol: Arc<ProtocolContext>,
-    expected_fingerprint: u64,
-) -> Result<IngestRuntime> {
-    let shutdown = CancellationToken::new();
-    let hub = Hub::new(buf.max(1));
-    let (frame_tx, frame_rx) = mpsc::channel::<Vec<u8>>(buf.max(1));
-    let (event_tx, event_rx) = mpsc::channel::<RuntimeEvent>(8);
-
-    let listener_task = spawn_listener(
-        shutdown.clone(),
-        addr,
-        frame_tx,
-        ListenerOptions {
+    start_ingest_runtime(IngestRuntimeConfig {
+        addr: addr.to_string(),
+        listener: ListenerOptions {
             reconnect,
             reconnect_max: Duration::from_secs(30),
             dial_timeout: Duration::from_secs(5),
             reader_buf_bytes: reader_buf,
         },
-    );
-
-    let consume_task = spawn_frame_consumer(
-        frame_rx,
-        hub.clone(),
-        protocol,
-        shutdown.clone(),
+        hub_buffer: buf,
+        text_packet_id: text_id,
         expected_fingerprint,
-        event_tx,
-    );
-
-    Ok(IngestRuntime {
-        shutdown,
-        hub,
-        listener_task,
-        consume_task,
-        events_rx: event_rx,
+        packets,
+        unknown_window: UNKNOWN_PACKET_WINDOW,
+        unknown_threshold: UNKNOWN_PACKET_THRESHOLD,
     })
+    .await
+    .map_err(|err| anyhow!(err.to_string()))
 }
 
-async fn shutdown_ingest_runtime(runtime: IngestRuntime, join_consumer: bool) {
-    let IngestRuntime {
-        shutdown,
-        hub: _hub,
-        listener_task,
-        consume_task,
-        events_rx: _events_rx,
-    } = runtime;
-
-    shutdown.cancel();
-    listener_task.abort();
-    let _ = listener_task.await;
-    if join_consumer {
-        let _ = consume_task.await;
-    }
+fn map_runtime_packets(packets: &[PacketDef]) -> Vec<RuntimePacketDef> {
+    packets
+        .iter()
+        .map(|packet| RuntimePacketDef {
+            id: packet.id,
+            struct_name: packet.struct_name.clone(),
+            packed: packet.packed,
+            byte_size: packet.byte_size,
+            fields: packet
+                .fields
+                .iter()
+                .map(|field| RuntimeFieldDef {
+                    name: field.name.clone(),
+                    c_type: field.c_type.clone(),
+                    offset: field.offset,
+                    size: field.size,
+                })
+                .collect(),
+        })
+        .collect()
 }
 
 fn load_generated_packets(cfg: &mut RatitudeConfig) -> Result<u64> {
@@ -497,177 +382,6 @@ fn parse_generated_fingerprint(raw: &str) -> Result<u64> {
         .unwrap_or(trimmed);
     u64::from_str_radix(hex, 16)
         .with_context(|| format!("invalid generated fingerprint value: {}", raw))
-}
-
-fn register_dynamic_packets(protocol: &mut ProtocolContext, packets: &[PacketDef]) -> Result<()> {
-    protocol.clear_dynamic_registry();
-    debug!(
-        packets = packets.len(),
-        "registering dynamic packet definitions"
-    );
-    for packet in packets {
-        if packet.id > 0xFF {
-            return Err(anyhow!("packet id out of range: 0x{:X}", packet.id));
-        }
-
-        let fields = packet
-            .fields
-            .iter()
-            .map(map_field)
-            .collect::<Vec<DynamicFieldDef>>();
-
-        protocol
-            .register_dynamic(
-                packet.id as u8,
-                DynamicPacketDef {
-                    id: packet.id as u8,
-                    struct_name: packet.struct_name.clone(),
-                    packed: packet.packed,
-                    byte_size: packet.byte_size,
-                    fields,
-                },
-            )
-            .with_context(|| {
-                format!(
-                    "register packet 0x{:02X} ({})",
-                    packet.id, packet.struct_name
-                )
-            })?;
-    }
-    Ok(())
-}
-
-fn map_field(field: &FieldDef) -> DynamicFieldDef {
-    DynamicFieldDef {
-        name: field.name.clone(),
-        c_type: field.c_type.clone(),
-        offset: field.offset,
-        size: field.size,
-    }
-}
-
-fn decode_init_magic_packet(id: u8, payload: &[u8]) -> Option<u64> {
-    if id != 0x00 || payload.len() != 12 {
-        return None;
-    }
-    if payload.get(0..4) != Some(b"RATI") {
-        return None;
-    }
-
-    let mut fingerprint = 0_u64;
-    for (idx, byte) in payload[4..12].iter().enumerate() {
-        fingerprint |= (*byte as u64) << (idx * 8);
-    }
-    Some(fingerprint)
-}
-
-fn frame_consumer_failure(
-    result: std::result::Result<Result<()>, tokio::task::JoinError>,
-) -> anyhow::Error {
-    match result {
-        Ok(Ok(())) => anyhow!("frame consumer stopped before shutdown"),
-        Ok(Err(err)) => err,
-        Err(err) => anyhow!("frame consumer task failed: {err}"),
-    }
-}
-
-fn spawn_frame_consumer(
-    mut receiver: mpsc::Receiver<Vec<u8>>,
-    hub: Hub,
-    protocol: Arc<ProtocolContext>,
-    shutdown: CancellationToken,
-    expected_fingerprint: u64,
-    events: mpsc::Sender<RuntimeEvent>,
-) -> JoinHandle<Result<()>> {
-    tokio::spawn(async move {
-        let mut unknown_monitor =
-            UnknownPacketMonitor::new(UNKNOWN_PACKET_WINDOW, UNKNOWN_PACKET_THRESHOLD);
-        loop {
-            tokio::select! {
-                _ = shutdown.cancelled() => break,
-                maybe_frame = receiver.recv() => {
-                    let Some(frame) = maybe_frame else { break; };
-                    let decoded = match cobs_decode(&frame) {
-                        Ok(decoded) => decoded,
-                        Err(err) => {
-                            debug!(error = %err, frame_len = frame.len(), "dropping invalid COBS frame");
-                            continue;
-                        }
-                    };
-                    if decoded.is_empty() {
-                        continue;
-                    }
-                    let id = decoded[0];
-                    let payload = decoded[1..].to_vec();
-                    if let Some(fingerprint) = decode_init_magic_packet(id, &payload) {
-                        if fingerprint != expected_fingerprint {
-                            let error = anyhow!(
-                                "init magic fingerprint mismatch: firmware=0x{:016X}, generated=0x{:016X}",
-                                fingerprint,
-                                expected_fingerprint
-                            );
-                            error!(
-                                firmware_fingerprint = format!("0x{:016X}", fingerprint),
-                                generated_fingerprint = format!("0x{:016X}", expected_fingerprint),
-                                "librat init magic fingerprint mismatch"
-                            );
-                            shutdown.cancel();
-                            return Err(error);
-                        }
-                        let _ = events.try_send(RuntimeEvent::InitMagicVerified);
-                        info!(
-                            fingerprint = format!("0x{:016X}", fingerprint),
-                            "received librat init magic packet (fingerprint verified)"
-                        );
-                        continue;
-                    }
-                    let data = match protocol.parse_packet(id, &payload) {
-                        Ok(data) => data,
-                        Err(ProtocolError::UnknownPacketId(unknown_id)) => {
-                            let observation = unknown_monitor.record(unknown_id);
-                            if let Some(report) = observation.rolled_over {
-                                warn!(
-                                    window_secs = unknown_monitor.window.as_secs(),
-                                    dropped = report.count,
-                                    unique_ids = report.unique_ids,
-                                    "unknown packets dropped in previous window"
-                                );
-                            }
-                            if observation.threshold_crossed {
-                                error!(
-                                    packet_id = format!("0x{:02X}", unknown_id),
-                                    window_secs = unknown_monitor.window.as_secs(),
-                                    threshold = unknown_monitor.threshold,
-                                    window_count = observation.window_count,
-                                    total_unknown = observation.total_count,
-                                    "unknown packet flood detected (not declared in rat_gen.toml)"
-                                );
-                            } else {
-                                warn!(
-                                    packet_id = format!("0x{:02X}", unknown_id),
-                                    window_count = observation.window_count,
-                                    total_unknown = observation.total_count,
-                                    "dropping unknown packet id (not declared in rat_gen.toml)"
-                                );
-                            }
-                            continue;
-                        }
-                        Err(err) => {
-                            warn!(packet_id = format!("0x{:02X}", id), error = %err, payload_len = payload.len(), "dropping undecodable packet");
-                            continue;
-                        }
-                    };
-                    hub.publish(RatPacket {
-                        id,
-                        timestamp: SystemTime::now(),
-                        payload,
-                        data,
-                    });
-                }
-            }
-        }
-        Ok(())
-    })
 }
 
 #[cfg(test)]
@@ -733,33 +447,6 @@ mod tests {
         assert!(err
             .to_string()
             .contains("no reachable RTT source detected; start RTT endpoint first"));
-    }
-
-    #[test]
-    fn decode_init_magic_packet_extracts_fingerprint() {
-        let payload = [
-            b'R', b'A', b'T', b'I', 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11,
-        ];
-        let fp = decode_init_magic_packet(0x00, &payload).expect("decode");
-        assert_eq!(fp, 0x1122_3344_5566_7788);
-    }
-
-    #[test]
-    fn unknown_packet_monitor_triggers_threshold_once_per_window() {
-        let mut monitor = UnknownPacketMonitor::new(Duration::from_secs(10), 3);
-        let start = Instant::now();
-
-        let first = monitor.record_at(0x10, start);
-        assert!(!first.threshold_crossed);
-
-        let second = monitor.record_at(0x10, start + Duration::from_millis(1));
-        assert!(!second.threshold_crossed);
-
-        let third = monitor.record_at(0x10, start + Duration::from_millis(2));
-        assert!(third.threshold_crossed);
-
-        let fourth = monitor.record_at(0x10, start + Duration::from_millis(3));
-        assert!(!fourth.threshold_crossed);
     }
 
     #[tokio::test]
@@ -922,5 +609,17 @@ text_id = 255
         assert!(!config_path.exists());
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn daemon_module_no_longer_contains_protocol_runtime_details() {
+        let source = include_str!("daemon.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("split production source");
+        assert!(!production.contains("cobs_decode"));
+        assert!(!production.contains("ProtocolContext"));
+        assert!(!production.contains("ProtocolError"));
     }
 }
