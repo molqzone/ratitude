@@ -10,6 +10,12 @@ C 源码(@rat) -> 内部同步生成 rat_gen.toml + rat_gen.h
            -> rttd daemon -> JSONL / Foxglove
 ```
 
+模块边界：
+
+```text
+rttd(console/sync/source/output) -> rat-core(runtime)
+```
+
 ## 2. 启动阶段
 
 执行：

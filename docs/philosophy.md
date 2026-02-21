@@ -41,6 +41,7 @@
 
 - `rttd` 默认进入交互式 daemon（命令台 + 状态面板）。
 - 删除所有外部子命令，统一为单入口 daemon 控制面。
+- 协议 ingest runtime 下沉到 `rat-core`，`rttd` 仅负责控制面编排。
 
 ### D3. 数据源策略
 
