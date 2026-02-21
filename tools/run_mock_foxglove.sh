@@ -10,11 +10,8 @@ if [[ "${CONFIG_PATH}" != /* ]]; then
 fi
 MOCK_HOST="${MOCK_HOST:-127.0.0.1}"
 MOCK_PORT="${MOCK_PORT:-19021}"
-FOXGLOVE_WS_ADDR="${FOXGLOVE_WS_ADDR:-127.0.0.1:8765}"
 
 cd "${REPO_ROOT}"
-
-cargo run -p rttd -- sync --config "${CONFIG_PATH}"
 
 MOCK_PID=""
 cleanup() {
@@ -34,10 +31,4 @@ MOCK_PID="$!"
 
 sleep 0.3
 
-cargo run -p rttd -- foxglove \
-  --config "${CONFIG_PATH}" \
-  --addr "${MOCK_HOST}:${MOCK_PORT}" \
-  --ws-addr "${FOXGLOVE_WS_ADDR}" \
-  --backend none \
-  --no-auto-start-backend \
-  --no-auto-sync
+cargo run -p rttd -- --config "${CONFIG_PATH}"

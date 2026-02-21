@@ -15,8 +15,6 @@
 
 ## B. 计划中
 
-- 使用 `notify` 实现目录热监控与增量同步
-- 声明生命周期状态管理（Pending / Active）
 - backend 进程自动探测（openocd / pyocd / jlink）并交互选择
 - artifact 自动发现（elf/hex 多候选选择）
 - 缓存机制（避免重复全量扫描）
