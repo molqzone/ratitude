@@ -11,7 +11,7 @@
 - `[project]`：源码扫描范围
 - `[artifacts]`：产物路径
 - `[generation]`：生成文件位置
-- `[rttd.source]`：source 扫描与后台设置
+- `[rttd.source]`：source 扫描与目标端点选择
 - `[rttd.behavior]`：自动同步与 runtime 行为
 - `[rttd.outputs.jsonl]`：JSONL 输出
 - `[rttd.outputs.foxglove]`：Foxglove 输出
@@ -38,11 +38,6 @@ auto_scan = true
 scan_timeout_ms = 300
 last_selected_addr = "127.0.0.1:19021"
 
-[rttd.source.backend]
-type = "none"
-auto_start = false
-startup_timeout_ms = 5000
-
 [rttd.behavior]
 auto_sync_on_start = true
 auto_sync_on_reset = true
@@ -62,6 +57,7 @@ ws_addr = "127.0.0.1:8765"
 
 说明：
 
+- `rttd` 不再负责启动/管理 backend 进程；仅连接既有 RTT 端口。
 - `last_selected_addr` 的端口号是 J-Link RTT Telnet 端口的唯一来源（`rtt_telnet_port` 已移除）。
 - 命令台是主配置入口之一：`$source use`、`$foxglove on|off`、`$jsonl on|off [path]` 会写回该文件。
 - 设计约束：runtime 每次重启都会重新创建 JSONL writer；当 `rttd.outputs.jsonl.enabled = true` 且配置了 `path` 时，目标文件会被清空重写（非追加）。

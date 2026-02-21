@@ -140,7 +140,10 @@ mod tests {
         assert!(first.is_err());
 
         let second = controller.trigger("second").await;
-        assert!(second.is_err(), "second attempt should retry instead of debounce-skip");
+        assert!(
+            second.is_err(),
+            "second attempt should retry instead of debounce-skip"
+        );
 
         let guard = controller.state.lock().await;
         assert!(!guard.in_flight);

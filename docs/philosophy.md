@@ -45,6 +45,7 @@
 ### D3. 数据源策略
 
 - 每次启动自动扫描候选 RTT 端点（openocd/pyocd/jlink）。
+- `rttd` 不托管 backend 进程，只连接已存在端点。
 - 候选必须可见并可选。
 - 选择结果持久化到 `rat.toml`。
 

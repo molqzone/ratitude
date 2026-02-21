@@ -6,7 +6,7 @@
 
 ```text
 C 源码(@rat) -> 内部同步生成 rat_gen.toml + rat_gen.h
-           -> 固件编译并 emit -> RTT backend(OpenOCD/J-Link)
+           -> 固件编译并 emit -> 已存在 RTT 端点
            -> rttd daemon -> JSONL / Foxglove
 ```
 

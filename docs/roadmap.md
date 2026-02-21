@@ -10,12 +10,12 @@
 - Foxglove 声明驱动发布（通道/schema 仅由 `rat_gen.toml` 决定）
 - 固件 `rat_init` 发送 init magic（含配置指纹）
 - rttd 接收并识别 init magic
-- OpenOCD / J-Link 并行 backend 支持
+- OpenOCD / J-Link RTT 端点兼容
 - OpenOCD RTT 字节流 mock 联调链路（`tools/openocd_rtt_mock.py` + 一键脚本）
 
 ## B. 计划中
 
-- backend 进程自动探测（openocd / pyocd / jlink）并交互选择
+- RTT 端点自动探测（不托管 backend 进程）并交互选择
 - artifact 自动发现（elf/hex 多候选选择）
 - 缓存机制（避免重复全量扫描）
 

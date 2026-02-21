@@ -22,28 +22,6 @@ auto_scan = true
 scan_timeout_ms = 300
 last_selected_addr = "127.0.0.1:19021"
 
-[rttd.source.backend]
-type = "none"
-auto_start = false
-startup_timeout_ms = 5000
-
-[rttd.source.backend.openocd]
-elf = ""
-symbol = "_SEGGER_RTT"
-interface = "interface/cmsis-dap.cfg"
-target = "target/stm32f4x.cfg"
-transport = "swd"
-speed = 8000
-polling = 1
-disable_debug_ports = true
-
-[rttd.source.backend.jlink]
-device = "STM32F407ZG"
-interface = "SWD"
-speed = 4000
-serial = ""
-ip = ""
-
 [rttd.behavior]
 auto_sync_on_start = true
 auto_sync_on_reset = true
