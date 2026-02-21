@@ -31,36 +31,30 @@ impl CommandRouter {
             return None;
         }
 
-        if matches!(trimmed, "$help" | "help") {
+        if trimmed == "$help" {
             return Some(ConsoleCommand::Help);
         }
-        if matches!(trimmed, "$status" | "status") {
+        if trimmed == "$status" {
             return Some(ConsoleCommand::Status);
         }
-        if matches!(trimmed, "$source list" | "source list") {
+        if trimmed == "$source list" {
             return Some(ConsoleCommand::SourceList);
         }
-        if matches!(trimmed, "$sync" | "sync") {
+        if trimmed == "$sync" {
             return Some(ConsoleCommand::Sync);
         }
-        if matches!(trimmed, "$quit" | "quit" | "exit") {
+        if trimmed == "$quit" {
             return Some(ConsoleCommand::Quit);
         }
 
-        if let Some(rest) = trimmed
-            .strip_prefix("$source use ")
-            .or_else(|| trimmed.strip_prefix("source use "))
-        {
+        if let Some(rest) = trimmed.strip_prefix("$source use ") {
             if let Ok(index) = rest.trim().parse::<usize>() {
                 return Some(ConsoleCommand::SourceUse(index));
             }
             return Some(ConsoleCommand::Unknown(trimmed.to_string()));
         }
 
-        if let Some(rest) = trimmed
-            .strip_prefix("$foxglove ")
-            .or_else(|| trimmed.strip_prefix("foxglove "))
-        {
+        if let Some(rest) = trimmed.strip_prefix("$foxglove ") {
             let mode = rest.trim().to_ascii_lowercase();
             return match mode.as_str() {
                 "on" => Some(ConsoleCommand::Foxglove(true)),
@@ -69,10 +63,7 @@ impl CommandRouter {
             };
         }
 
-        if let Some(rest) = trimmed
-            .strip_prefix("$jsonl ")
-            .or_else(|| trimmed.strip_prefix("jsonl "))
-        {
+        if let Some(rest) = trimmed.strip_prefix("$jsonl ") {
             let rest = rest.trim();
             if rest.eq_ignore_ascii_case("off") {
                 return Some(ConsoleCommand::Jsonl {
@@ -184,5 +175,25 @@ mod tests {
                 field_name: "value".to_string()
             }
         );
+    }
+
+    #[test]
+    fn parse_rejects_plain_aliases_without_dollar_prefix() {
+        let samples = [
+            "help",
+            "status",
+            "source list",
+            "source use 1",
+            "sync",
+            "foxglove on",
+            "jsonl off",
+            "quit",
+            "exit",
+        ];
+
+        for raw in samples {
+            let cmd = CommandRouter::parse(raw).expect("command");
+            assert_eq!(cmd, ConsoleCommand::Unknown(raw.to_string()));
+        }
     }
 }

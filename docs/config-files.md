@@ -64,6 +64,7 @@ ws_addr = "127.0.0.1:8765"
 
 - `last_selected_addr` 的端口号是 J-Link RTT Telnet 端口的唯一来源（`rtt_telnet_port` 已移除）。
 - 命令台是主配置入口之一：`$source use`、`$foxglove on|off`、`$jsonl on|off [path]` 会写回该文件。
+- 设计约束：runtime 每次重启都会重新创建 JSONL writer；当 `rttd.outputs.jsonl.enabled = true` 且配置了 `path` 时，目标文件会被清空重写（非追加）。
 
 ## `rat_gen.toml`（自动生成）
 
