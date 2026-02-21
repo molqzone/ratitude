@@ -34,14 +34,6 @@ pub struct RatitudeConfig {
     pub rttd: RttdConfig,
     #[serde(skip)]
     pub packets: Vec<PacketDef>,
-    #[serde(skip)]
-    config_path: PathBuf,
-    #[serde(skip)]
-    scan_root_path: PathBuf,
-    #[serde(skip)]
-    generated_toml_path: PathBuf,
-    #[serde(skip)]
-    generated_header_path: PathBuf,
 }
 
 impl Default for RatitudeConfig {
@@ -52,10 +44,6 @@ impl Default for RatitudeConfig {
             generation: GenerationConfig::default(),
             rttd: RttdConfig::default(),
             packets: Vec::new(),
-            config_path: PathBuf::new(),
-            scan_root_path: PathBuf::new(),
-            generated_toml_path: PathBuf::new(),
-            generated_header_path: PathBuf::new(),
         }
     }
 }
@@ -309,35 +297,116 @@ impl GeneratedConfig {
     }
 }
 
-pub fn load_or_default(path: impl AsRef<Path>) -> Result<(RatitudeConfig, bool), ConfigError> {
-    let path = normalize_config_path(path.as_ref());
-    match fs::read_to_string(&path) {
-        Ok(raw) => {
-            reject_deprecated_config_keys(&raw)?;
-            let mut cfg: RatitudeConfig = toml::from_str(&raw).map_err(ConfigError::Parse)?;
-            cfg.normalize(&path);
-            cfg.validate()?;
-            Ok((cfg, true))
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConfigPaths {
+    config_path: PathBuf,
+    scan_root_path: PathBuf,
+    generated_toml_path: PathBuf,
+    generated_header_path: PathBuf,
+}
+
+impl ConfigPaths {
+    pub fn config_path(&self) -> &Path {
+        &self.config_path
+    }
+
+    pub fn scan_root_path(&self) -> &Path {
+        &self.scan_root_path
+    }
+
+    pub fn generated_toml_path(&self) -> &Path {
+        &self.generated_toml_path
+    }
+
+    pub fn generated_header_path(&self) -> &Path {
+        &self.generated_header_path
+    }
+
+    pub fn resolve_relative_path(&self, raw: impl AsRef<Path>) -> PathBuf {
+        let path = raw.as_ref();
+        if path.as_os_str().is_empty() {
+            return PathBuf::new();
         }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            let mut cfg = RatitudeConfig::default();
-            cfg.normalize(&path);
-            cfg.validate()?;
-            Ok((cfg, false))
+        if path.is_absolute() {
+            return path.to_path_buf();
         }
-        Err(err) => Err(ConfigError::Read(err)),
+        self.config_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(path)
     }
 }
 
-pub fn load(path: impl AsRef<Path>) -> Result<RatitudeConfig, ConfigError> {
-    let (cfg, exists) = load_or_default(path)?;
-    if exists {
-        Ok(cfg)
-    } else {
-        Err(ConfigError::Validation(
-            "config file does not exist".to_string(),
-        ))
+#[derive(Clone, Debug)]
+pub struct ConfigStore {
+    config_path: PathBuf,
+}
+
+impl ConfigStore {
+    pub fn new(path: impl AsRef<Path>) -> Self {
+        Self {
+            config_path: normalize_config_path(path.as_ref()),
+        }
     }
+
+    pub fn config_path(&self) -> &Path {
+        &self.config_path
+    }
+
+    pub fn load_or_default(&self) -> Result<(RatitudeConfig, bool), ConfigError> {
+        match fs::read_to_string(&self.config_path) {
+            Ok(raw) => {
+                reject_deprecated_config_keys(&raw)?;
+                let mut cfg: RatitudeConfig = toml::from_str(&raw).map_err(ConfigError::Parse)?;
+                cfg.normalize();
+                cfg.validate()?;
+                Ok((cfg, true))
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                let mut cfg = RatitudeConfig::default();
+                cfg.normalize();
+                cfg.validate()?;
+                Ok((cfg, false))
+            }
+            Err(err) => Err(ConfigError::Read(err)),
+        }
+    }
+
+    pub fn load(&self) -> Result<RatitudeConfig, ConfigError> {
+        let (cfg, exists) = self.load_or_default()?;
+        if exists {
+            Ok(cfg)
+        } else {
+            Err(ConfigError::Validation(
+                "config file does not exist".to_string(),
+            ))
+        }
+    }
+
+    pub fn save(&self, cfg: &RatitudeConfig) -> Result<(), ConfigError> {
+        let mut normalized = cfg.clone();
+        normalized.normalize();
+        normalized.validate()?;
+
+        if let Some(parent) = self.config_path.parent() {
+            fs::create_dir_all(parent).map_err(ConfigError::Mkdir)?;
+        }
+
+        let out = toml::to_string_pretty(&normalized).map_err(ConfigError::Serialize)?;
+        fs::write(&self.config_path, out).map_err(ConfigError::Write)
+    }
+
+    pub fn paths_for(&self, cfg: &RatitudeConfig) -> ConfigPaths {
+        resolve_config_paths(cfg, &self.config_path)
+    }
+}
+
+pub fn load_or_default(path: impl AsRef<Path>) -> Result<(RatitudeConfig, bool), ConfigError> {
+    ConfigStore::new(path).load_or_default()
+}
+
+pub fn load(path: impl AsRef<Path>) -> Result<RatitudeConfig, ConfigError> {
+    ConfigStore::new(path).load()
 }
 
 pub fn load_generated_or_default(
@@ -366,19 +435,6 @@ pub fn save_generated(path: impl AsRef<Path>, cfg: &GeneratedConfig) -> Result<(
 }
 
 impl RatitudeConfig {
-    pub fn save(&mut self, path: impl AsRef<Path>) -> Result<(), ConfigError> {
-        let path = normalize_config_path(path.as_ref());
-        self.normalize(&path);
-        self.validate()?;
-
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(ConfigError::Mkdir)?;
-        }
-
-        let out = toml::to_string_pretty(&self).map_err(ConfigError::Serialize)?;
-        fs::write(&path, out).map_err(ConfigError::Write)
-    }
-
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.project.name.trim().is_empty() {
             return Err(ConfigError::Validation(
@@ -479,37 +535,7 @@ impl RatitudeConfig {
         Ok(())
     }
 
-    pub fn config_path(&self) -> &Path {
-        &self.config_path
-    }
-
-    pub fn scan_root_path(&self) -> &Path {
-        &self.scan_root_path
-    }
-
-    pub fn generated_toml_path(&self) -> &Path {
-        &self.generated_toml_path
-    }
-
-    pub fn generated_header_path(&self) -> &Path {
-        &self.generated_header_path
-    }
-
-    pub fn resolve_relative_path(&self, raw: impl AsRef<Path>) -> PathBuf {
-        let path = raw.as_ref();
-        if path.as_os_str().is_empty() {
-            return PathBuf::new();
-        }
-        if path.is_absolute() {
-            return path.to_path_buf();
-        }
-        self.config_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join(path)
-    }
-
-    pub fn normalize(&mut self, path: &Path) {
+    pub fn normalize(&mut self) {
         if self.project.name.trim().is_empty() {
             self.project.name = ProjectConfig::default().name;
         }
@@ -554,28 +580,33 @@ impl RatitudeConfig {
                 }
             })
             .collect();
+    }
+}
 
-        self.config_path = normalize_config_path(path);
-        let base_dir = self
-            .config_path
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("."));
+pub fn resolve_config_paths(cfg: &RatitudeConfig, config_path: impl AsRef<Path>) -> ConfigPaths {
+    let config_path = normalize_config_path(config_path.as_ref());
+    let base_dir = config_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
 
-        let mut scan_root = PathBuf::from(&self.project.scan_root);
-        if !scan_root.is_absolute() {
-            scan_root = base_dir.join(scan_root);
-        }
-        self.scan_root_path = normalize_path_fallback(scan_root);
+    let mut scan_root = PathBuf::from(&cfg.project.scan_root);
+    if !scan_root.is_absolute() {
+        scan_root = base_dir.join(scan_root);
+    }
+    let scan_root_path = normalize_path_fallback(scan_root);
 
-        let mut out_dir = PathBuf::from(&self.generation.out_dir);
-        if !out_dir.is_absolute() {
-            out_dir = base_dir.join(out_dir);
-        }
-        let out_dir = normalize_path_fallback(out_dir);
+    let mut out_dir = PathBuf::from(&cfg.generation.out_dir);
+    if !out_dir.is_absolute() {
+        out_dir = base_dir.join(out_dir);
+    }
+    let out_dir = normalize_path_fallback(out_dir);
 
-        self.generated_toml_path = out_dir.join(&self.generation.toml_name);
-        self.generated_header_path = out_dir.join(&self.generation.header_name);
+    ConfigPaths {
+        config_path,
+        scan_root_path,
+        generated_toml_path: out_dir.join(&cfg.generation.toml_name),
+        generated_header_path: out_dir.join(&cfg.generation.header_name),
     }
 }
 
@@ -671,13 +702,15 @@ mod tests {
     fn resolve_relative_path_uses_config_dir() {
         let mut cfg = RatitudeConfig::default();
         let path = PathBuf::from("tmp/rat.toml");
-        cfg.normalize(&path);
+        cfg.normalize();
+        let store = ConfigStore::new(&path);
+        let paths = store.paths_for(&cfg);
 
-        let resolved = cfg.resolve_relative_path("demo.jpg");
+        let resolved = paths.resolve_relative_path("demo.jpg");
         assert!(resolved.ends_with(Path::new("tmp").join("demo.jpg")));
 
         let absolute = std::env::temp_dir().join("demo.jpg");
-        assert_eq!(cfg.resolve_relative_path(&absolute), absolute);
+        assert_eq!(paths.resolve_relative_path(&absolute), absolute);
     }
 
     #[test]
@@ -686,12 +719,15 @@ mod tests {
         cfg.generation.out_dir = "generated".to_string();
         cfg.generation.toml_name = "rat_gen.toml".to_string();
         cfg.generation.header_name = "rat_gen.h".to_string();
-        cfg.normalize(Path::new("firmware/example/stm32f4_rtt/rat.toml"));
+        cfg.normalize();
+        let paths = resolve_config_paths(&cfg, Path::new("firmware/example/stm32f4_rtt/rat.toml"));
 
-        assert!(cfg
+        assert!(paths
             .generated_toml_path()
             .ends_with("generated/rat_gen.toml"));
-        assert!(cfg.generated_header_path().ends_with("generated/rat_gen.h"));
+        assert!(paths
+            .generated_header_path()
+            .ends_with("generated/rat_gen.h"));
     }
 
     #[test]
@@ -706,13 +742,14 @@ mod tests {
         cfg.generation.out_dir = "generated".to_string();
         cfg.rttd.outputs.jsonl.enabled = false;
         cfg.rttd.outputs.foxglove.enabled = true;
-        cfg.save(&path).expect("save config");
+        ConfigStore::new(&path).save(&cfg).expect("save config");
 
         let (loaded, exists) = load_or_default(&path).expect("load config");
         assert!(exists);
         assert_eq!(loaded.project.name, "demo");
         assert_eq!(loaded.artifacts.elf, "build/app.elf");
-        assert!(loaded
+        let paths = resolve_config_paths(&loaded, &path);
+        assert!(paths
             .generated_toml_path()
             .ends_with("generated/rat_gen.toml"));
         assert!(!loaded.rttd.outputs.jsonl.enabled);

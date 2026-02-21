@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use rat_config::{load_generated_or_default, save_generated};
+use rat_config::{load_generated_or_default, save_generated, ConfigStore};
 
 use crate::discover::discover_packets;
 use crate::header::write_generated_header;
@@ -13,11 +13,13 @@ pub fn sync_packets_fs(
     scan_root_override: Option<&Path>,
 ) -> Result<SyncFsResult, SyncError> {
     let config_path = config_path.as_ref();
-    let (mut cfg, _) = rat_config::load_or_default(config_path)?;
+    let store = ConfigStore::new(config_path);
+    let (mut cfg, _) = store.load_or_default()?;
+    let paths = store.paths_for(&cfg);
 
-    let discovered_packets = discover_packets(&cfg, scan_root_override)?;
-    let generated_path = cfg.generated_toml_path().to_path_buf();
-    let generated_header_path = cfg.generated_header_path().to_path_buf();
+    let discovered_packets = discover_packets(&cfg, &paths, scan_root_override)?;
+    let generated_path = paths.generated_toml_path().to_path_buf();
+    let generated_header_path = paths.generated_header_path().to_path_buf();
 
     let (previous_generated, previous_exists) = load_generated_or_default(&generated_path)?;
     let pipeline_output = run_sync_pipeline(SyncPipelineInput {

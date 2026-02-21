@@ -1,17 +1,15 @@
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
-use rat_config::{load_generated_or_default, load_or_default, PacketDef, RatitudeConfig};
-use rat_core::{
-    start_ingest_runtime, IngestRuntime, IngestRuntimeConfig, ListenerOptions, RuntimeFieldDef,
-    RuntimePacketDef, RuntimeSignal,
-};
+use rat_config::{ConfigStore, PacketDef, RatitudeConfig};
+use rat_core::{start_ingest_runtime, IngestRuntime, RuntimeSignal};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::cli::Cli;
 use crate::console::{print_help, spawn_console_reader, ConsoleCommand};
 use crate::output_manager::OutputManager;
+use crate::runtime_spec::build_runtime_spec;
 use crate::source_scan::{discover_sources, render_candidates, SourceCandidate};
 use crate::sync_controller::{SyncController, SyncOutcome};
 
@@ -140,7 +138,7 @@ async fn handle_console_command(
             };
             state.active_source = candidate.addr.clone();
             state.config.rttd.source.last_selected_addr = candidate.addr.clone();
-            state.config.save(&state.config_path)?;
+            ConfigStore::new(&state.config_path).save(&state.config)?;
             println!("selected source: {}", state.active_source);
             action.restart_runtime = true;
         }
@@ -152,21 +150,19 @@ async fn handle_console_command(
             }
         }
         ConsoleCommand::Foxglove(enabled) => {
-            output_manager.set_foxglove(enabled, None);
+            output_manager.set_foxglove(enabled, None)?;
             state.config.rttd.outputs.foxglove.enabled = enabled;
-            state.config.save(&state.config_path)?;
+            ConfigStore::new(&state.config_path).save(&state.config)?;
             println!("foxglove output: {}", if enabled { "on" } else { "off" });
-            action.restart_runtime = true;
         }
         ConsoleCommand::Jsonl { enabled, path } => {
-            output_manager.set_jsonl(enabled, path.clone());
+            output_manager.set_jsonl(enabled, path.clone())?;
             state.config.rttd.outputs.jsonl.enabled = enabled;
             if let Some(path) = path {
                 state.config.rttd.outputs.jsonl.path = path;
             }
-            state.config.save(&state.config_path)?;
+            ConfigStore::new(&state.config_path).save(&state.config)?;
             println!("jsonl output: {}", if enabled { "on" } else { "off" });
-            action.restart_runtime = true;
         }
         ConsoleCommand::PacketLookup {
             struct_name,
@@ -222,7 +218,8 @@ async fn activate_runtime(
     }
 
     state.config = load_config(&state.config_path)?;
-    let runtime = start_runtime(&mut state.config, &state.active_source).await?;
+    let runtime =
+        start_runtime(&mut state.config, &state.config_path, &state.active_source).await?;
     state.packets = state.config.packets.clone();
     output_manager
         .apply(runtime.hub(), state.packets.clone())
@@ -236,7 +233,7 @@ async fn activate_runtime(
 }
 
 fn load_config(config_path: &str) -> Result<RatitudeConfig> {
-    let (cfg, _) = load_or_default(config_path)?;
+    let (cfg, _) = ConfigStore::new(config_path).load_or_default()?;
     Ok(cfg)
 }
 
@@ -291,97 +288,23 @@ fn print_sync_outcome(outcome: &SyncOutcome) {
     );
 }
 
-async fn start_runtime(cfg: &mut RatitudeConfig, addr: &str) -> Result<IngestRuntime> {
-    let expected_fingerprint = load_generated_packets(cfg)?;
-    let text_id = parse_text_id(cfg.rttd.text_id)?;
-    let reconnect = parse_duration(&cfg.rttd.behavior.reconnect)?;
-    let buf = cfg.rttd.behavior.buf;
-    let reader_buf = cfg.rttd.behavior.reader_buf;
-    let packets = map_runtime_packets(&cfg.packets);
-
-    start_ingest_runtime(IngestRuntimeConfig {
-        addr: addr.to_string(),
-        listener: ListenerOptions {
-            reconnect,
-            reconnect_max: Duration::from_secs(30),
-            dial_timeout: Duration::from_secs(5),
-            reader_buf_bytes: reader_buf,
-        },
-        hub_buffer: buf,
-        text_packet_id: text_id,
-        expected_fingerprint,
-        packets,
-        unknown_window: UNKNOWN_PACKET_WINDOW,
-        unknown_threshold: UNKNOWN_PACKET_THRESHOLD,
-    })
-    .await
-    .map_err(|err| anyhow!(err.to_string()))
-}
-
-fn map_runtime_packets(packets: &[PacketDef]) -> Vec<RuntimePacketDef> {
-    packets
-        .iter()
-        .map(|packet| RuntimePacketDef {
-            id: packet.id,
-            struct_name: packet.struct_name.clone(),
-            packed: packet.packed,
-            byte_size: packet.byte_size,
-            fields: packet
-                .fields
-                .iter()
-                .map(|field| RuntimeFieldDef {
-                    name: field.name.clone(),
-                    c_type: field.c_type.clone(),
-                    offset: field.offset,
-                    size: field.size,
-                })
-                .collect(),
-        })
-        .collect()
-}
-
-fn load_generated_packets(cfg: &mut RatitudeConfig) -> Result<u64> {
-    let generated_path = cfg.generated_toml_path().to_path_buf();
-    let (generated, exists) = load_generated_or_default(&generated_path)?;
-    if !exists {
-        return Err(anyhow!(
-            "rat_gen.toml not found at {}; run sync before starting daemon",
-            generated_path.display()
-        ));
-    }
-    if generated.packets.is_empty() {
-        return Err(anyhow!("rat_gen.toml has no packets"));
-    }
-    let expected_fingerprint = parse_generated_fingerprint(&generated.meta.fingerprint)
-        .with_context(|| format!("invalid fingerprint in {}", generated_path.display()))?;
-
-    cfg.packets = generated.to_packet_defs();
-    cfg.validate()?;
-    Ok(expected_fingerprint)
-}
-
-fn parse_text_id(value: u16) -> Result<u8> {
-    if value > 0xFF {
-        return Err(anyhow!("text id out of range: 0x{:X}", value));
-    }
-    Ok(value as u8)
-}
-
-fn parse_duration(raw: &str) -> Result<Duration> {
-    humantime::parse_duration(raw).with_context(|| format!("invalid duration: {}", raw))
-}
-
-fn parse_generated_fingerprint(raw: &str) -> Result<u64> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err(anyhow!("generated fingerprint is empty"));
-    }
-    let hex = trimmed
-        .strip_prefix("0x")
-        .or_else(|| trimmed.strip_prefix("0X"))
-        .unwrap_or(trimmed);
-    u64::from_str_radix(hex, 16)
-        .with_context(|| format!("invalid generated fingerprint value: {}", raw))
+async fn start_runtime(
+    cfg: &mut RatitudeConfig,
+    config_path: &str,
+    addr: &str,
+) -> Result<IngestRuntime> {
+    let spec = build_runtime_spec(
+        cfg,
+        config_path,
+        addr,
+        UNKNOWN_PACKET_WINDOW,
+        UNKNOWN_PACKET_THRESHOLD,
+    )?;
+    let runtime = start_ingest_runtime(spec.ingest_config)
+        .await
+        .map_err(|err| anyhow!(err.to_string()))?;
+    cfg.packets = spec.packets;
+    Ok(runtime)
 }
 
 #[cfg(test)]
@@ -406,12 +329,12 @@ mod tests {
 
     #[test]
     fn parse_generated_fingerprint_rejects_empty() {
-        assert!(parse_generated_fingerprint(" ").is_err());
+        assert!(crate::runtime_spec::parse_generated_fingerprint(" ").is_err());
     }
 
     #[test]
     fn parse_generated_fingerprint_supports_prefixed_hex() {
-        let parsed = parse_generated_fingerprint("0xAA").expect("parse");
+        let parsed = crate::runtime_spec::parse_generated_fingerprint("0xAA").expect("parse");
         assert_eq!(parsed, 0xAA);
     }
 
@@ -458,7 +381,9 @@ mod tests {
         cfg.project.scan_root = ".".to_string();
         cfg.rttd.source.auto_scan = false;
         cfg.rttd.source.last_selected_addr = "10.10.10.10:19021".to_string();
-        cfg.save(&config_path).expect("save config");
+        ConfigStore::new(&config_path)
+            .save(&cfg)
+            .expect("save config");
 
         let state = build_state(config_path.to_string_lossy().to_string(), cfg)
             .await
@@ -567,6 +492,54 @@ mod tests {
         assert_eq!(state.active_source, original_active);
         assert_eq!(state.source_candidates.len(), 1);
         assert_eq!(state.source_candidates[0].addr, addr);
+    }
+
+    #[tokio::test]
+    async fn output_commands_apply_without_runtime_restart() {
+        let dir = unique_temp_dir("rttd_output_command_apply");
+        let config_path = dir.join("rat.toml");
+        let config_path_str = config_path.to_string_lossy().to_string();
+
+        let cfg = RatitudeConfig::default();
+        ConfigStore::new(&config_path)
+            .save(&cfg)
+            .expect("save config");
+
+        let mut state = DaemonState {
+            config_path: config_path_str.clone(),
+            config: cfg.clone(),
+            source_candidates: Vec::new(),
+            active_source: "127.0.0.1:19021".to_string(),
+            packets: Vec::new(),
+        };
+        let mut output_manager = OutputManager::from_config(&cfg);
+        let mut sync_controller = SyncController::new(config_path_str, 1);
+
+        let foxglove_action = handle_console_command(
+            ConsoleCommand::Foxglove(true),
+            &mut state,
+            &mut output_manager,
+            &mut sync_controller,
+        )
+        .await
+        .expect("foxglove command");
+        assert!(!foxglove_action.restart_runtime);
+
+        let jsonl_action = handle_console_command(
+            ConsoleCommand::Jsonl {
+                enabled: true,
+                path: Some(String::new()),
+            },
+            &mut state,
+            &mut output_manager,
+            &mut sync_controller,
+        )
+        .await
+        .expect("jsonl command");
+        assert!(!jsonl_action.restart_runtime);
+
+        let _ = fs::remove_file(&config_path);
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

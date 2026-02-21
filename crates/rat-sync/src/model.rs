@@ -35,6 +35,12 @@ pub(crate) struct FieldSpec {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct ParsedTaggedFile {
+    pub(crate) tags: Vec<TagMatch>,
+    pub(crate) structs: Vec<StructDef>,
+}
+
+#[derive(Debug, Clone)]
 pub struct SyncPipelineInput {
     pub project_name: String,
     pub discovered_packets: Vec<DiscoveredPacket>,

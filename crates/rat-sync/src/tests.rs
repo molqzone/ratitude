@@ -261,7 +261,9 @@ fn write_test_config(path: &Path, scan_root: &str) {
     cfg.generation.out_dir = ".".to_string();
     cfg.generation.toml_name = "rat_gen.toml".to_string();
     cfg.generation.header_name = "rat_gen.h".to_string();
-    cfg.save(path).expect("save config");
+    rat_config::ConfigStore::new(path)
+        .save(&cfg)
+        .expect("save config");
 }
 
 #[test]
