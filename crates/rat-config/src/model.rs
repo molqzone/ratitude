@@ -232,14 +232,15 @@ pub struct FieldDef {
 #[serde(default)]
 pub struct GeneratedMeta {
     pub project: String,
-    pub fingerprint: String,
+    #[serde(alias = "fingerprint")]
+    pub schema_hash: String,
 }
 
 impl Default for GeneratedMeta {
     fn default() -> Self {
         Self {
             project: String::new(),
-            fingerprint: String::new(),
+            schema_hash: String::new(),
         }
     }
 }

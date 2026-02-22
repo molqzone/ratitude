@@ -151,7 +151,7 @@ fn run_sync_pipeline_reuses_legacy_id_without_filesystem() {
     let previous_generated = rat_config::GeneratedConfig {
         meta: rat_config::GeneratedMeta {
             project: "sync_test".to_string(),
-            fingerprint: "0x0000000000000000".to_string(),
+            schema_hash: "0x0000000000000000".to_string(),
         },
         packets: vec![GeneratedPacketDef {
             id: 0x2A,

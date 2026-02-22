@@ -120,7 +120,7 @@ fn compute_signature_hash_parts(
     fnv1a64(signature.as_bytes())
 }
 
-pub(crate) fn compute_fingerprint(packets: &[GeneratedPacketDef]) -> u64 {
+pub(crate) fn compute_schema_hash(packets: &[GeneratedPacketDef]) -> u64 {
     let mut ordered = packets.to_vec();
     ordered.sort_by_key(|packet| packet.id);
 
@@ -149,18 +149,6 @@ pub(crate) fn fnv1a64(bytes: &[u8]) -> u64 {
 }
 
 pub(crate) fn parse_signature_hex(raw: &str) -> Option<u64> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let hex = trimmed
-        .strip_prefix("0x")
-        .or_else(|| trimmed.strip_prefix("0X"))
-        .unwrap_or(trimmed);
-    u64::from_str_radix(hex, 16).ok()
-}
-
-pub(crate) fn parse_fingerprint_hex(raw: &str) -> Option<u64> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return None;

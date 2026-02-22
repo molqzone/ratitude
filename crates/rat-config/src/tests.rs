@@ -86,7 +86,7 @@ fn generated_config_round_trip() {
     let path = dir.join("rat_gen.toml");
     let mut cfg = GeneratedConfig::default();
     cfg.meta.project = "demo".to_string();
-    cfg.meta.fingerprint = "0x00000000AABBCCDD".to_string();
+    cfg.meta.schema_hash = "0x00000000AABBCCDD".to_string();
     cfg.packets.push(GeneratedPacketDef {
         id: 1,
         signature_hash: "0x1122".to_string(),

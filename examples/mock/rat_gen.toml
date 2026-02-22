@@ -1,6 +1,6 @@
 [meta]
 project = "mock_foxglove"
-fingerprint = "0x6DC228D8526C7443"
+schema_hash = "0x6DC228D8526C7443"
 
 [[packets]]
 id = 116
