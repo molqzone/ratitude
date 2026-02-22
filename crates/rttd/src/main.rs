@@ -2,6 +2,7 @@ mod cli;
 mod console;
 mod daemon;
 mod output_manager;
+mod runtime_schema;
 mod runtime_spec;
 mod source_scan;
 

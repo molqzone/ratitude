@@ -14,7 +14,7 @@ pub fn sync_packets_fs(
 ) -> Result<SyncFsResult, SyncError> {
     let config_path = config_path.as_ref();
     let store = ConfigStore::new(config_path);
-    let (mut cfg, _) = store.load_or_default()?;
+    let (cfg, _) = store.load_or_default()?;
     let paths = store.paths_for(&cfg);
 
     let discovered_packets = discover_packets(&cfg, &paths, scan_root_override)?;
@@ -39,11 +39,12 @@ pub fn sync_packets_fs(
         write_generated_header(&generated_header_path, &pipeline_output.generated)?;
     }
 
-    cfg.packets = pipeline_output.generated.to_packet_defs();
     cfg.validate()?;
 
     Ok(SyncFsResult {
         config: cfg,
+        generated: pipeline_output.generated.clone(),
+        packet_defs: pipeline_output.generated.packets,
         changed: pipeline_output.changed,
         layout_warnings: pipeline_output.layout_warnings,
     })

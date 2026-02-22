@@ -28,8 +28,6 @@ pub struct RatitudeConfig {
     pub artifacts: ArtifactsConfig,
     pub generation: GenerationConfig,
     pub rttd: RttdConfig,
-    #[serde(skip)]
-    pub packets: Vec<PacketDef>,
 }
 
 impl Default for RatitudeConfig {
@@ -39,7 +37,6 @@ impl Default for RatitudeConfig {
             artifacts: ArtifactsConfig::default(),
             generation: GenerationConfig::default(),
             rttd: RttdConfig::default(),
-            packets: Vec::new(),
         }
     }
 }

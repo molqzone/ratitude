@@ -285,9 +285,9 @@ typedef struct {
     fs::write(temp.join("src").join("main.c"), source).expect("write source");
 
     let result = sync_packets_fs(&config_path, None).expect("sync should pass");
-    assert_eq!(result.config.packets.len(), 1);
-    assert_eq!(result.config.packets[0].packet_type, "plot");
-    assert!((RAT_ID_MIN..=RAT_ID_MAX).contains(&result.config.packets[0].id));
+    assert_eq!(result.packet_defs.len(), 1);
+    assert_eq!(result.packet_defs[0].packet_type, "plot");
+    assert!((RAT_ID_MIN..=RAT_ID_MAX).contains(&result.packet_defs[0].id));
 
     assert!(temp.join("rat_gen.toml").exists());
     assert!(temp.join("rat_gen.h").exists());
@@ -461,8 +461,8 @@ typedef struct {
     fs::write(temp.join("src").join("ignore_me.c"), ignored).expect("write ignored source");
 
     let result = sync_packets_fs(&config_path, None).expect("sync should pass");
-    assert_eq!(result.config.packets.len(), 1);
-    assert_eq!(result.config.packets[0].struct_name, "KeepPacket");
+    assert_eq!(result.packet_defs.len(), 1);
+    assert_eq!(result.packet_defs[0].struct_name, "KeepPacket");
 
     let _ = fs::remove_dir_all(&temp);
 }
@@ -497,8 +497,8 @@ typedef struct {
     fs::write(temp.join("src").join("skip.c"), skip).expect("write skip");
 
     let result = sync_packets_fs(&config_path, None).expect("sync should pass");
-    assert_eq!(result.config.packets.len(), 1);
-    assert_eq!(result.config.packets[0].struct_name, "KeepPacket");
+    assert_eq!(result.packet_defs.len(), 1);
+    assert_eq!(result.packet_defs[0].struct_name, "KeepPacket");
 
     let _ = fs::remove_dir_all(&temp);
 }
@@ -533,8 +533,8 @@ typedef struct {
     fs::write(temp.join("src").join("generated").join("skip.c"), skip).expect("write skip");
 
     let result = sync_packets_fs(&config_path, None).expect("sync should pass");
-    assert_eq!(result.config.packets.len(), 1);
-    assert_eq!(result.config.packets[0].struct_name, "LivePacket");
+    assert_eq!(result.packet_defs.len(), 1);
+    assert_eq!(result.packet_defs[0].struct_name, "LivePacket");
 
     let _ = fs::remove_dir_all(&temp);
 }

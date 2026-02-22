@@ -9,6 +9,7 @@ use tracing::info;
 use crate::cli::Cli;
 use crate::console::{print_help, spawn_console_reader, ConsoleCommand};
 use crate::output_manager::OutputManager;
+use crate::runtime_schema::RuntimeSchemaState;
 use crate::runtime_spec::build_runtime_spec;
 use crate::source_scan::{discover_sources, render_candidates, SourceCandidate};
 
@@ -21,7 +22,7 @@ pub struct DaemonState {
     pub config: RatitudeConfig,
     pub source_candidates: Vec<SourceCandidate>,
     pub active_source: String,
-    pub packets: Vec<PacketDef>,
+    pub runtime_schema: RuntimeSchemaState,
 }
 
 pub async fn run_daemon(cli: Cli) -> Result<()> {
@@ -58,14 +59,15 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
             maybe_signal = runtime.recv_signal() => {
                 match maybe_signal {
                     Some(RuntimeSignal::SchemaReady { schema_hash, packets }) => {
-                        state.packets = runtime_packets_to_packet_defs(packets);
+                        let packet_defs = runtime_packets_to_packet_defs(packets);
+                        state.runtime_schema.replace(schema_hash, packet_defs);
                         output_manager
-                            .apply(runtime.hub(), state.packets.clone())
+                            .apply(runtime.hub(), state.runtime_schema.packets().to_vec())
                             .await?;
                         println!(
                             "runtime schema ready: packets={}, hash=0x{:016X}",
-                            state.packets.len(),
-                            schema_hash
+                            state.runtime_schema.packet_count(),
+                            state.runtime_schema.schema_hash().unwrap_or(schema_hash)
                         );
                     }
                     Some(RuntimeSignal::Fatal(err)) => {
@@ -106,7 +108,7 @@ async fn handle_console_command(
             let output = output_manager.snapshot();
             println!("status:");
             println!("  source: {}", state.active_source);
-            println!("  packets: {}", state.packets.len());
+            println!("  packets: {}", state.runtime_schema.packet_count());
             println!(
                 "  jsonl: {}",
                 if output.jsonl_enabled { "on" } else { "off" }
@@ -153,7 +155,8 @@ async fn handle_console_command(
             field_name,
         } => {
             let packet = state
-                .packets
+                .runtime_schema
+                .packets()
                 .iter()
                 .find(|packet| packet.struct_name.eq_ignore_ascii_case(&struct_name));
             if let Some(packet) = packet {
@@ -203,13 +206,13 @@ async fn activate_runtime(
 
     state.config = load_config(&state.config_path)?;
     let runtime = start_runtime(&state.config, &state.active_source).await?;
-    state.packets.clear();
+    state.runtime_schema.clear();
     output_manager
-        .apply(runtime.hub(), state.packets.clone())
+        .apply(runtime.hub(), state.runtime_schema.packets().to_vec())
         .await?;
     info!(
         source = %state.active_source,
-        packets = state.packets.len(),
+        packets = state.runtime_schema.packet_count(),
         "ingest runtime started"
     );
     Ok(runtime)
@@ -232,7 +235,7 @@ async fn build_state(config_path: String, cfg: RatitudeConfig) -> Result<DaemonS
         config: cfg,
         source_candidates,
         active_source,
-        packets: Vec::new(),
+        runtime_schema: RuntimeSchemaState::default(),
     })
 }
 
@@ -392,7 +395,7 @@ mod tests {
                 },
             ],
             active_source: addr.clone(),
-            packets: Vec::new(),
+            runtime_schema: RuntimeSchemaState::default(),
         };
         let mut output_manager = OutputManager::from_config(&cfg);
         let action =
@@ -431,7 +434,7 @@ mod tests {
                 },
             ],
             active_source: original_active.clone(),
-            packets: Vec::new(),
+            runtime_schema: RuntimeSchemaState::default(),
         };
         let mut output_manager = OutputManager::from_config(&cfg);
         let action = handle_console_command(
@@ -468,7 +471,7 @@ mod tests {
             config: cfg.clone(),
             source_candidates: Vec::new(),
             active_source: "127.0.0.1:19021".to_string(),
-            packets: Vec::new(),
+            runtime_schema: RuntimeSchemaState::default(),
         };
         let mut output_manager = OutputManager::from_config(&cfg);
         let foxglove_action = handle_console_command(

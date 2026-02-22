@@ -66,6 +66,8 @@ pub struct SyncPipelineOutput {
 #[derive(Debug, Clone)]
 pub struct SyncFsResult {
     pub config: RatitudeConfig,
+    pub generated: GeneratedConfig,
+    pub packet_defs: Vec<GeneratedPacketDef>,
     pub changed: bool,
     pub layout_warnings: Vec<String>,
 }

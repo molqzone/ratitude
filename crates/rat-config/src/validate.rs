@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use crate::{
     ConfigError, FoxgloveOutputConfig, GenerationConfig, ProjectConfig, RatitudeConfig,
     RttdBehaviorConfig, RttdSourceConfig,
@@ -61,43 +59,6 @@ impl RatitudeConfig {
                 "rttd.outputs.foxglove.ws_addr must not be empty".to_string(),
             ));
         }
-
-        let mut seen = BTreeSet::new();
-        for packet in &self.packets {
-            if packet.id > 0xFF {
-                return Err(ConfigError::Validation(format!(
-                    "packet id out of range: 0x{:X}",
-                    packet.id
-                )));
-            }
-            if !seen.insert(packet.id) {
-                return Err(ConfigError::Validation(format!(
-                    "duplicate packet id: 0x{:02X}",
-                    packet.id
-                )));
-            }
-            if packet.struct_name.trim().is_empty() {
-                return Err(ConfigError::Validation(format!(
-                    "packet 0x{:02X} has empty struct_name",
-                    packet.id
-                )));
-            }
-            for field in &packet.fields {
-                if field.name.trim().is_empty() {
-                    return Err(ConfigError::Validation(format!(
-                        "packet 0x{:02X} has field with empty name",
-                        packet.id
-                    )));
-                }
-                if field.size == 0 {
-                    return Err(ConfigError::Validation(format!(
-                        "packet 0x{:02X} field {} has invalid size",
-                        packet.id, field.name
-                    )));
-                }
-            }
-        }
-
         Ok(())
     }
 
