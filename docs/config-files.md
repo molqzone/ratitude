@@ -27,7 +27,6 @@ extensions = [".h", ".c"]
 
 [generation]
 out_dir = "."
-toml_name = "rat_gen.toml"
 header_name = "rat_gen.h"
 
 [rttd]
@@ -61,19 +60,15 @@ ws_addr = "127.0.0.1:8765"
 - 命令台是主配置入口之一：`$source use`、`$foxglove on|off`、`$jsonl on|off [path]` 会写回该文件。
 - 设计约束：runtime 每次重启都会重新创建 JSONL writer；当 `rttd.outputs.jsonl.enabled = true` 且配置了 `path` 时，目标文件会被清空重写（非追加）。
 
-## `rat_gen.toml`（自动生成）
-
-用途：`rat-sync` 的中间产物，供编译链路和排查使用。
-
-特点：
-
-- 不建议人工编辑。
-- 可由工具链更新。
-- 主机 runtime 启动不再依赖该文件。
-
 ## `rat_gen.h`（自动生成）
 
 用途：固件编译期宏定义（ID/常量）输出。
+
+生成方式：仅由 `ratsync` 生成，`rttd` 运行时不会触发 sync。
+
+```bash
+cargo run -p ratsync -- --config <path/to/rat.toml>
+```
 
 包含：
 

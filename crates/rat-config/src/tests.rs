@@ -38,14 +38,10 @@ fn resolve_relative_path_uses_config_dir() {
 fn normalize_sets_generated_paths() {
     let mut cfg = RatitudeConfig::default();
     cfg.generation.out_dir = "generated".to_string();
-    cfg.generation.toml_name = "rat_gen.toml".to_string();
     cfg.generation.header_name = "rat_gen.h".to_string();
     cfg.normalize();
     let paths = resolve_config_paths(&cfg, Path::new("firmware/example/stm32f4_rtt/rat.toml"));
 
-    assert!(paths
-        .generated_toml_path()
-        .ends_with("generated/rat_gen.toml"));
     assert!(paths
         .generated_header_path()
         .ends_with("generated/rat_gen.h"));
@@ -71,42 +67,10 @@ fn save_and_load_round_trip() {
     assert_eq!(loaded.artifacts.elf, "build/app.elf");
     let paths = resolve_config_paths(&loaded, &path);
     assert!(paths
-        .generated_toml_path()
-        .ends_with("generated/rat_gen.toml"));
+        .generated_header_path()
+        .ends_with("generated/rat_gen.h"));
     assert!(!loaded.rttd.outputs.jsonl.enabled);
     assert!(loaded.rttd.outputs.foxglove.enabled);
-
-    let _ = fs::remove_file(path);
-    let _ = fs::remove_dir_all(dir);
-}
-
-#[test]
-fn generated_config_round_trip() {
-    let dir = unique_temp_dir("ratitude_gen_roundtrip");
-    let path = dir.join("rat_gen.toml");
-    let mut cfg = GeneratedConfig::default();
-    cfg.meta.project = "demo".to_string();
-    cfg.meta.schema_hash = "0x00000000AABBCCDD".to_string();
-    cfg.packets.push(GeneratedPacketDef {
-        id: 1,
-        signature_hash: "0x1122".to_string(),
-        struct_name: "AttitudePacket".to_string(),
-        packet_type: "quat".to_string(),
-        packed: true,
-        byte_size: 16,
-        source: "Core/Src/main.c".to_string(),
-        fields: vec![FieldDef {
-            name: "w".to_string(),
-            c_type: "float".to_string(),
-            offset: 0,
-            size: 4,
-        }],
-    });
-
-    save_generated(&path, &cfg).expect("save generated config");
-    let (loaded, exists) = load_generated_or_default(&path).expect("load generated config");
-    assert!(exists);
-    assert_eq!(loaded, cfg);
 
     let _ = fs::remove_file(path);
     let _ = fs::remove_dir_all(dir);
@@ -143,7 +107,6 @@ scan_root = "Core"
 
 [generation]
 out_dir = "."
-toml_name = "rat_gen.toml"
 header_name = "rat_gen.h"
 
 [rttd]
@@ -179,7 +142,6 @@ scan_root = "Core"
 
 [generation]
 out_dir = "."
-toml_name = "rat_gen.toml"
 header_name = "rat_gen.h"
 
 [rttd]
@@ -215,7 +177,6 @@ ignore_dirs = ["build", ".git"]
 
 [generation]
 out_dir = "."
-toml_name = "rat_gen.toml"
 header_name = "rat_gen.h"
 "#;
     fs::write(&path, raw).expect("write config");
@@ -241,7 +202,6 @@ scan_root = "Core"
 
 [generation]
 out_dir = "."
-toml_name = "rat_gen.toml"
 header_name = "rat_gen.h"
 
 [rttd]
@@ -279,7 +239,6 @@ scan_root = "Core"
 
 [generation]
 out_dir = "."
-toml_name = "rat_gen.toml"
 header_name = "rat_gen.h"
 
 [rttd]
@@ -302,6 +261,32 @@ reader_buf = 65536
     assert!(msg.contains("rttd.behavior.auto_sync_on_start"));
     assert!(msg.contains("rttd.behavior.auto_sync_on_reset"));
     assert!(msg.contains("rttd.behavior.sync_debounce_ms"));
+
+    let _ = fs::remove_file(path);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn generation_toml_name_is_rejected_with_migration_hint() {
+    let dir = unique_temp_dir("ratitude_cfg_generation_toml_name");
+    let path = dir.join("rat.toml");
+    let raw = r#"
+[project]
+name = "demo"
+scan_root = "Core"
+
+[generation]
+out_dir = "."
+toml_name = "rat_gen.toml"
+header_name = "rat_gen.h"
+"#;
+    fs::write(&path, raw).expect("write config");
+
+    let err = load_or_default(&path).expect_err("generation.toml_name should fail");
+    let msg = err.to_string();
+    assert!(msg.contains("deprecated config keys removed in v0.2.0"));
+    assert!(msg.contains("generation.toml_name"));
+    assert!(msg.contains("rat_gen.toml is no longer generated"));
 
     let _ = fs::remove_file(path);
     let _ = fs::remove_dir_all(dir);

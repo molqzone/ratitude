@@ -1,4 +1,7 @@
-.PHONY: daemon up jlink-rtt mock
+.PHONY: sync daemon up jlink-rtt mock
+
+sync:
+	cargo run -p ratsync -- --config firmware/example/stm32f4_rtt/rat.toml
 
 daemon:
 	cargo run -p rttd -- --config firmware/example/stm32f4_rtt/rat.toml

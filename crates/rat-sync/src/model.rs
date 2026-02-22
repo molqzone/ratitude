@@ -44,22 +44,11 @@ pub(crate) struct ParsedTaggedFile {
 pub struct SyncPipelineInput {
     pub project_name: String,
     pub discovered_packets: Vec<DiscoveredPacket>,
-    pub previous_generated: Option<GeneratedConfig>,
-}
-
-impl SyncPipelineInput {
-    pub(crate) fn previous_generated_packets(&self) -> &[GeneratedPacketDef] {
-        self.previous_generated
-            .as_ref()
-            .map(|generated| generated.packets.as_slice())
-            .unwrap_or(&[])
-    }
 }
 
 #[derive(Debug, Clone)]
 pub struct SyncPipelineOutput {
     pub generated: GeneratedConfig,
-    pub changed: bool,
     pub layout_warnings: Vec<String>,
 }
 
@@ -68,6 +57,5 @@ pub struct SyncFsResult {
     pub config: RatitudeConfig,
     pub generated: GeneratedConfig,
     pub packet_defs: Vec<GeneratedPacketDef>,
-    pub changed: bool,
     pub layout_warnings: Vec<String>,
 }

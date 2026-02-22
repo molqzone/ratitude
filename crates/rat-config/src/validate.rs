@@ -15,11 +15,6 @@ impl RatitudeConfig {
                 "project.scan_root must not be empty".to_string(),
             ));
         }
-        if self.generation.toml_name.trim().is_empty() {
-            return Err(ConfigError::Validation(
-                "generation.toml_name must not be empty".to_string(),
-            ));
-        }
         if self.generation.header_name.trim().is_empty() {
             return Err(ConfigError::Validation(
                 "generation.header_name must not be empty".to_string(),
@@ -74,9 +69,6 @@ impl RatitudeConfig {
         }
         if self.generation.out_dir.trim().is_empty() {
             self.generation.out_dir = GenerationConfig::default().out_dir;
-        }
-        if self.generation.toml_name.trim().is_empty() {
-            self.generation.toml_name = GenerationConfig::default().toml_name;
         }
         if self.generation.header_name.trim().is_empty() {
             self.generation.header_name = GenerationConfig::default().header_name;

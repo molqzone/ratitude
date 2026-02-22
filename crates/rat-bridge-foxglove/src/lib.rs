@@ -178,7 +178,7 @@ pub async fn run_bridge(
     shutdown: CancellationToken,
 ) -> Result<()> {
     if packets.is_empty() {
-        return Err(anyhow!("no packets found in rat_gen.toml"));
+        return Err(anyhow!("no packets available in runtime schema"));
     }
 
     let context = Context::new();

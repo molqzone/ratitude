@@ -34,13 +34,13 @@
 ### D1. 单一事实源（SSOT）
 
 - 唯一事实源：固件运行时下发的 schema 控制帧。
-- `rat_gen.toml` / `rat_gen.h` 可作为工具链产物，但不是 daemon 启动前置条件。
+- `rat_gen.h` 由 `ratsync` 生成并参与固件构建。
 - `rat.toml` 只负责运行时 wiring（数据源/输出/行为），不定义 payload 字段语义。
 
 ### D2. 运行模型（破坏式）
 
-- `rttd` 默认进入交互式 daemon（命令台 + 状态面板）。
-- 删除所有外部子命令，统一为单入口 daemon 控制面。
+- 流程固定为 `ratsync -> build/flash -> rttd`。
+- `rttd` 默认进入交互式 daemon（命令台 + 状态面板），运行时不触发 sync。
 - 协议 ingest runtime 下沉到 `rat-core`，`rttd` 仅负责控制面编排。
 
 ### D3. 数据源策略

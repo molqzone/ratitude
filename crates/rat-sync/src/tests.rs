@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
@@ -53,23 +52,6 @@ fn sample_fields() -> Vec<FieldDef> {
     ]
 }
 
-fn legacy_signature_hash(packet: &DiscoveredPacket) -> u64 {
-    let mut signature = String::new();
-    let _ = write!(
-        signature,
-        "{}|{}|{}|{}|{}",
-        packet.struct_name, packet.packet_type, packet.packed, packet.byte_size, packet.source
-    );
-    for field in &packet.fields {
-        let _ = write!(
-            signature,
-            "|{}:{}:{}:{}",
-            field.name, field.c_type, field.offset, field.size
-        );
-    }
-    fnv1a64(signature.as_bytes())
-}
-
 #[test]
 fn signature_hash_ignores_source_path() {
     let base = DiscoveredPacket {
@@ -94,90 +76,7 @@ fn signature_hash_ignores_source_path() {
 }
 
 #[test]
-fn allocator_reuses_previous_id_from_legacy_source_based_signature() {
-    let mut discovered = DiscoveredPacket {
-        signature_hash: 0,
-        struct_name: "RatSample".to_string(),
-        packet_type: "plot".to_string(),
-        packed: false,
-        byte_size: 8,
-        source: "new_path/main.c".to_string(),
-        fields: sample_fields(),
-    };
-    discovered.signature_hash = compute_signature_hash(&discovered);
-
-    let legacy_packet = DiscoveredPacket {
-        source: "old_path/main.c".to_string(),
-        ..discovered.clone()
-    };
-    let legacy_signature = legacy_signature_hash(&legacy_packet);
-    let previous = vec![GeneratedPacketDef {
-        id: 0x2A,
-        signature_hash: format!("0x{:016X}", legacy_signature),
-        struct_name: discovered.struct_name.clone(),
-        packet_type: discovered.packet_type.clone(),
-        packed: discovered.packed,
-        byte_size: discovered.byte_size,
-        source: legacy_packet.source.clone(),
-        fields: discovered.fields.clone(),
-    }];
-
-    let assigned = allocate_packet_ids(&[discovered], &previous).expect("allocate ids");
-    assert_eq!(assigned.len(), 1);
-    assert_eq!(
-        assigned[0].id, 0x2A,
-        "legacy signature should map to semantic signature and preserve packet id"
-    );
-}
-
-#[test]
-fn run_sync_pipeline_reuses_legacy_id_without_filesystem() {
-    let mut discovered = DiscoveredPacket {
-        signature_hash: 0,
-        struct_name: "RatSample".to_string(),
-        packet_type: "plot".to_string(),
-        packed: false,
-        byte_size: 8,
-        source: "new_path/main.c".to_string(),
-        fields: sample_fields(),
-    };
-    discovered.signature_hash = compute_signature_hash(&discovered);
-
-    let legacy_packet = DiscoveredPacket {
-        source: "old_path/main.c".to_string(),
-        ..discovered.clone()
-    };
-    let legacy_signature = legacy_signature_hash(&legacy_packet);
-    let previous_generated = rat_config::GeneratedConfig {
-        meta: rat_config::GeneratedMeta {
-            project: "sync_test".to_string(),
-            schema_hash: "0x0000000000000000".to_string(),
-        },
-        packets: vec![GeneratedPacketDef {
-            id: 0x2A,
-            signature_hash: format!("0x{:016X}", legacy_signature),
-            struct_name: discovered.struct_name.clone(),
-            packet_type: discovered.packet_type.clone(),
-            packed: discovered.packed,
-            byte_size: discovered.byte_size,
-            source: legacy_packet.source.clone(),
-            fields: discovered.fields.clone(),
-        }],
-    };
-
-    let output = run_sync_pipeline(SyncPipelineInput {
-        project_name: "sync_test".to_string(),
-        discovered_packets: vec![discovered],
-        previous_generated: Some(previous_generated),
-    })
-    .expect("pipeline should pass");
-
-    assert_eq!(output.generated.packets.len(), 1);
-    assert_eq!(output.generated.packets[0].id, 0x2A);
-}
-
-#[test]
-fn run_sync_pipeline_reports_unchanged_when_generated_matches_previous() {
+fn run_sync_pipeline_is_deterministic_for_identical_input() {
     let mut discovered = DiscoveredPacket {
         signature_hash: 0,
         struct_name: "RatSample".to_string(),
@@ -192,19 +91,17 @@ fn run_sync_pipeline_reports_unchanged_when_generated_matches_previous() {
     let first = run_sync_pipeline(SyncPipelineInput {
         project_name: "sync_test".to_string(),
         discovered_packets: vec![discovered.clone()],
-        previous_generated: None,
     })
     .expect("first pipeline run");
     let second = run_sync_pipeline(SyncPipelineInput {
         project_name: "sync_test".to_string(),
         discovered_packets: vec![discovered],
-        previous_generated: Some(first.generated),
     })
     .expect("second pipeline run");
 
-    assert!(
-        !second.changed,
-        "identical generated output should be unchanged"
+    assert_eq!(
+        first.generated, second.generated,
+        "identical input should produce identical generated output"
     );
 }
 
@@ -236,7 +133,6 @@ fn run_sync_pipeline_blocks_non_packed_padding_layout_without_filesystem() {
     let err = run_sync_pipeline(SyncPipelineInput {
         project_name: "sync_test".to_string(),
         discovered_packets: vec![discovered],
-        previous_generated: None,
     })
     .expect_err("pipeline should reject non-packed padding");
     assert!(err.to_string().contains("layout validation failed"));
@@ -259,7 +155,6 @@ fn write_test_config(path: &Path, scan_root: &str) {
     cfg.project.name = "sync_test".to_string();
     cfg.project.scan_root = scan_root.to_string();
     cfg.generation.out_dir = ".".to_string();
-    cfg.generation.toml_name = "rat_gen.toml".to_string();
     cfg.generation.header_name = "rat_gen.h".to_string();
     rat_config::ConfigStore::new(path)
         .save(&cfg)
@@ -289,7 +184,6 @@ typedef struct {
     assert_eq!(result.packet_defs[0].packet_type, "plot");
     assert!((RAT_ID_MIN..=RAT_ID_MAX).contains(&result.packet_defs[0].id));
 
-    assert!(temp.join("rat_gen.toml").exists());
     assert!(temp.join("rat_gen.h").exists());
 
     let _ = fs::remove_dir_all(&temp);

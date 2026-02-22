@@ -1,11 +1,13 @@
 # rttd 工作流总览（v0.2）
 
-本文说明单入口 daemon 的运行流：先连上 RTT，再由固件下发 runtime schema，最后进入稳定解码。
+本文说明 v0.2 的固定流程：先 `ratsync` 生成头文件，再编译烧录，最后启动 `rttd` 进入运行时解码。
 
 ## 1. 端到端流程
 
 ```text
-固件启动 -> RTT 端点可连接
+ratsync 生成 rat_gen.h
+         -> build/flash firmware
+         -> 固件启动，RTT 端点可连接
          -> rttd daemon 连接 source
          -> firmware 发送 schema 控制帧（HELLO/CHUNK/COMMIT）
          -> rat-core runtime Ready
@@ -18,7 +20,21 @@
 rttd(console/source/output) -> rat-core(runtime)
 ```
 
-## 2. 启动阶段
+## 2. 同步与构建阶段
+
+执行：
+
+```bash
+cargo run -p ratsync -- --config <path/to/rat.toml>
+# build + flash firmware
+```
+
+说明：
+
+- `ratsync` 是唯一同步入口。
+- `rttd` 不会触发 sync，不会生成 `rat_gen.h`。
+
+## 3. 启动阶段
 
 执行：
 
@@ -34,7 +50,7 @@ cargo run -p rttd -- --config <path/to/rat.toml>
 4. 启动 ingest runtime（初始状态 `WaitingSchema`）
 5. 在 `schema_timeout` 窗口内等待 schema 控制帧
 
-## 3. 运行阶段
+## 4. 运行阶段
 
 命令台控制：
 
@@ -54,14 +70,14 @@ cargo run -p rttd -- --config <path/to/rat.toml>
 - `$source use`、`$foxglove on|off`、`$jsonl on|off [path]` 会持久化写回 `rat.toml`。
 - 运行时重启会重建 JSONL writer；当 `$jsonl on <path>` 生效时，目标文件按清空重写处理（非追加）。
 
-## 4. Schema 一致性
+## 5. Schema 一致性
 
 - runtime 在 `WaitingSchema` 状态时不会解码业务包。
 - 收到完整 schema 并校验 hash 后进入 `Ready`。
 - schema 超时或 hash 不一致直接 fail-fast。
 - unknown packet 监控与阈值告警在 `Ready` 后生效。
 
-## 5. 常见问题
+## 6. 常见问题
 
 ### 启动后报 schema timeout
 
@@ -77,5 +93,6 @@ cargo run -p rttd -- --config <path/to/rat.toml>
 
 ### schema hash 不一致
 
+- 先执行 `ratsync`，然后重新编译并烧录固件。
 - 确认固件发送的是完整 schema 数据。
 - 确认 CHUNK 顺序和长度正确。

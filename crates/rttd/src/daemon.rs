@@ -513,7 +513,6 @@ extensions = [".c", ".h"]
 
 [generation]
 out_dir = "."
-toml_name = "rat_gen.toml"
 header_name = "rat_gen.h"
 
 [rttd]

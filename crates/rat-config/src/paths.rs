@@ -6,7 +6,6 @@ use crate::{RatitudeConfig, DEFAULT_CONFIG_PATH};
 pub struct ConfigPaths {
     config_path: PathBuf,
     scan_root_path: PathBuf,
-    generated_toml_path: PathBuf,
     generated_header_path: PathBuf,
 }
 
@@ -17,10 +16,6 @@ impl ConfigPaths {
 
     pub fn scan_root_path(&self) -> &Path {
         &self.scan_root_path
-    }
-
-    pub fn generated_toml_path(&self) -> &Path {
-        &self.generated_toml_path
     }
 
     pub fn generated_header_path(&self) -> &Path {
@@ -64,7 +59,6 @@ pub fn resolve_config_paths(cfg: &RatitudeConfig, config_path: impl AsRef<Path>)
     ConfigPaths {
         config_path,
         scan_root_path,
-        generated_toml_path: out_dir.join(&cfg.generation.toml_name),
         generated_header_path: out_dir.join(&cfg.generation.header_name),
     }
 }

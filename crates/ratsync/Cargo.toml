@@ -1,0 +1,10 @@
+[package]
+name = "ratsync"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+rat-config = { path = "../rat-config" }
+rat-sync = { path = "../rat-sync" }

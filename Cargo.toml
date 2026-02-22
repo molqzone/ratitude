@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/rttd",
+  "crates/ratsync",
   "crates/rat-config",
   "crates/rat-sync",
   "crates/rat-protocol",

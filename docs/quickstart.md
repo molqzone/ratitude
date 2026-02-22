@@ -6,7 +6,21 @@
 - 已存在可连接的 RTT 端点（例如由 OpenOCD/J-Link 预先提供）
 - `rat.toml` 使用 v0.2 结构
 
-## 2. 启动 daemon
+## 2. 先执行同步
+
+```bash
+cargo run -p ratsync -- --config firmware/example/stm32f4_rtt/rat.toml
+```
+
+执行后会生成/更新 `rat_gen.h`，供后续编译使用。
+
+## 3. 编译并烧录固件
+
+```bash
+# your build + flash command
+```
+
+## 4. 启动 daemon
 
 ```bash
 cargo run -p rttd -- --config firmware/example/stm32f4_rtt/rat.toml
@@ -20,7 +34,7 @@ $status
 $source list
 ```
 
-## 3. 常用运行命令
+## 5. 常用运行命令
 
 ```text
 $foxglove on
@@ -36,7 +50,7 @@ $jsonl on out.jsonl
 $quit
 ```
 
-## 4. 无硬件 mock 联调
+## 6. 无硬件 mock 联调
 
 ```bash
 ./tools/run_mock_foxglove.sh
@@ -44,7 +58,7 @@ $quit
 
 脚本会启动 mock RTT 字节流，然后启动 daemon。Foxglove 输出由 `rat.toml` 中 `[rttd.outputs.foxglove]` 控制。
 
-## 5. 重点校验
+## 7. 重点校验
 
 - 看到 source 候选列表并可切换
 - 启动后在 `schema_timeout` 内进入 schema ready

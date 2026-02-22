@@ -3,9 +3,6 @@ use std::path::PathBuf;
 use rat_config::ConfigError;
 use thiserror::Error;
 
-#[cfg(test)]
-use rat_config::GeneratedPacketDef;
-
 mod assembler;
 mod ast;
 mod discover;

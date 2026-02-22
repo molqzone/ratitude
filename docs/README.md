@@ -10,11 +10,15 @@
 
 ## 新运行模型（v0.2）
 
-`rttd` 只保留单入口交互式 daemon：
+运行顺序固定为：
 
 ```bash
+cargo run -p ratsync -- --config firmware/example/stm32f4_rtt/rat.toml
+# build + flash firmware
 cargo run -p rttd -- --config firmware/example/stm32f4_rtt/rat.toml
 ```
+
+其中 `rttd` 只保留单入口交互式 daemon，不触发 sync。
 
 启动后通过命令台控制行为：
 

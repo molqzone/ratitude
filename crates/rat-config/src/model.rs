@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const DEFAULT_CONFIG_PATH: &str = "rat.toml";
-pub const DEFAULT_GENERATED_TOML_NAME: &str = "rat_gen.toml";
 pub const DEFAULT_GENERATED_HEADER_NAME: &str = "rat_gen.h";
 
 #[derive(Debug, Error)]
@@ -83,7 +82,6 @@ impl Default for ArtifactsConfig {
 #[serde(default)]
 pub struct GenerationConfig {
     pub out_dir: String,
-    pub toml_name: String,
     pub header_name: String,
 }
 
@@ -91,7 +89,6 @@ impl Default for GenerationConfig {
     fn default() -> Self {
         Self {
             out_dir: ".".to_string(),
-            toml_name: DEFAULT_GENERATED_TOML_NAME.to_string(),
             header_name: DEFAULT_GENERATED_HEADER_NAME.to_string(),
         }
     }

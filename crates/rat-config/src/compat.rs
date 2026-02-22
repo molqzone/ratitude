@@ -14,6 +14,15 @@ pub(crate) fn reject_deprecated_config_keys(raw: &str) -> Result<(), ConfigError
         deprecated_keys.push("project.ignore_dirs");
     }
 
+    if value
+        .get("generation")
+        .and_then(toml::Value::as_table)
+        .map(|generation| generation.contains_key("toml_name"))
+        .unwrap_or(false)
+    {
+        deprecated_keys.push("generation.toml_name");
+    }
+
     if let Some(rttd) = value.get("rttd").and_then(toml::Value::as_table) {
         if rttd.contains_key("server") {
             deprecated_keys.push("[rttd.server]");
@@ -68,7 +77,7 @@ pub(crate) fn reject_deprecated_config_keys(raw: &str) -> Result<(), ConfigError
     }
 
     Err(ConfigError::Validation(format!(
-        "deprecated config keys removed in v0.2.0: {}. Migrate rttd keys via docs/migrations/0.2.0-breaking.md and move path filters into .rttdignore",
+        "deprecated config keys removed in v0.2.0: {}. Migrate rttd keys via docs/migrations/0.2.0-breaking.md, move path filters into .rttdignore, and remove generation.toml_name because rat_gen.toml is no longer generated",
         deprecated_keys.join(", ")
     )))
 }

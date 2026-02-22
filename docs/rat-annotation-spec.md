@@ -38,8 +38,11 @@ typedef struct {
 
 声明会被内部同步逻辑转换为：
 
-- `rat_gen.toml`（主机解码）
-- `rat_gen.h`（固件 ID 与指纹）
+- `rat_gen.h`（固件 ID 与 schema bytes/hash）
+
+执行入口：
+
+- `cargo run -p ratsync -- --config <path/to/rat.toml>`
 
 ## 4. 输出行为
 

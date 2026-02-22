@@ -15,10 +15,7 @@ pub fn run_sync_pipeline(input: SyncPipelineInput) -> Result<SyncPipelineOutput,
     }
     let layout_warnings = collect_layout_warnings(&input.discovered_packets);
 
-    let packets = allocate_packet_ids(
-        &input.discovered_packets,
-        input.previous_generated_packets(),
-    )?;
+    let packets = allocate_packet_ids(&input.discovered_packets)?;
     let schema_hash = compute_schema_hash(&packets);
 
     let generated = GeneratedConfig {
@@ -29,15 +26,8 @@ pub fn run_sync_pipeline(input: SyncPipelineInput) -> Result<SyncPipelineOutput,
         packets,
     };
 
-    let changed = input
-        .previous_generated
-        .as_ref()
-        .map(|previous| previous != &generated)
-        .unwrap_or(true);
-
     Ok(SyncPipelineOutput {
         generated,
-        changed,
         layout_warnings,
     })
 }
