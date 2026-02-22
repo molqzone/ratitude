@@ -46,9 +46,7 @@ cargo run -p ratd -- --config firmware/example/stm32f4_rtt/rat.toml
 
 ## Mock 联调
 
-```bash
-./tools/run_mock_foxglove.sh
-```
+OpenOCD RTT mock 联调脚本已下线。`tools/run_mock_foxglove.sh` / `tools/openocd_rtt_mock.py` 仅保留退役提示，不再提供可用 mock 数据链路。
 
 ## 文档入口
 

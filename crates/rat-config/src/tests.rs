@@ -97,7 +97,7 @@ fn validate_rejects_zero_scan_timeout() {
 }
 
 #[test]
-fn legacy_rttd_sections_are_rejected() {
+fn legacy_ratd_sections_are_rejected() {
     let dir = unique_temp_dir("ratitude_cfg_legacy_sections");
     let path = dir.join("rat.toml");
     let raw = r#"
@@ -126,33 +126,6 @@ ws_addr = "127.0.0.1:8765"
     assert!(msg.contains("[ratd.server]"));
     assert!(msg.contains("[ratd.foxglove]"));
     assert!(msg.contains("docs/migrations/0.2.0-breaking.md"));
-
-    let _ = fs::remove_file(path);
-    let _ = fs::remove_dir_all(dir);
-}
-
-#[test]
-fn legacy_rttd_root_section_is_rejected_with_rename_hint() {
-    let dir = unique_temp_dir("ratitude_cfg_legacy_rttd_root");
-    let path = dir.join("rat.toml");
-    let raw = r#"
-[project]
-name = "demo"
-scan_root = "Core"
-
-[generation]
-out_dir = "."
-header_name = "rat_gen.h"
-
-[rttd]
-text_id = 255
-"#;
-    fs::write(&path, raw).expect("write config");
-
-    let err = load_or_default(&path).expect_err("legacy rttd section should fail");
-    let msg = err.to_string();
-    assert!(msg.contains("deprecated config keys removed in v0.2.0"));
-    assert!(msg.contains("[rttd] (renamed to [ratd])"));
 
     let _ = fs::remove_file(path);
     let _ = fs::remove_dir_all(dir);
@@ -193,7 +166,7 @@ preferred_backend = "openocd"
 }
 
 #[test]
-fn ignore_dirs_is_rejected_with_rttdignore_migration_hint() {
+fn ignore_dirs_is_rejected_with_ratignore_migration_hint() {
     let dir = unique_temp_dir("ratitude_cfg_ignore_dirs");
     let path = dir.join("rat.toml");
     let raw = r#"
@@ -212,7 +185,7 @@ header_name = "rat_gen.h"
     let msg = err.to_string();
     assert!(msg.contains("deprecated config keys removed in v0.2.0"));
     assert!(msg.contains("project.ignore_dirs"));
-    assert!(msg.contains(".rttdignore"));
+    assert!(msg.contains(".ratignore"));
 
     let _ = fs::remove_file(path);
     let _ = fs::remove_dir_all(dir);

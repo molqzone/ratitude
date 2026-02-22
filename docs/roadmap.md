@@ -10,7 +10,7 @@
 - runtime schema 控制帧（HELLO/CHUNK/COMMIT）接入
 - ratd 在 schema ready 后动态注册解码与输出
 - OpenOCD / J-Link RTT 端点兼容
-- OpenOCD RTT 字节流 mock 联调链路（`tools/openocd_rtt_mock.py` + 一键脚本）
+- OpenOCD RTT mock 联调链路已下线（脚本仅保留退役提示）
 
 ## B. 计划中
 

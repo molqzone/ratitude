@@ -8,12 +8,12 @@ use walkdir::WalkDir;
 use crate::SyncError;
 
 #[derive(Debug, Clone)]
-struct RttdIgnoreMatcher {
+struct RatIgnoreMatcher {
     root: PathBuf,
     patterns: Vec<Pattern>,
 }
 
-impl RttdIgnoreMatcher {
+impl RatIgnoreMatcher {
     fn is_ignored(&self, path: &Path) -> bool {
         let relative = path
             .strip_prefix(&self.root)
@@ -32,7 +32,7 @@ pub(crate) fn scan_source_files(
     extension_set: &HashSet<String>,
     config_path: &Path,
 ) -> Result<Vec<PathBuf>, SyncError> {
-    let rttd_ignore = load_rttdignore(config_path)?;
+    let rat_ignore = load_ratignore(config_path)?;
 
     let mut walker = WalkDir::new(scan_root)
         .follow_links(false)
@@ -47,7 +47,7 @@ pub(crate) fn scan_source_files(
     while let Some(entry) = iter.next() {
         let entry = entry.map_err(|err| SyncError::Validation(err.to_string()))?;
         if entry.file_type().is_dir() {
-            let skip_by_pattern = rttd_ignore
+            let skip_by_pattern = rat_ignore
                 .as_ref()
                 .map(|matcher| matcher.is_ignored(entry.path()))
                 .unwrap_or(false);
@@ -59,7 +59,7 @@ pub(crate) fn scan_source_files(
         if !entry.file_type().is_file() {
             continue;
         }
-        if rttd_ignore
+        if rat_ignore
             .as_ref()
             .map(|matcher| matcher.is_ignored(entry.path()))
             .unwrap_or(false)
@@ -85,12 +85,13 @@ pub(crate) fn scan_source_files(
     Ok(files)
 }
 
-fn load_rttdignore(config_path: &Path) -> Result<Option<RttdIgnoreMatcher>, SyncError> {
+fn load_ratignore(config_path: &Path) -> Result<Option<RatIgnoreMatcher>, SyncError> {
     let root = config_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
-    let ignore_path = root.join(".rttdignore");
+
+    let ignore_path = root.join(".ratignore");
     if !ignore_path.exists() {
         return Ok(None);
     }
@@ -108,7 +109,7 @@ fn load_rttdignore(config_path: &Path) -> Result<Option<RttdIgnoreMatcher>, Sync
         }
         if trimmed.starts_with('!') {
             return Err(SyncError::Validation(format!(
-                ".rttdignore does not support negate patterns in {}:{}",
+                ".ratignore does not support negate patterns in {}:{}",
                 ignore_path.display(),
                 line_no
             )));
@@ -116,7 +117,7 @@ fn load_rttdignore(config_path: &Path) -> Result<Option<RttdIgnoreMatcher>, Sync
 
         let pattern = Pattern::new(trimmed).map_err(|err| {
             SyncError::Validation(format!(
-                "invalid .rttdignore pattern in {}:{} ({})",
+                "invalid .ratignore pattern in {}:{} ({})",
                 ignore_path.display(),
                 line_no,
                 err
@@ -125,5 +126,5 @@ fn load_rttdignore(config_path: &Path) -> Result<Option<RttdIgnoreMatcher>, Sync
         patterns.push(pattern);
     }
 
-    Ok(Some(RttdIgnoreMatcher { root, patterns }))
+    Ok(Some(RatIgnoreMatcher { root, patterns }))
 }

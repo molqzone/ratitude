@@ -323,7 +323,7 @@ typedef struct __attribute__((aligned(8))) {
 }
 
 #[test]
-fn sync_packets_fs_respects_rttdignore_glob_rules() {
+fn sync_packets_fs_respects_ratignore_glob_rules() {
     let temp = std::env::temp_dir().join(format!("rat_sync_ignore_glob_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp);
     fs::create_dir_all(temp.join("src")).expect("mkdir");
@@ -332,10 +332,10 @@ fn sync_packets_fs_respects_rttdignore_glob_rules() {
     write_test_config(&config_path, "src");
 
     fs::write(
-        temp.join(".rttdignore"),
+        temp.join(".ratignore"),
         "# ignore sensor packet\nsrc/ignore_me.c\n",
     )
-    .expect("write .rttdignore");
+    .expect("write .ratignore");
 
     let kept = r#"
 // @rat, plot
@@ -362,7 +362,7 @@ typedef struct {
 }
 
 #[test]
-fn sync_packets_fs_rttdignore_supports_comments_and_blank_lines() {
+fn sync_packets_fs_ratignore_supports_comments_and_blank_lines() {
     let temp =
         std::env::temp_dir().join(format!("rat_sync_ignore_comments_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp);
@@ -371,7 +371,7 @@ fn sync_packets_fs_rttdignore_supports_comments_and_blank_lines() {
     let config_path = temp.join("rat.toml");
     write_test_config(&config_path, "src");
 
-    fs::write(temp.join(".rttdignore"), "\n# comment\n\nsrc/skip.c\n").expect("write .rttdignore");
+    fs::write(temp.join(".ratignore"), "\n# comment\n\nsrc/skip.c\n").expect("write .ratignore");
 
     let keep = r#"
 // @rat, plot
@@ -398,7 +398,7 @@ typedef struct {
 }
 
 #[test]
-fn sync_packets_fs_rttdignore_supports_directory_glob() {
+fn sync_packets_fs_ratignore_supports_directory_glob() {
     let temp =
         std::env::temp_dir().join(format!("rat_sync_ignore_dir_glob_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp);
@@ -407,7 +407,7 @@ fn sync_packets_fs_rttdignore_supports_directory_glob() {
 
     let config_path = temp.join("rat.toml");
     write_test_config(&config_path, "src");
-    fs::write(temp.join(".rttdignore"), "src/generated/**\n").expect("write .rttdignore");
+    fs::write(temp.join(".ratignore"), "src/generated/**\n").expect("write .ratignore");
 
     let keep = r#"
 // @rat, plot
@@ -434,14 +434,14 @@ typedef struct {
 }
 
 #[test]
-fn sync_packets_fs_rejects_rttdignore_negate_pattern() {
+fn sync_packets_fs_rejects_ratignore_negate_pattern() {
     let temp = std::env::temp_dir().join(format!("rat_sync_ignore_negate_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp);
     fs::create_dir_all(temp.join("src")).expect("mkdir");
 
     let config_path = temp.join("rat.toml");
     write_test_config(&config_path, "src");
-    fs::write(temp.join(".rttdignore"), "!src/*.c\n").expect("write .rttdignore");
+    fs::write(temp.join(".ratignore"), "!src/*.c\n").expect("write .ratignore");
     fs::write(
         temp.join("src").join("main.c"),
         r#"

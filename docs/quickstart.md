@@ -50,13 +50,9 @@ $jsonl on out.jsonl
 $quit
 ```
 
-## 6. 无硬件 mock 联调
+## 6. Mock RTT 说明
 
-```bash
-./tools/run_mock_foxglove.sh
-```
-
-脚本会启动 mock RTT 字节流，然后启动 daemon。Foxglove 输出由 `rat.toml` 中 `[ratd.outputs.foxglove]` 控制。
+OpenOCD RTT mock 联调链路已下线。`tools/run_mock_foxglove.sh` / `tools/openocd_rtt_mock.py` 仅保留退役提示，不再提供可用 mock 数据流。
 
 ## 7. 重点校验
 

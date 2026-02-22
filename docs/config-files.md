@@ -76,7 +76,7 @@ cargo run -p ratsync -- --config <path/to/rat.toml>
 - `RAT_GEN_PACKET_COUNT`
 - `RAT_ID_<STRUCT_NAME>`
 
-## `.rttdignore`
+## `.ratignore`
 
 用途：在同步扫描时排除源码路径。
 

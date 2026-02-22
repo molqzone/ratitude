@@ -10,7 +10,7 @@
 ## 实施要点
 
 1. 配置层升级到 `source/behavior/outputs`
-2. 同步层接入 `.rttdignore`
+2. 同步层接入 `.ratignore`
 3. 运行时拆分：`cli/daemon/console/source_scan/sync_controller/output_manager`
 4. 文档与脚本改口径
 5. 测试与 grep 验收

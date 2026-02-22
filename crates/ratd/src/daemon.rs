@@ -344,7 +344,7 @@ mod tests {
 
     #[tokio::test]
     async fn build_state_does_not_overwrite_last_selected_addr_on_startup() {
-        let dir = unique_temp_dir("rttd_build_state");
+        let dir = unique_temp_dir("ratd_build_state");
         let config_path = dir.join("rat.toml");
 
         let mut cfg = RatitudeConfig::default();
@@ -457,7 +457,7 @@ mod tests {
 
     #[tokio::test]
     async fn output_commands_apply_without_runtime_restart() {
-        let dir = unique_temp_dir("rttd_output_command_apply");
+        let dir = unique_temp_dir("ratd_output_command_apply");
         let config_path = dir.join("rat.toml");
         let config_path_str = config_path.to_string_lossy().to_string();
 
@@ -501,7 +501,7 @@ mod tests {
 
     #[test]
     fn load_config_does_not_rewrite_existing_file() {
-        let dir = unique_temp_dir("rttd_load_config_read_only");
+        let dir = unique_temp_dir("ratd_load_config_read_only");
         let config_path = dir.join("rat.toml");
 
         let raw = r#"# keep comment and formatting
@@ -530,7 +530,7 @@ text_id = 255
 
     #[test]
     fn load_config_does_not_create_file_when_missing() {
-        let dir = unique_temp_dir("rttd_load_config_missing");
+        let dir = unique_temp_dir("ratd_load_config_missing");
         let config_path = dir.join("rat.toml");
         assert!(!config_path.exists());
 
