@@ -512,8 +512,18 @@ def run_server(args: argparse.Namespace, packets: List[PacketDef], schema_bytes:
                     client = conn
                     print(f"[mock] client connected: {addr[0]}:{addr[1]}")
                     schema_frames = encode_schema_frames(schema_bytes)
+                    schema_send_ok = True
                     for frame in schema_frames:
-                        client.sendall(frame)
+                        try:
+                            client.sendall(frame)
+                        except (BrokenPipeError, ConnectionResetError, OSError):
+                            schema_send_ok = False
+                            if args.verbose:
+                                print("[mock] client disconnected while sending schema")
+                            close_client()
+                            break
+                    if not schema_send_ok:
+                        continue
                     if args.verbose:
                         print(
                             f"[mock] sent runtime schema frames={len(schema_frames)} hash=0x{fnv1a64(schema_bytes):016X}"
