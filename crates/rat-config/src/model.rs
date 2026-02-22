@@ -141,10 +141,8 @@ impl Default for RttdSourceConfig {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct RttdBehaviorConfig {
-    pub auto_sync_on_start: bool,
-    pub auto_sync_on_reset: bool,
-    pub sync_debounce_ms: u64,
     pub reconnect: String,
+    pub schema_timeout: String,
     pub buf: usize,
     pub reader_buf: usize,
 }
@@ -152,10 +150,8 @@ pub struct RttdBehaviorConfig {
 impl Default for RttdBehaviorConfig {
     fn default() -> Self {
         Self {
-            auto_sync_on_start: true,
-            auto_sync_on_reset: true,
-            sync_debounce_ms: 500,
             reconnect: "1s".to_string(),
+            schema_timeout: "3s".to_string(),
             buf: 256,
             reader_buf: 65_536,
         }

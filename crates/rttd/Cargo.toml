@@ -9,7 +9,6 @@ clap.workspace = true
 rat-bridge-foxglove = { path = "../rat-bridge-foxglove" }
 rat-config = { path = "../rat-config" }
 rat-core = { path = "../rat-core" }
-rat-sync = { path = "../rat-sync" }
 serde_json.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

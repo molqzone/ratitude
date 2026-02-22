@@ -23,10 +23,8 @@ scan_timeout_ms = 300
 last_selected_addr = "127.0.0.1:19021"
 
 [rttd.behavior]
-auto_sync_on_start = true
-auto_sync_on_reset = true
-sync_debounce_ms = 500
 reconnect = "1s"
+schema_timeout = "3s"
 buf = 256
 reader_buf = 65536
 

@@ -7,7 +7,7 @@ High-performance binary telemetry stack for embedded systems.
 - C/C++ `@rat` 声明驱动的数据定义
 - COBS 帧传输与动态解码
 - 单入口 `rttd` 交互式 daemon
-- 运行时命令台控制 source/sync/输出
+- 运行时命令台控制 source/输出
 - JSONL 与 Foxglove 输出
 
 ## 架构
@@ -31,7 +31,6 @@ cargo run -p rttd -- --config firmware/example/stm32f4_rtt/rat.toml
 - `$status`
 - `$source list`
 - `$source use <index>`
-- `$sync`
 - `$foxglove on|off`
 - `$jsonl on|off [path]`
 - `/packet/<struct>/<field>`

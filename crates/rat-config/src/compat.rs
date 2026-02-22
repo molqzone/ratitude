@@ -37,6 +37,30 @@ pub(crate) fn reject_deprecated_config_keys(raw: &str) -> Result<(), ConfigError
         {
             deprecated_keys.push("[rttd.source.backend]");
         }
+        if rttd
+            .get("behavior")
+            .and_then(toml::Value::as_table)
+            .map(|behavior| behavior.contains_key("auto_sync_on_start"))
+            .unwrap_or(false)
+        {
+            deprecated_keys.push("rttd.behavior.auto_sync_on_start");
+        }
+        if rttd
+            .get("behavior")
+            .and_then(toml::Value::as_table)
+            .map(|behavior| behavior.contains_key("auto_sync_on_reset"))
+            .unwrap_or(false)
+        {
+            deprecated_keys.push("rttd.behavior.auto_sync_on_reset");
+        }
+        if rttd
+            .get("behavior")
+            .and_then(toml::Value::as_table)
+            .map(|behavior| behavior.contains_key("sync_debounce_ms"))
+            .unwrap_or(false)
+        {
+            deprecated_keys.push("rttd.behavior.sync_debounce_ms");
+        }
     }
 
     if deprecated_keys.is_empty() {

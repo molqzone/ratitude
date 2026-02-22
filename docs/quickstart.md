@@ -23,7 +23,6 @@ $source list
 ## 3. 常用运行命令
 
 ```text
-$sync
 $foxglove on
 $jsonl on out.jsonl
 ```
@@ -48,6 +47,6 @@ $quit
 ## 5. 重点校验
 
 - 看到 source 候选列表并可切换
-- `$sync` 能完成同步并输出结果
+- 启动后在 `schema_timeout` 内进入 schema ready
 - `$foxglove on` 后可连接到 `ws://127.0.0.1:8765`
-- 指纹不一致时会 fail-fast
+- schema hash 不一致时会 fail-fast

@@ -43,8 +43,12 @@ fn normalize_sets_generated_paths() {
     cfg.normalize();
     let paths = resolve_config_paths(&cfg, Path::new("firmware/example/stm32f4_rtt/rat.toml"));
 
-    assert!(paths.generated_toml_path().ends_with("generated/rat_gen.toml"));
-    assert!(paths.generated_header_path().ends_with("generated/rat_gen.h"));
+    assert!(paths
+        .generated_toml_path()
+        .ends_with("generated/rat_gen.toml"));
+    assert!(paths
+        .generated_header_path()
+        .ends_with("generated/rat_gen.h"));
 }
 
 #[test]
@@ -66,7 +70,9 @@ fn save_and_load_round_trip() {
     assert_eq!(loaded.project.name, "demo");
     assert_eq!(loaded.artifacts.elf, "build/app.elf");
     let paths = resolve_config_paths(&loaded, &path);
-    assert!(paths.generated_toml_path().ends_with("generated/rat_gen.toml"));
+    assert!(paths
+        .generated_toml_path()
+        .ends_with("generated/rat_gen.toml"));
     assert!(!loaded.rttd.outputs.jsonl.enabled);
     assert!(loaded.rttd.outputs.foxglove.enabled);
 
@@ -257,6 +263,45 @@ startup_timeout_ms = 5000
     let msg = err.to_string();
     assert!(msg.contains("deprecated config keys removed in v0.2.0"));
     assert!(msg.contains("[rttd.source.backend]"));
+
+    let _ = fs::remove_file(path);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn removed_sync_behavior_keys_are_rejected_with_migration_hint() {
+    let dir = unique_temp_dir("ratitude_cfg_removed_sync_behavior");
+    let path = dir.join("rat.toml");
+    let raw = r#"
+[project]
+name = "demo"
+scan_root = "Core"
+
+[generation]
+out_dir = "."
+toml_name = "rat_gen.toml"
+header_name = "rat_gen.h"
+
+[rttd]
+text_id = 255
+
+[rttd.behavior]
+auto_sync_on_start = true
+auto_sync_on_reset = true
+sync_debounce_ms = 500
+reconnect = "1s"
+schema_timeout = "3s"
+buf = 256
+reader_buf = 65536
+"#;
+    fs::write(&path, raw).expect("write config");
+
+    let err = load_or_default(&path).expect_err("removed sync behavior keys should fail");
+    let msg = err.to_string();
+    assert!(msg.contains("deprecated config keys removed in v0.2.0"));
+    assert!(msg.contains("rttd.behavior.auto_sync_on_start"));
+    assert!(msg.contains("rttd.behavior.auto_sync_on_reset"));
+    assert!(msg.contains("rttd.behavior.sync_debounce_ms"));
 
     let _ = fs::remove_file(path);
     let _ = fs::remove_dir_all(dir);

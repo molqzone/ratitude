@@ -60,10 +60,14 @@ impl Default for RatProtocolEngine {
 
 impl ProtocolEngine for RatProtocolEngine {
     fn parse_packet(&self, id: u8, payload: &[u8]) -> Result<PacketPayload, ProtocolEngineError> {
-        self.context.parse_packet(id, payload).map_err(|err| match err {
-            ProtocolError::UnknownPacketId(unknown) => ProtocolEngineError::UnknownPacketId(unknown),
-            other => ProtocolEngineError::Parse(other.to_string()),
-        })
+        self.context
+            .parse_packet(id, payload)
+            .map_err(|err| match err {
+                ProtocolError::UnknownPacketId(unknown) => {
+                    ProtocolEngineError::UnknownPacketId(unknown)
+                }
+                other => ProtocolEngineError::Parse(other.to_string()),
+            })
     }
 }
 

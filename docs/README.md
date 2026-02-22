@@ -22,7 +22,6 @@ cargo run -p rttd -- --config firmware/example/stm32f4_rtt/rat.toml
 - `$status`
 - `$source list`
 - `$source use <index>`
-- `$sync`
 - `$foxglove on|off`
 - `$jsonl on|off [path]`
 - `/packet/<struct>/<field>`

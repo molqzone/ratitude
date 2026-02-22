@@ -45,11 +45,6 @@ impl RatitudeConfig {
             ));
         }
 
-        if self.rttd.behavior.sync_debounce_ms == 0 {
-            return Err(ConfigError::Validation(
-                "rttd.behavior.sync_debounce_ms must be > 0".to_string(),
-            ));
-        }
         if self.rttd.behavior.buf == 0 {
             return Err(ConfigError::Validation(
                 "rttd.behavior.buf must be > 0".to_string(),
@@ -131,6 +126,9 @@ impl RatitudeConfig {
         }
         if self.rttd.behavior.reconnect.trim().is_empty() {
             self.rttd.behavior.reconnect = RttdBehaviorConfig::default().reconnect;
+        }
+        if self.rttd.behavior.schema_timeout.trim().is_empty() {
+            self.rttd.behavior.schema_timeout = RttdBehaviorConfig::default().schema_timeout;
         }
         if self.rttd.outputs.foxglove.ws_addr.trim().is_empty() {
             self.rttd.outputs.foxglove.ws_addr = FoxgloveOutputConfig::default().ws_addr;

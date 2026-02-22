@@ -1,17 +1,16 @@
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
-use rat_config::{ConfigStore, PacketDef, RatitudeConfig};
-use rat_core::{start_ingest_runtime, IngestRuntime, RuntimeSignal};
+use rat_config::{ConfigStore, FieldDef, PacketDef, RatitudeConfig};
+use rat_core::{start_ingest_runtime, IngestRuntime, RuntimePacketDef, RuntimeSignal};
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::cli::Cli;
 use crate::console::{print_help, spawn_console_reader, ConsoleCommand};
 use crate::output_manager::OutputManager;
-use crate::runtime_spec::{build_runtime_spec, load_runtime_material};
+use crate::runtime_spec::build_runtime_spec;
 use crate::source_scan::{discover_sources, render_candidates, SourceCandidate};
-use crate::sync_controller::{SyncController, SyncOutcome};
 
 const UNKNOWN_PACKET_WINDOW: Duration = Duration::from_secs(5);
 const UNKNOWN_PACKET_THRESHOLD: u32 = 20;
@@ -26,16 +25,7 @@ pub struct DaemonState {
 }
 
 pub async fn run_daemon(cli: Cli) -> Result<()> {
-    let mut cfg = load_config(&cli.config)?;
-    let mut sync_controller =
-        SyncController::new(cli.config.clone(), cfg.rttd.behavior.sync_debounce_ms);
-
-    if cfg.rttd.behavior.auto_sync_on_start {
-        let outcome = sync_controller.trigger("startup").await?;
-        print_sync_outcome(&outcome);
-        cfg = load_config(&cli.config)?;
-    }
-
+    let cfg = load_config(&cli.config)?;
     let mut state = build_state(cli.config.clone(), cfg).await?;
     let mut output_manager = OutputManager::from_config(&state.config);
     let mut runtime = activate_runtime(None, &mut state, &mut output_manager).await?;
@@ -57,7 +47,7 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
                 let Some(command) = command else {
                     break;
                 };
-                let action = handle_console_command(command, &mut state, &mut output_manager, &mut sync_controller).await?;
+                let action = handle_console_command(command, &mut state, &mut output_manager).await?;
                 if action.should_quit {
                     break;
                 }
@@ -67,14 +57,16 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
             }
             maybe_signal = runtime.recv_signal() => {
                 match maybe_signal {
-                    Some(RuntimeSignal::InitMagicVerified) => {
-                        if state.config.rttd.behavior.auto_sync_on_reset {
-                            let outcome = sync_controller.trigger("reset").await?;
-                            print_sync_outcome(&outcome);
-                            if outcome.changed {
-                                runtime = activate_runtime(Some(runtime), &mut state, &mut output_manager).await?;
-                            }
-                        }
+                    Some(RuntimeSignal::SchemaReady { schema_hash, packets }) => {
+                        state.packets = runtime_packets_to_packet_defs(packets);
+                        output_manager
+                            .apply(runtime.hub(), state.packets.clone())
+                            .await?;
+                        println!(
+                            "runtime schema ready: packets={}, hash=0x{:016X}",
+                            state.packets.len(),
+                            schema_hash
+                        );
                     }
                     Some(RuntimeSignal::Fatal(err)) => {
                         return Err(anyhow!(err.to_string()));
@@ -103,7 +95,6 @@ async fn handle_console_command(
     command: ConsoleCommand,
     state: &mut DaemonState,
     output_manager: &mut OutputManager,
-    sync_controller: &mut SyncController,
 ) -> Result<CommandAction> {
     let mut action = CommandAction::default();
 
@@ -141,13 +132,6 @@ async fn handle_console_command(
             ConfigStore::new(&state.config_path).save(&state.config)?;
             println!("selected source: {}", state.active_source);
             action.restart_runtime = true;
-        }
-        ConsoleCommand::Sync => {
-            let outcome = sync_controller.trigger("manual").await?;
-            print_sync_outcome(&outcome);
-            if outcome.changed {
-                action.restart_runtime = true;
-            }
         }
         ConsoleCommand::Foxglove(enabled) => {
             output_manager.set_foxglove(enabled, None)?;
@@ -218,9 +202,8 @@ async fn activate_runtime(
     }
 
     state.config = load_config(&state.config_path)?;
-    let runtime =
-        start_runtime(&mut state.config, &state.config_path, &state.active_source).await?;
-    state.packets = state.config.packets.clone();
+    let runtime = start_runtime(&state.config, &state.active_source).await?;
+    state.packets.clear();
     output_manager
         .apply(runtime.hub(), state.packets.clone())
         .await?;
@@ -271,41 +254,35 @@ fn select_active_source(
     ))
 }
 
-fn print_sync_outcome(outcome: &SyncOutcome) {
-    if outcome.skipped {
-        println!("sync skipped: {}", outcome.reason);
-        return;
-    }
-
-    for warning in &outcome.warnings {
-        warn!(warning = %warning, "sync warning");
-        println!("sync warning: {}", warning);
-    }
-
-    println!(
-        "sync done: changed={}, packets={}, reason={}",
-        outcome.changed, outcome.packets, outcome.reason
-    );
+fn runtime_packets_to_packet_defs(runtime_packets: Vec<RuntimePacketDef>) -> Vec<PacketDef> {
+    runtime_packets
+        .into_iter()
+        .map(|packet| PacketDef {
+            id: packet.id,
+            struct_name: packet.struct_name,
+            packet_type: "plot".to_string(),
+            packed: packet.packed,
+            byte_size: packet.byte_size,
+            source: "runtime-schema".to_string(),
+            fields: packet
+                .fields
+                .into_iter()
+                .map(|field| FieldDef {
+                    name: field.name,
+                    c_type: field.c_type,
+                    offset: field.offset,
+                    size: field.size,
+                })
+                .collect(),
+        })
+        .collect()
 }
 
-async fn start_runtime(
-    cfg: &mut RatitudeConfig,
-    config_path: &str,
-    addr: &str,
-) -> Result<IngestRuntime> {
-    let material = load_runtime_material(cfg, config_path)?;
-    let spec = build_runtime_spec(
-        cfg,
-        &material,
-        addr,
-        UNKNOWN_PACKET_WINDOW,
-        UNKNOWN_PACKET_THRESHOLD,
-    )?;
-    let runtime = start_ingest_runtime(spec.ingest_config)
+async fn start_runtime(cfg: &RatitudeConfig, addr: &str) -> Result<IngestRuntime> {
+    let spec = build_runtime_spec(cfg, addr, UNKNOWN_PACKET_WINDOW, UNKNOWN_PACKET_THRESHOLD)?;
+    start_ingest_runtime(spec.ingest_config)
         .await
-        .map_err(|err| anyhow!(err.to_string()))?;
-    cfg.packets = spec.packets;
-    Ok(runtime)
+        .map_err(|err| anyhow!(err.to_string()))
 }
 
 #[cfg(test)]
@@ -326,53 +303,6 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("{prefix}_{unique}"));
         fs::create_dir_all(&dir).expect("mkdir temp dir");
         dir
-    }
-
-    #[test]
-    fn parse_generated_fingerprint_rejects_empty() {
-        assert!(crate::runtime_spec::parse_generated_fingerprint(" ").is_err());
-    }
-
-    #[test]
-    fn parse_generated_fingerprint_supports_prefixed_hex() {
-        let parsed = crate::runtime_spec::parse_generated_fingerprint("0xAA").expect("parse");
-        assert_eq!(parsed, 0xAA);
-    }
-
-    #[tokio::test]
-    async fn start_runtime_failure_does_not_mutate_cfg_packets() {
-        let dir = unique_temp_dir("rttd_start_runtime_failure_packets");
-        let config_path = dir.join("rat.toml");
-        let mut cfg = RatitudeConfig::default();
-        cfg.project.name = "runtime_failure_test".to_string();
-        cfg.packets = vec![PacketDef {
-            id: 0x2A,
-            struct_name: "PreExisting".to_string(),
-            packet_type: "plot".to_string(),
-            packed: true,
-            byte_size: 4,
-            source: "src/old.c".to_string(),
-            fields: vec![],
-        }];
-        ConfigStore::new(&config_path)
-            .save(&cfg)
-            .expect("save config");
-
-        let before_packets = cfg.packets.clone();
-        let result = start_runtime(
-            &mut cfg,
-            &config_path.to_string_lossy(),
-            "127.0.0.1:19021",
-        )
-        .await;
-        assert!(
-            result.is_err(),
-            "missing generated file should fail before runtime starts"
-        );
-        assert_eq!(cfg.packets, before_packets);
-
-        let _ = fs::remove_file(&config_path);
-        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -465,16 +395,10 @@ mod tests {
             packets: Vec::new(),
         };
         let mut output_manager = OutputManager::from_config(&cfg);
-        let mut sync_controller = SyncController::new("/tmp/non-existent-rat.toml".to_string(), 1);
-
-        let action = handle_console_command(
-            ConsoleCommand::SourceList,
-            &mut state,
-            &mut output_manager,
-            &mut sync_controller,
-        )
-        .await
-        .expect("source list");
+        let action =
+            handle_console_command(ConsoleCommand::SourceList, &mut state, &mut output_manager)
+                .await
+                .expect("source list");
         assert!(!action.should_quit);
         assert!(!action.restart_runtime);
         assert_eq!(state.source_candidates.len(), 1);
@@ -510,13 +434,10 @@ mod tests {
             packets: Vec::new(),
         };
         let mut output_manager = OutputManager::from_config(&cfg);
-        let mut sync_controller = SyncController::new("/tmp/non-existent-rat.toml".to_string(), 1);
-
         let action = handle_console_command(
             ConsoleCommand::SourceUse(1),
             &mut state,
             &mut output_manager,
-            &mut sync_controller,
         )
         .await
         .expect("source use");
@@ -550,13 +471,10 @@ mod tests {
             packets: Vec::new(),
         };
         let mut output_manager = OutputManager::from_config(&cfg);
-        let mut sync_controller = SyncController::new(config_path_str, 1);
-
         let foxglove_action = handle_console_command(
             ConsoleCommand::Foxglove(true),
             &mut state,
             &mut output_manager,
-            &mut sync_controller,
         )
         .await
         .expect("foxglove command");
@@ -569,7 +487,6 @@ mod tests {
             },
             &mut state,
             &mut output_manager,
-            &mut sync_controller,
         )
         .await
         .expect("jsonl command");

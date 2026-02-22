@@ -2,10 +2,13 @@
 # -*- coding: utf-8 -*-
 """OpenOCD-like RTT stream mock server (declaration-driven).
 
-The server listens on a TCP port and continuously sends COBS-framed packets:
+The server listens on a TCP port and sends COBS frames:
     [packet_id + payload] -> cobs_encode -> append 0x00
 
-Packet definitions are loaded strictly from rat_gen.toml resolved by rat.toml.
+On each new connection, it first sends runtime schema control frames:
+    HELLO -> SCHEMA_CHUNK* -> SCHEMA_COMMIT
+
+Schema and packet definitions are loaded from rat_gen.toml resolved by rat.toml.
 """
 
 from __future__ import annotations
@@ -70,6 +73,13 @@ C_TYPE_FORMAT: Dict[str, str] = {
     "_bool": "<?",
 }
 
+CONTROL_PACKET_ID = 0x00
+CONTROL_HELLO = 0x01
+CONTROL_SCHEMA_CHUNK = 0x02
+CONTROL_SCHEMA_COMMIT = 0x03
+CONTROL_MAGIC = b"RATS"
+CONTROL_VERSION = 1
+
 
 def normalize_c_type(raw: str) -> str:
     value = raw.strip().lower()
@@ -103,6 +113,14 @@ def cobs_encode(payload: bytes) -> bytes:
 
     out[code_index] = code
     return bytes(out)
+
+
+def fnv1a64(payload: bytes) -> int:
+    hash_value = 0xCBF29CE484222325
+    for byte in payload:
+        hash_value ^= byte
+        hash_value = (hash_value * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+    return hash_value
 
 
 def cobs_decode(frame: bytes) -> bytes:
@@ -374,6 +392,37 @@ def encode_frame(packet_id: int, payload: bytes) -> bytes:
     return cobs_encode(raw) + b"\x00"
 
 
+def encode_schema_frames(schema_bytes: bytes, chunk_size: int = 256) -> List[bytes]:
+    schema_hash = fnv1a64(schema_bytes)
+    frames: List[bytes] = []
+
+    hello_payload = (
+        bytes([CONTROL_HELLO])
+        + CONTROL_MAGIC
+        + bytes([CONTROL_VERSION])
+        + struct.pack("<I", len(schema_bytes))
+        + struct.pack("<Q", schema_hash)
+    )
+    frames.append(encode_frame(CONTROL_PACKET_ID, hello_payload))
+
+    chunk_size = max(1, chunk_size)
+    offset = 0
+    while offset < len(schema_bytes):
+        chunk = schema_bytes[offset : offset + chunk_size]
+        chunk_payload = (
+            bytes([CONTROL_SCHEMA_CHUNK])
+            + struct.pack("<I", offset)
+            + struct.pack("<H", len(chunk))
+            + chunk
+        )
+        frames.append(encode_frame(CONTROL_PACKET_ID, chunk_payload))
+        offset += len(chunk)
+
+    commit_payload = bytes([CONTROL_SCHEMA_COMMIT]) + struct.pack("<Q", schema_hash)
+    frames.append(encode_frame(CONTROL_PACKET_ID, commit_payload))
+    return frames
+
+
 def run_self_tests() -> None:
     for raw in [b"", b"\x00", b"\x00\x00", b"\x01", b"abc", b"abc\x00", b"a\x00b\x00c", bytes(range(1, 128))]:
         encoded = cobs_encode(raw)
@@ -405,7 +454,7 @@ def run_self_tests() -> None:
     print("[self-test] ok")
 
 
-def run_server(args: argparse.Namespace, packets: List[PacketDef]) -> int:
+def run_server(args: argparse.Namespace, packets: List[PacketDef], schema_bytes: bytes) -> int:
     rng = random.Random(args.seed)
     t0 = time.perf_counter()
 
@@ -421,6 +470,7 @@ def run_server(args: argparse.Namespace, packets: List[PacketDef]) -> int:
 
     if args.verbose:
         print(f"[mock] loaded packets={len(packets)} profile={args.profile}")
+        print(f"[mock] schema bytes={len(schema_bytes)} hash=0x{fnv1a64(schema_bytes):016X}")
         for emitter in emitters:
             print(
                 f"  - id=0x{emitter.packet.packet_id:02X} "
@@ -461,6 +511,13 @@ def run_server(args: argparse.Namespace, packets: List[PacketDef]) -> int:
                     conn.settimeout(0.0)
                     client = conn
                     print(f"[mock] client connected: {addr[0]}:{addr[1]}")
+                    schema_frames = encode_schema_frames(schema_bytes)
+                    for frame in schema_frames:
+                        client.sendall(frame)
+                    if args.verbose:
+                        print(
+                            f"[mock] sent runtime schema frames={len(schema_frames)} hash=0x{fnv1a64(schema_bytes):016X}"
+                        )
                     if args.once:
                         t_rel = now - t0
                         for emitter in emitters:
@@ -548,11 +605,12 @@ def main() -> int:
     try:
         generated = resolve_generated_toml_path(config_path)
         packets = load_packets(generated)
+        schema_bytes = generated.read_bytes()
     except Exception as exc:
         print(f"[mock] {exc}", file=sys.stderr)
         return 3
 
-    return run_server(args, packets)
+    return run_server(args, packets, schema_bytes)
 
 
 if __name__ == "__main__":

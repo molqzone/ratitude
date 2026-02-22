@@ -1006,6 +1006,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-util",
+ "toml",
  "tracing",
 ]
 
@@ -1103,7 +1104,6 @@ dependencies = [
  "rat-bridge-foxglove",
  "rat-config",
  "rat-core",
- "rat-sync",
  "serde_json",
  "tokio",
  "tokio-util",

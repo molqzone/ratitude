@@ -10,9 +10,9 @@
 
 - `[project]`：源码扫描范围
 - `[artifacts]`：产物路径
-- `[generation]`：生成文件位置
+- `[generation]`：生成文件位置（供工具链使用）
 - `[rttd.source]`：source 扫描与目标端点选择
-- `[rttd.behavior]`：自动同步与 runtime 行为
+- `[rttd.behavior]`：连接与 schema 等待行为
 - `[rttd.outputs.jsonl]`：JSONL 输出
 - `[rttd.outputs.foxglove]`：Foxglove 输出
 
@@ -39,10 +39,8 @@ scan_timeout_ms = 300
 last_selected_addr = "127.0.0.1:19021"
 
 [rttd.behavior]
-auto_sync_on_start = true
-auto_sync_on_reset = true
-sync_debounce_ms = 500
 reconnect = "1s"
+schema_timeout = "3s"
 buf = 256
 reader_buf = 65536
 
@@ -57,7 +55,7 @@ ws_addr = "127.0.0.1:8765"
 
 说明：
 
-- `rttd` 不再负责启动/管理 backend 进程；仅连接既有 RTT 端口。
+- `rttd` 不托管 backend 进程，只连接既有 RTT 端口。
 - `last_selected_addr` 的端口号是 J-Link RTT Telnet 端口的唯一来源（`rtt_telnet_port` 已移除）。
 - `rttd.source.auto_scan = false` 时，只会探测 `last_selected_addr`，不再注入默认端口候选；`reachable` 始终来自实时探测结果。
 - 命令台是主配置入口之一：`$source use`、`$foxglove on|off`、`$jsonl on|off [path]` 会写回该文件。
@@ -65,17 +63,17 @@ ws_addr = "127.0.0.1:8765"
 
 ## `rat_gen.toml`（自动生成）
 
-用途：主机解码声明来源。
+用途：`rat-sync` 的中间产物，供编译链路和排查使用。
 
 特点：
 
-- 不建议人工编辑
-- 由内部同步逻辑更新
-- `packets[*].source` 仅用于溯源，不参与签名身份
+- 不建议人工编辑。
+- 可由工具链更新。
+- 主机 runtime 启动不再依赖该文件。
 
 ## `rat_gen.h`（自动生成）
 
-用途：固件编译期 ID 与指纹宏。
+用途：固件编译期宏定义（ID/常量）输出。
 
 包含：
 

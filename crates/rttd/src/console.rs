@@ -8,7 +8,6 @@ pub enum ConsoleCommand {
     Status,
     SourceList,
     SourceUse(usize),
-    Sync,
     Foxglove(bool),
     Jsonl {
         enabled: bool,
@@ -39,9 +38,6 @@ impl CommandRouter {
         }
         if trimmed == "$source list" {
             return Some(ConsoleCommand::SourceList);
-        }
-        if trimmed == "$sync" {
-            return Some(ConsoleCommand::Sync);
         }
         if trimmed == "$quit" {
             return Some(ConsoleCommand::Quit);
@@ -112,7 +108,7 @@ impl CommandRouter {
 
 pub fn print_help() {
     println!(
-        "available commands:\n  $help\n  $status\n  $source list\n  $source use <index>\n  $sync\n  $foxglove on|off\n  $jsonl on|off [path]\n  /packet/<struct>/<field>\n  $quit"
+        "available commands:\n  $help\n  $status\n  $source list\n  $source use <index>\n  $foxglove on|off\n  $jsonl on|off [path]\n  /packet/<struct>/<field>\n  $quit"
     );
 }
 
@@ -184,7 +180,6 @@ mod tests {
             "status",
             "source list",
             "source use 1",
-            "sync",
             "foxglove on",
             "jsonl off",
             "quit",
@@ -195,5 +190,11 @@ mod tests {
             let cmd = CommandRouter::parse(raw).expect("command");
             assert_eq!(cmd, ConsoleCommand::Unknown(raw.to_string()));
         }
+    }
+
+    #[test]
+    fn parse_rejects_removed_sync_command() {
+        let cmd = CommandRouter::parse("$sync").expect("command");
+        assert_eq!(cmd, ConsoleCommand::Unknown("$sync".to_string()));
     }
 }
