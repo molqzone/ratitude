@@ -3,7 +3,7 @@ use clap::Parser;
 use rat_config::DEFAULT_CONFIG_PATH;
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "rttd", about = "Ratitude interactive daemon")]
+#[command(name = "ratd", about = "Ratitude interactive daemon")]
 pub struct Cli {
     #[arg(
         long,
@@ -35,7 +35,7 @@ fn reject_positional_subcommand(args: &[String]) -> Result<()> {
     if let Some(first) = args.get(1) {
         if !first.starts_with('-') {
             return Err(anyhow!(
-                "positional subcommands were removed in v0.2.0; start `rttd` and use console commands"
+                "positional subcommands were removed in v0.2.0; start `ratd` and use console commands"
             ));
         }
     }
@@ -48,13 +48,13 @@ mod tests {
 
     #[test]
     fn cli_accepts_default_entry() {
-        let cli = parse_cli_from(["rttd"]).expect("parse");
+        let cli = parse_cli_from(["ratd"]).expect("parse");
         assert_eq!(cli.config, "rat.toml");
     }
 
     #[test]
     fn cli_rejects_removed_positional_mode() {
-        let err = parse_cli_from(["rttd", "legacy_mode"]).expect_err("must reject");
+        let err = parse_cli_from(["ratd", "legacy_mode"]).expect_err("must reject");
         assert!(err
             .to_string()
             .contains("positional subcommands were removed"));
@@ -62,7 +62,7 @@ mod tests {
 
     #[test]
     fn cli_accepts_config_flag() {
-        let cli = parse_cli_from(["rttd", "--config", "examples/mock/rat.toml"]).expect("parse");
+        let cli = parse_cli_from(["ratd", "--config", "examples/mock/rat.toml"]).expect("parse");
         assert_eq!(cli.config, "examples/mock/rat.toml");
     }
 }

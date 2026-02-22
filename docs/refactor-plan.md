@@ -1,4 +1,4 @@
-# rttd daemon breaking refactor plan (0.2.0)
+# ratd daemon breaking refactor plan (0.2.0)
 
 ## 目标
 
@@ -20,6 +20,6 @@
 ```bash
 cargo test -p rat-config
 cargo test -p rat-sync
-cargo test -p rttd
-rg -n "\\brttd\\s+(server|foxglove|sync)\\b" README.md docs Makefile tools crates/rttd/src
+cargo test -p ratd
+rg -n "\\bratd\\s+(server|foxglove|sync)\\b" README.md docs Makefile tools crates/ratd/src
 ```

@@ -28,7 +28,7 @@ try {
 
     Start-Sleep -Milliseconds 300
 
-    cargo run -p rttd -- --config "$configPath"
+    cargo run -p ratd -- --config "$configPath"
     exit $LASTEXITCODE
 }
 finally {

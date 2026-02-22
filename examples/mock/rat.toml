@@ -13,24 +13,24 @@ bin = ""
 out_dir = "."
 header_name = "rat_gen.h"
 
-[rttd]
+[ratd]
 text_id = 255
 
-[rttd.source]
+[ratd.source]
 auto_scan = true
 scan_timeout_ms = 300
 last_selected_addr = "127.0.0.1:19021"
 
-[rttd.behavior]
+[ratd.behavior]
 reconnect = "1s"
 schema_timeout = "3s"
 buf = 256
 reader_buf = 65536
 
-[rttd.outputs.jsonl]
+[ratd.outputs.jsonl]
 enabled = false
 path = ""
 
-[rttd.outputs.foxglove]
+[ratd.outputs.foxglove]
 enabled = true
 ws_addr = "127.0.0.1:8765"

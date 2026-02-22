@@ -15,9 +15,9 @@ pub(crate) fn build_runtime_spec(
     unknown_window: Duration,
     unknown_threshold: u32,
 ) -> Result<RuntimeSpec> {
-    let text_id = parse_text_id(cfg.rttd.text_id)?;
-    let reconnect = parse_duration(&cfg.rttd.behavior.reconnect)?;
-    let schema_timeout = parse_duration(&cfg.rttd.behavior.schema_timeout)?;
+    let text_id = parse_text_id(cfg.ratd.text_id)?;
+    let reconnect = parse_duration(&cfg.ratd.behavior.reconnect)?;
+    let schema_timeout = parse_duration(&cfg.ratd.behavior.schema_timeout)?;
 
     Ok(RuntimeSpec {
         ingest_config: IngestRuntimeConfig {
@@ -26,9 +26,9 @@ pub(crate) fn build_runtime_spec(
                 reconnect,
                 reconnect_max: Duration::from_secs(30),
                 dial_timeout: Duration::from_secs(5),
-                reader_buf_bytes: cfg.rttd.behavior.reader_buf,
+                reader_buf_bytes: cfg.ratd.behavior.reader_buf,
             },
-            hub_buffer: cfg.rttd.behavior.buf,
+            hub_buffer: cfg.ratd.behavior.buf,
             text_packet_id: text_id,
             schema_timeout,
             unknown_window,
@@ -55,7 +55,7 @@ mod tests {
     #[test]
     fn build_runtime_spec_reads_schema_timeout() {
         let mut cfg = RatitudeConfig::default();
-        cfg.rttd.behavior.schema_timeout = "2s".to_string();
+        cfg.ratd.behavior.schema_timeout = "2s".to_string();
 
         let spec = build_runtime_spec(&cfg, "127.0.0.1:19021", Duration::from_secs(5), 20)
             .expect("build runtime spec");
@@ -66,7 +66,7 @@ mod tests {
     #[test]
     fn build_runtime_spec_rejects_invalid_schema_timeout() {
         let mut cfg = RatitudeConfig::default();
-        cfg.rttd.behavior.schema_timeout = "-".to_string();
+        cfg.ratd.behavior.schema_timeout = "-".to_string();
 
         let err = build_runtime_spec(&cfg, "127.0.0.1:19021", Duration::from_secs(5), 20)
             .expect_err("invalid timeout should fail");

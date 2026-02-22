@@ -1037,6 +1037,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "ratd"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "humantime",
+ "rat-bridge-foxglove",
+ "rat-config",
+ "rat-core",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "ratsync"
 version = "0.1.0"
 dependencies = [
@@ -1103,23 +1120,6 @@ name = "regex-syntax"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a96887878f22d7bad8a3b6dc5b7440e0ada9a245242924394987b21cf2210a4c"
-
-[[package]]
-name = "rttd"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "humantime",
- "rat-bridge-foxglove",
- "rat-config",
- "rat-core",
- "serde_json",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
-]
 
 [[package]]
 name = "rustversion"

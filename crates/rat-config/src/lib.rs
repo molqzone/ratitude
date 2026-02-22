@@ -7,7 +7,7 @@ mod validate;
 pub use model::{
     ArtifactsConfig, ConfigError, FieldDef, FoxgloveOutputConfig, GeneratedConfig, GeneratedMeta,
     GeneratedPacketDef, GenerationConfig, JsonlOutputConfig, PacketDef, ProjectConfig,
-    RatitudeConfig, RttdBehaviorConfig, RttdConfig, RttdOutputsConfig, RttdSourceConfig,
+    RatdBehaviorConfig, RatdConfig, RatdOutputsConfig, RatdSourceConfig, RatitudeConfig,
     DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_HEADER_NAME,
 };
 pub use paths::{resolve_config_paths, ConfigPaths};

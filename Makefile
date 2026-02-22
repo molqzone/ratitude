@@ -4,7 +4,7 @@ sync:
 	cargo run -p ratsync -- --config firmware/example/stm32f4_rtt/rat.toml
 
 daemon:
-	cargo run -p rttd -- --config firmware/example/stm32f4_rtt/rat.toml
+	cargo run -p ratd -- --config firmware/example/stm32f4_rtt/rat.toml
 
 up: daemon
 

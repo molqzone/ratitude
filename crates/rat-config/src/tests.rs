@@ -57,8 +57,8 @@ fn save_and_load_round_trip() {
     cfg.project.scan_root = "Core".to_string();
     cfg.artifacts.elf = "build/app.elf".to_string();
     cfg.generation.out_dir = "generated".to_string();
-    cfg.rttd.outputs.jsonl.enabled = false;
-    cfg.rttd.outputs.foxglove.enabled = true;
+    cfg.ratd.outputs.jsonl.enabled = false;
+    cfg.ratd.outputs.foxglove.enabled = true;
     ConfigStore::new(&path).save(&cfg).expect("save config");
 
     let (loaded, exists) = load_or_default(&path).expect("load config");
@@ -69,8 +69,8 @@ fn save_and_load_round_trip() {
     assert!(paths
         .generated_header_path()
         .ends_with("generated/rat_gen.h"));
-    assert!(!loaded.rttd.outputs.jsonl.enabled);
-    assert!(loaded.rttd.outputs.foxglove.enabled);
+    assert!(!loaded.ratd.outputs.jsonl.enabled);
+    assert!(loaded.ratd.outputs.foxglove.enabled);
 
     let _ = fs::remove_file(path);
     let _ = fs::remove_dir_all(dir);
@@ -79,21 +79,21 @@ fn save_and_load_round_trip() {
 #[test]
 fn validate_rejects_zero_reader_buffer() {
     let mut cfg = RatitudeConfig::default();
-    cfg.rttd.behavior.reader_buf = 0;
+    cfg.ratd.behavior.reader_buf = 0;
     let err = cfg.validate().expect_err("validation should fail");
     assert!(err
         .to_string()
-        .contains("rttd.behavior.reader_buf must be > 0"));
+        .contains("ratd.behavior.reader_buf must be > 0"));
 }
 
 #[test]
 fn validate_rejects_zero_scan_timeout() {
     let mut cfg = RatitudeConfig::default();
-    cfg.rttd.source.scan_timeout_ms = 0;
+    cfg.ratd.source.scan_timeout_ms = 0;
     let err = cfg.validate().expect_err("validation should fail");
     assert!(err
         .to_string()
-        .contains("rttd.source.scan_timeout_ms must be > 0"));
+        .contains("ratd.source.scan_timeout_ms must be > 0"));
 }
 
 #[test]
@@ -109,13 +109,13 @@ scan_root = "Core"
 out_dir = "."
 header_name = "rat_gen.h"
 
-[rttd]
+[ratd]
 text_id = 255
 
-[rttd.server]
+[ratd.server]
 addr = "127.0.0.1:19021"
 
-[rttd.foxglove]
+[ratd.foxglove]
 ws_addr = "127.0.0.1:8765"
 "#;
     fs::write(&path, raw).expect("write config");
@@ -123,9 +123,36 @@ ws_addr = "127.0.0.1:8765"
     let err = load_or_default(&path).expect_err("legacy sections should fail");
     let msg = err.to_string();
     assert!(msg.contains("deprecated config keys removed in v0.2.0"));
-    assert!(msg.contains("[rttd.server]"));
-    assert!(msg.contains("[rttd.foxglove]"));
+    assert!(msg.contains("[ratd.server]"));
+    assert!(msg.contains("[ratd.foxglove]"));
     assert!(msg.contains("docs/migrations/0.2.0-breaking.md"));
+
+    let _ = fs::remove_file(path);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn legacy_rttd_root_section_is_rejected_with_rename_hint() {
+    let dir = unique_temp_dir("ratitude_cfg_legacy_rttd_root");
+    let path = dir.join("rat.toml");
+    let raw = r#"
+[project]
+name = "demo"
+scan_root = "Core"
+
+[generation]
+out_dir = "."
+header_name = "rat_gen.h"
+
+[rttd]
+text_id = 255
+"#;
+    fs::write(&path, raw).expect("write config");
+
+    let err = load_or_default(&path).expect_err("legacy rttd section should fail");
+    let msg = err.to_string();
+    assert!(msg.contains("deprecated config keys removed in v0.2.0"));
+    assert!(msg.contains("[rttd] (renamed to [ratd])"));
 
     let _ = fs::remove_file(path);
     let _ = fs::remove_dir_all(dir);
@@ -144,10 +171,10 @@ scan_root = "Core"
 out_dir = "."
 header_name = "rat_gen.h"
 
-[rttd]
+[ratd]
 text_id = 255
 
-[rttd.source]
+[ratd.source]
 auto_scan = true
 scan_timeout_ms = 300
 last_selected_addr = "127.0.0.1:19021"
@@ -158,7 +185,7 @@ preferred_backend = "openocd"
     let err = load_or_default(&path).expect_err("preferred_backend should fail");
     let msg = err.to_string();
     assert!(msg.contains("deprecated config keys removed in v0.2.0"));
-    assert!(msg.contains("rttd.source.preferred_backend"));
+    assert!(msg.contains("ratd.source.preferred_backend"));
     assert!(msg.contains("docs/migrations/0.2.0-breaking.md"));
 
     let _ = fs::remove_file(path);
@@ -204,15 +231,15 @@ scan_root = "Core"
 out_dir = "."
 header_name = "rat_gen.h"
 
-[rttd]
+[ratd]
 text_id = 255
 
-[rttd.source]
+[ratd.source]
 auto_scan = true
 scan_timeout_ms = 300
 last_selected_addr = "127.0.0.1:19021"
 
-[rttd.source.backend]
+[ratd.source.backend]
 type = "none"
 auto_start = false
 startup_timeout_ms = 5000
@@ -222,7 +249,7 @@ startup_timeout_ms = 5000
     let err = load_or_default(&path).expect_err("source backend section should fail");
     let msg = err.to_string();
     assert!(msg.contains("deprecated config keys removed in v0.2.0"));
-    assert!(msg.contains("[rttd.source.backend]"));
+    assert!(msg.contains("[ratd.source.backend]"));
 
     let _ = fs::remove_file(path);
     let _ = fs::remove_dir_all(dir);
@@ -241,10 +268,10 @@ scan_root = "Core"
 out_dir = "."
 header_name = "rat_gen.h"
 
-[rttd]
+[ratd]
 text_id = 255
 
-[rttd.behavior]
+[ratd.behavior]
 auto_sync_on_start = true
 auto_sync_on_reset = true
 sync_debounce_ms = 500
@@ -258,9 +285,9 @@ reader_buf = 65536
     let err = load_or_default(&path).expect_err("removed sync behavior keys should fail");
     let msg = err.to_string();
     assert!(msg.contains("deprecated config keys removed in v0.2.0"));
-    assert!(msg.contains("rttd.behavior.auto_sync_on_start"));
-    assert!(msg.contains("rttd.behavior.auto_sync_on_reset"));
-    assert!(msg.contains("rttd.behavior.sync_debounce_ms"));
+    assert!(msg.contains("ratd.behavior.auto_sync_on_start"));
+    assert!(msg.contains("ratd.behavior.auto_sync_on_reset"));
+    assert!(msg.contains("ratd.behavior.sync_debounce_ms"));
 
     let _ = fs::remove_file(path);
     let _ = fs::remove_dir_all(dir);

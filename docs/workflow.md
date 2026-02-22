@@ -1,6 +1,6 @@
-# rttd 工作流总览（v0.2）
+# ratd 工作流总览（v0.2）
 
-本文说明 v0.2 的固定流程：先 `ratsync` 生成头文件，再编译烧录，最后启动 `rttd` 进入运行时解码。
+本文说明 v0.2 的固定流程：先 `ratsync` 生成头文件，再编译烧录，最后启动 `ratd` 进入运行时解码。
 
 ## 1. 端到端流程
 
@@ -8,7 +8,7 @@
 ratsync 生成 rat_gen.h
          -> build/flash firmware
          -> 固件启动，RTT 端点可连接
-         -> rttd daemon 连接 source
+         -> ratd daemon 连接 source
          -> firmware 发送 schema 控制帧（HELLO/CHUNK/COMMIT）
          -> rat-core runtime Ready
          -> JSONL / Foxglove
@@ -17,7 +17,7 @@ ratsync 生成 rat_gen.h
 模块边界：
 
 ```text
-rttd(console/source/output) -> rat-core(runtime)
+ratd(console/source/output) -> rat-core(runtime)
 ```
 
 ## 2. 同步与构建阶段
@@ -32,14 +32,14 @@ cargo run -p ratsync -- --config <path/to/rat.toml>
 说明：
 
 - `ratsync` 是唯一同步入口。
-- `rttd` 不会触发 sync，不会生成 `rat_gen.h`。
+- `ratd` 不会触发 sync，不会生成 `rat_gen.h`。
 
 ## 3. 启动阶段
 
 执行：
 
 ```bash
-cargo run -p rttd -- --config <path/to/rat.toml>
+cargo run -p ratd -- --config <path/to/rat.toml>
 ```
 
 启动行为：
@@ -83,7 +83,7 @@ cargo run -p rttd -- --config <path/to/rat.toml>
 
 - 检查 RTT source 是否连接到了正确端口（`$source list`）。
 - 检查固件是否发送 schema 控制帧。
-- 检查 `rttd.behavior.schema_timeout` 是否过短。
+- 检查 `ratd.behavior.schema_timeout` 是否过短。
 
 ### 启动后无数据
 

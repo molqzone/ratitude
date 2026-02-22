@@ -1,6 +1,6 @@
 use crate::{
-    ConfigError, FoxgloveOutputConfig, GenerationConfig, ProjectConfig, RatitudeConfig,
-    RttdBehaviorConfig, RttdSourceConfig,
+    ConfigError, FoxgloveOutputConfig, GenerationConfig, ProjectConfig, RatdBehaviorConfig,
+    RatdSourceConfig, RatitudeConfig,
 };
 
 impl RatitudeConfig {
@@ -20,38 +20,38 @@ impl RatitudeConfig {
                 "generation.header_name must not be empty".to_string(),
             ));
         }
-        if self.rttd.text_id > 0xFF {
+        if self.ratd.text_id > 0xFF {
             return Err(ConfigError::Validation(format!(
-                "rttd.text_id out of range: 0x{:X}",
-                self.rttd.text_id
+                "ratd.text_id out of range: 0x{:X}",
+                self.ratd.text_id
             )));
         }
 
-        if self.rttd.source.scan_timeout_ms == 0 {
+        if self.ratd.source.scan_timeout_ms == 0 {
             return Err(ConfigError::Validation(
-                "rttd.source.scan_timeout_ms must be > 0".to_string(),
+                "ratd.source.scan_timeout_ms must be > 0".to_string(),
             ));
         }
-        if self.rttd.source.last_selected_addr.trim().is_empty() {
+        if self.ratd.source.last_selected_addr.trim().is_empty() {
             return Err(ConfigError::Validation(
-                "rttd.source.last_selected_addr must not be empty".to_string(),
-            ));
-        }
-
-        if self.rttd.behavior.buf == 0 {
-            return Err(ConfigError::Validation(
-                "rttd.behavior.buf must be > 0".to_string(),
-            ));
-        }
-        if self.rttd.behavior.reader_buf == 0 {
-            return Err(ConfigError::Validation(
-                "rttd.behavior.reader_buf must be > 0".to_string(),
+                "ratd.source.last_selected_addr must not be empty".to_string(),
             ));
         }
 
-        if self.rttd.outputs.foxglove.ws_addr.trim().is_empty() {
+        if self.ratd.behavior.buf == 0 {
             return Err(ConfigError::Validation(
-                "rttd.outputs.foxglove.ws_addr must not be empty".to_string(),
+                "ratd.behavior.buf must be > 0".to_string(),
+            ));
+        }
+        if self.ratd.behavior.reader_buf == 0 {
+            return Err(ConfigError::Validation(
+                "ratd.behavior.reader_buf must be > 0".to_string(),
+            ));
+        }
+
+        if self.ratd.outputs.foxglove.ws_addr.trim().is_empty() {
+            return Err(ConfigError::Validation(
+                "ratd.outputs.foxglove.ws_addr must not be empty".to_string(),
             ));
         }
         Ok(())
@@ -74,17 +74,17 @@ impl RatitudeConfig {
             self.generation.header_name = GenerationConfig::default().header_name;
         }
 
-        if self.rttd.source.last_selected_addr.trim().is_empty() {
-            self.rttd.source.last_selected_addr = RttdSourceConfig::default().last_selected_addr;
+        if self.ratd.source.last_selected_addr.trim().is_empty() {
+            self.ratd.source.last_selected_addr = RatdSourceConfig::default().last_selected_addr;
         }
-        if self.rttd.behavior.reconnect.trim().is_empty() {
-            self.rttd.behavior.reconnect = RttdBehaviorConfig::default().reconnect;
+        if self.ratd.behavior.reconnect.trim().is_empty() {
+            self.ratd.behavior.reconnect = RatdBehaviorConfig::default().reconnect;
         }
-        if self.rttd.behavior.schema_timeout.trim().is_empty() {
-            self.rttd.behavior.schema_timeout = RttdBehaviorConfig::default().schema_timeout;
+        if self.ratd.behavior.schema_timeout.trim().is_empty() {
+            self.ratd.behavior.schema_timeout = RatdBehaviorConfig::default().schema_timeout;
         }
-        if self.rttd.outputs.foxglove.ws_addr.trim().is_empty() {
-            self.rttd.outputs.foxglove.ws_addr = FoxgloveOutputConfig::default().ws_addr;
+        if self.ratd.outputs.foxglove.ws_addr.trim().is_empty() {
+            self.ratd.outputs.foxglove.ws_addr = FoxgloveOutputConfig::default().ws_addr;
         }
 
         self.project.extensions = self

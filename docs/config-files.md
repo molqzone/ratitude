@@ -11,10 +11,10 @@
 - `[project]`：源码扫描范围
 - `[artifacts]`：产物路径
 - `[generation]`：生成文件位置（供工具链使用）
-- `[rttd.source]`：source 扫描与目标端点选择
-- `[rttd.behavior]`：连接与 schema 等待行为
-- `[rttd.outputs.jsonl]`：JSONL 输出
-- `[rttd.outputs.foxglove]`：Foxglove 输出
+- `[ratd.source]`：source 扫描与目标端点选择
+- `[ratd.behavior]`：连接与 schema 等待行为
+- `[ratd.outputs.jsonl]`：JSONL 输出
+- `[ratd.outputs.foxglove]`：Foxglove 输出
 
 示例：
 
@@ -29,42 +29,42 @@ extensions = [".h", ".c"]
 out_dir = "."
 header_name = "rat_gen.h"
 
-[rttd]
+[ratd]
 text_id = 255
 
-[rttd.source]
+[ratd.source]
 auto_scan = true
 scan_timeout_ms = 300
 last_selected_addr = "127.0.0.1:19021"
 
-[rttd.behavior]
+[ratd.behavior]
 reconnect = "1s"
 schema_timeout = "3s"
 buf = 256
 reader_buf = 65536
 
-[rttd.outputs.jsonl]
+[ratd.outputs.jsonl]
 enabled = true
 path = ""
 
-[rttd.outputs.foxglove]
+[ratd.outputs.foxglove]
 enabled = false
 ws_addr = "127.0.0.1:8765"
 ```
 
 说明：
 
-- `rttd` 不托管 backend 进程，只连接既有 RTT 端口。
+- `ratd` 不托管 backend 进程，只连接既有 RTT 端口。
 - `last_selected_addr` 的端口号是 J-Link RTT Telnet 端口的唯一来源（`rtt_telnet_port` 已移除）。
-- `rttd.source.auto_scan = false` 时，只会探测 `last_selected_addr`，不再注入默认端口候选；`reachable` 始终来自实时探测结果。
+- `ratd.source.auto_scan = false` 时，只会探测 `last_selected_addr`，不再注入默认端口候选；`reachable` 始终来自实时探测结果。
 - 命令台是主配置入口之一：`$source use`、`$foxglove on|off`、`$jsonl on|off [path]` 会写回该文件。
-- 设计约束：runtime 每次重启都会重新创建 JSONL writer；当 `rttd.outputs.jsonl.enabled = true` 且配置了 `path` 时，目标文件会被清空重写（非追加）。
+- 设计约束：runtime 每次重启都会重新创建 JSONL writer；当 `ratd.outputs.jsonl.enabled = true` 且配置了 `path` 时，目标文件会被清空重写（非追加）。
 
 ## `rat_gen.h`（自动生成）
 
 用途：固件编译期宏定义（ID/常量）输出。
 
-生成方式：仅由 `ratsync` 生成，`rttd` 运行时不会触发 sync。
+生成方式：仅由 `ratsync` 生成，`ratd` 运行时不会触发 sync。
 
 ```bash
 cargo run -p ratsync -- --config <path/to/rat.toml>

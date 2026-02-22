@@ -26,7 +26,7 @@ pub struct RatitudeConfig {
     pub project: ProjectConfig,
     pub artifacts: ArtifactsConfig,
     pub generation: GenerationConfig,
-    pub rttd: RttdConfig,
+    pub ratd: RatdConfig,
 }
 
 impl Default for RatitudeConfig {
@@ -35,7 +35,7 @@ impl Default for RatitudeConfig {
             project: ProjectConfig::default(),
             artifacts: ArtifactsConfig::default(),
             generation: GenerationConfig::default(),
-            rttd: RttdConfig::default(),
+            ratd: RatdConfig::default(),
         }
     }
 }
@@ -96,33 +96,33 @@ impl Default for GenerationConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
-pub struct RttdConfig {
+pub struct RatdConfig {
     pub text_id: u16,
-    pub source: RttdSourceConfig,
-    pub behavior: RttdBehaviorConfig,
-    pub outputs: RttdOutputsConfig,
+    pub source: RatdSourceConfig,
+    pub behavior: RatdBehaviorConfig,
+    pub outputs: RatdOutputsConfig,
 }
 
-impl Default for RttdConfig {
+impl Default for RatdConfig {
     fn default() -> Self {
         Self {
             text_id: 0xFF,
-            source: RttdSourceConfig::default(),
-            behavior: RttdBehaviorConfig::default(),
-            outputs: RttdOutputsConfig::default(),
+            source: RatdSourceConfig::default(),
+            behavior: RatdBehaviorConfig::default(),
+            outputs: RatdOutputsConfig::default(),
         }
     }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
-pub struct RttdSourceConfig {
+pub struct RatdSourceConfig {
     pub auto_scan: bool,
     pub scan_timeout_ms: u64,
     pub last_selected_addr: String,
 }
 
-impl Default for RttdSourceConfig {
+impl Default for RatdSourceConfig {
     fn default() -> Self {
         Self {
             auto_scan: true,
@@ -134,14 +134,14 @@ impl Default for RttdSourceConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
-pub struct RttdBehaviorConfig {
+pub struct RatdBehaviorConfig {
     pub reconnect: String,
     pub schema_timeout: String,
     pub buf: usize,
     pub reader_buf: usize,
 }
 
-impl Default for RttdBehaviorConfig {
+impl Default for RatdBehaviorConfig {
     fn default() -> Self {
         Self {
             reconnect: "1s".to_string(),
@@ -154,12 +154,12 @@ impl Default for RttdBehaviorConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
-pub struct RttdOutputsConfig {
+pub struct RatdOutputsConfig {
     pub jsonl: JsonlOutputConfig,
     pub foxglove: FoxgloveOutputConfig,
 }
 
-impl Default for RttdOutputsConfig {
+impl Default for RatdOutputsConfig {
     fn default() -> Self {
         Self {
             jsonl: JsonlOutputConfig::default(),

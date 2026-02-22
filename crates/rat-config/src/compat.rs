@@ -23,52 +23,56 @@ pub(crate) fn reject_deprecated_config_keys(raw: &str) -> Result<(), ConfigError
         deprecated_keys.push("generation.toml_name");
     }
 
-    if let Some(rttd) = value.get("rttd").and_then(toml::Value::as_table) {
-        if rttd.contains_key("server") {
-            deprecated_keys.push("[rttd.server]");
+    if value.get("rttd").and_then(toml::Value::as_table).is_some() {
+        deprecated_keys.push("[rttd] (renamed to [ratd])");
+    }
+
+    if let Some(ratd) = value.get("ratd").and_then(toml::Value::as_table) {
+        if ratd.contains_key("server") {
+            deprecated_keys.push("[ratd.server]");
         }
-        if rttd.contains_key("foxglove") {
-            deprecated_keys.push("[rttd.foxglove]");
+        if ratd.contains_key("foxglove") {
+            deprecated_keys.push("[ratd.foxglove]");
         }
-        if rttd
+        if ratd
             .get("source")
             .and_then(toml::Value::as_table)
             .map(|source| source.contains_key("preferred_backend"))
             .unwrap_or(false)
         {
-            deprecated_keys.push("rttd.source.preferred_backend");
+            deprecated_keys.push("ratd.source.preferred_backend");
         }
-        if rttd
+        if ratd
             .get("source")
             .and_then(toml::Value::as_table)
             .map(|source| source.contains_key("backend"))
             .unwrap_or(false)
         {
-            deprecated_keys.push("[rttd.source.backend]");
+            deprecated_keys.push("[ratd.source.backend]");
         }
-        if rttd
+        if ratd
             .get("behavior")
             .and_then(toml::Value::as_table)
             .map(|behavior| behavior.contains_key("auto_sync_on_start"))
             .unwrap_or(false)
         {
-            deprecated_keys.push("rttd.behavior.auto_sync_on_start");
+            deprecated_keys.push("ratd.behavior.auto_sync_on_start");
         }
-        if rttd
+        if ratd
             .get("behavior")
             .and_then(toml::Value::as_table)
             .map(|behavior| behavior.contains_key("auto_sync_on_reset"))
             .unwrap_or(false)
         {
-            deprecated_keys.push("rttd.behavior.auto_sync_on_reset");
+            deprecated_keys.push("ratd.behavior.auto_sync_on_reset");
         }
-        if rttd
+        if ratd
             .get("behavior")
             .and_then(toml::Value::as_table)
             .map(|behavior| behavior.contains_key("sync_debounce_ms"))
             .unwrap_or(false)
         {
-            deprecated_keys.push("rttd.behavior.sync_debounce_ms");
+            deprecated_keys.push("ratd.behavior.sync_debounce_ms");
         }
     }
 
@@ -77,7 +81,7 @@ pub(crate) fn reject_deprecated_config_keys(raw: &str) -> Result<(), ConfigError
     }
 
     Err(ConfigError::Validation(format!(
-        "deprecated config keys removed in v0.2.0: {}. Migrate rttd keys via docs/migrations/0.2.0-breaking.md, move path filters into .rttdignore, and remove generation.toml_name because rat_gen.toml is no longer generated",
+        "deprecated config keys removed in v0.2.0: {}. Migrate ratd keys via docs/migrations/0.2.0-breaking.md, move path filters into .rttdignore, and remove generation.toml_name because rat_gen.toml is no longer generated",
         deprecated_keys.join(", ")
     )))
 }

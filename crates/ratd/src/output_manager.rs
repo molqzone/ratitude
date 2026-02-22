@@ -146,16 +146,16 @@ pub struct OutputManager {
 
 impl OutputManager {
     pub fn from_config(cfg: &RatitudeConfig) -> Self {
-        let jsonl_path = cfg.rttd.outputs.jsonl.path.trim();
+        let jsonl_path = cfg.ratd.outputs.jsonl.path.trim();
         let desired = OutputState {
-            jsonl_enabled: cfg.rttd.outputs.jsonl.enabled,
+            jsonl_enabled: cfg.ratd.outputs.jsonl.enabled,
             jsonl_path: if jsonl_path.is_empty() {
                 None
             } else {
                 Some(jsonl_path.to_string())
             },
-            foxglove_enabled: cfg.rttd.outputs.foxglove.enabled,
-            foxglove_ws_addr: cfg.rttd.outputs.foxglove.ws_addr.clone(),
+            foxglove_enabled: cfg.ratd.outputs.foxglove.enabled,
+            foxglove_ws_addr: cfg.ratd.outputs.foxglove.ws_addr.clone(),
         };
 
         let sinks: Vec<Box<dyn PacketSink>> =

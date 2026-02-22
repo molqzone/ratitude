@@ -31,7 +31,7 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
     let mut output_manager = OutputManager::from_config(&state.config);
     let mut runtime = activate_runtime(None, &mut state, &mut output_manager).await?;
 
-    println!("rttd daemon started at source {}", state.active_source);
+    println!("ratd daemon started at source {}", state.active_source);
     println!("type `$help` to show available commands");
 
     let console_shutdown = CancellationToken::new();
@@ -130,22 +130,22 @@ async fn handle_console_command(
                 return Ok(action);
             };
             state.active_source = candidate.addr.clone();
-            state.config.rttd.source.last_selected_addr = candidate.addr.clone();
+            state.config.ratd.source.last_selected_addr = candidate.addr.clone();
             ConfigStore::new(&state.config_path).save(&state.config)?;
             println!("selected source: {}", state.active_source);
             action.restart_runtime = true;
         }
         ConsoleCommand::Foxglove(enabled) => {
             output_manager.set_foxglove(enabled, None)?;
-            state.config.rttd.outputs.foxglove.enabled = enabled;
+            state.config.ratd.outputs.foxglove.enabled = enabled;
             ConfigStore::new(&state.config_path).save(&state.config)?;
             println!("foxglove output: {}", if enabled { "on" } else { "off" });
         }
         ConsoleCommand::Jsonl { enabled, path } => {
             output_manager.set_jsonl(enabled, path.clone())?;
-            state.config.rttd.outputs.jsonl.enabled = enabled;
+            state.config.ratd.outputs.jsonl.enabled = enabled;
             if let Some(path) = path {
-                state.config.rttd.outputs.jsonl.path = path;
+                state.config.ratd.outputs.jsonl.path = path;
             }
             ConfigStore::new(&state.config_path).save(&state.config)?;
             println!("jsonl output: {}", if enabled { "on" } else { "off" });
@@ -188,7 +188,7 @@ async fn handle_console_command(
 }
 
 async fn refresh_source_candidates(state: &mut DaemonState, render: bool) {
-    state.source_candidates = discover_sources(&state.config.rttd.source).await;
+    state.source_candidates = discover_sources(&state.config.ratd.source).await;
     if render {
         render_candidates(&state.source_candidates);
     }
@@ -224,11 +224,11 @@ fn load_config(config_path: &str) -> Result<RatitudeConfig> {
 }
 
 async fn build_state(config_path: String, cfg: RatitudeConfig) -> Result<DaemonState> {
-    let source_candidates = discover_sources(&cfg.rttd.source).await;
+    let source_candidates = discover_sources(&cfg.ratd.source).await;
     render_candidates(&source_candidates);
 
     let active_source =
-        select_active_source(&source_candidates, &cfg.rttd.source.last_selected_addr)?;
+        select_active_source(&source_candidates, &cfg.ratd.source.last_selected_addr)?;
 
     Ok(DaemonState {
         config_path,
@@ -349,8 +349,8 @@ mod tests {
 
         let mut cfg = RatitudeConfig::default();
         cfg.project.scan_root = ".".to_string();
-        cfg.rttd.source.auto_scan = false;
-        cfg.rttd.source.last_selected_addr = "10.10.10.10:19021".to_string();
+        cfg.ratd.source.auto_scan = false;
+        cfg.ratd.source.last_selected_addr = "10.10.10.10:19021".to_string();
         ConfigStore::new(&config_path)
             .save(&cfg)
             .expect("save config");
@@ -360,7 +360,7 @@ mod tests {
             .expect("build state");
         assert_eq!(state.active_source, "10.10.10.10:19021");
         assert_eq!(
-            state.config.rttd.source.last_selected_addr,
+            state.config.ratd.source.last_selected_addr,
             "10.10.10.10:19021"
         );
 
@@ -377,9 +377,9 @@ mod tests {
         let addr = listener.local_addr().expect("local addr").to_string();
 
         let mut cfg = RatitudeConfig::default();
-        cfg.rttd.source.auto_scan = false;
-        cfg.rttd.source.scan_timeout_ms = 100;
-        cfg.rttd.source.last_selected_addr = addr.clone();
+        cfg.ratd.source.auto_scan = false;
+        cfg.ratd.source.scan_timeout_ms = 100;
+        cfg.ratd.source.last_selected_addr = addr.clone();
 
         let mut state = DaemonState {
             config_path: String::new(),
@@ -415,9 +415,9 @@ mod tests {
         let addr = listener.local_addr().expect("local addr").to_string();
 
         let mut cfg = RatitudeConfig::default();
-        cfg.rttd.source.auto_scan = false;
-        cfg.rttd.source.scan_timeout_ms = 100;
-        cfg.rttd.source.last_selected_addr = addr.clone();
+        cfg.ratd.source.auto_scan = false;
+        cfg.ratd.source.scan_timeout_ms = 100;
+        cfg.ratd.source.last_selected_addr = addr.clone();
 
         let original_active = addr.clone();
         let mut state = DaemonState {
@@ -515,7 +515,7 @@ extensions = [".c", ".h"]
 out_dir = "."
 header_name = "rat_gen.h"
 
-[rttd]
+[ratd]
 text_id = 255
 "#;
         fs::write(&config_path, raw).expect("write config");

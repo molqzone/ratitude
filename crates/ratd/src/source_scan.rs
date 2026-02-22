@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use rat_config::RttdSourceConfig;
+use rat_config::RatdSourceConfig;
 use tokio::net::TcpStream;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -10,7 +10,7 @@ pub struct SourceCandidate {
     pub reachable: bool,
 }
 
-pub async fn discover_sources(config: &RttdSourceConfig) -> Vec<SourceCandidate> {
+pub async fn discover_sources(config: &RatdSourceConfig) -> Vec<SourceCandidate> {
     let mut addresses: BTreeSet<String> = BTreeSet::new();
     if !config.last_selected_addr.trim().is_empty() {
         addresses.insert(config.last_selected_addr.trim().to_string());
@@ -73,7 +73,7 @@ async fn probe_addr(addr: &str, timeout: Duration) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use rat_config::RttdSourceConfig;
+    use rat_config::RatdSourceConfig;
     use tokio::net::TcpListener;
 
     use super::*;
@@ -109,7 +109,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let addr = listener.local_addr().expect("local addr").to_string();
 
-        let config = RttdSourceConfig {
+        let config = RatdSourceConfig {
             auto_scan: false,
             scan_timeout_ms: 100,
             last_selected_addr: addr.clone(),
@@ -127,7 +127,7 @@ mod tests {
         let addr = listener.local_addr().expect("local addr").to_string();
         drop(listener);
 
-        let config = RttdSourceConfig {
+        let config = RatdSourceConfig {
             auto_scan: false,
             scan_timeout_ms: 100,
             last_selected_addr: addr.clone(),
@@ -141,7 +141,7 @@ mod tests {
 
     #[tokio::test]
     async fn auto_scan_true_keeps_default_candidate_set() {
-        let config = RttdSourceConfig {
+        let config = RatdSourceConfig {
             auto_scan: true,
             scan_timeout_ms: 1,
             last_selected_addr: String::new(),

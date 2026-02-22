@@ -39,14 +39,14 @@
 
 ### D2. 运行模型（破坏式）
 
-- 流程固定为 `ratsync -> build/flash -> rttd`。
-- `rttd` 默认进入交互式 daemon（命令台 + 状态面板），运行时不触发 sync。
-- 协议 ingest runtime 下沉到 `rat-core`，`rttd` 仅负责控制面编排。
+- 流程固定为 `ratsync -> build/flash -> ratd`。
+- `ratd` 默认进入交互式 daemon（命令台 + 状态面板），运行时不触发 sync。
+- 协议 ingest runtime 下沉到 `rat-core`，`ratd` 仅负责控制面编排。
 
 ### D3. 数据源策略
 
 - 每次启动自动扫描候选 RTT 端点地址（基于 `last_selected_addr` + 默认端口探测）。
-- `rttd` 不托管 backend 进程，只连接已存在端点。
+- `ratd` 不托管 backend 进程，只连接已存在端点。
 - 后端类型不参与当前 source 选择模型，不承诺 openocd/pyocd/jlink 类型判定。
 - 候选必须可见并可选。
 - 选择结果持久化到 `rat.toml`。

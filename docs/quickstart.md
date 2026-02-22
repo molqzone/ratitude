@@ -23,7 +23,7 @@ cargo run -p ratsync -- --config firmware/example/stm32f4_rtt/rat.toml
 ## 4. 启动 daemon
 
 ```bash
-cargo run -p rttd -- --config firmware/example/stm32f4_rtt/rat.toml
+cargo run -p ratd -- --config firmware/example/stm32f4_rtt/rat.toml
 ```
 
 启动后先执行：
@@ -56,7 +56,7 @@ $quit
 ./tools/run_mock_foxglove.sh
 ```
 
-脚本会启动 mock RTT 字节流，然后启动 daemon。Foxglove 输出由 `rat.toml` 中 `[rttd.outputs.foxglove]` 控制。
+脚本会启动 mock RTT 字节流，然后启动 daemon。Foxglove 输出由 `rat.toml` 中 `[ratd.outputs.foxglove]` 控制。
 
 ## 7. 重点校验
 

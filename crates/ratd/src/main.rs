@@ -18,7 +18,7 @@ async fn main() {
     init_tracing();
     let exit = run().await;
     if let Err(err) = exit {
-        error!(error = %err, "rttd exited with error");
+        error!(error = %err, "ratd exited with error");
         eprintln!("{err:#}");
         std::process::exit(1);
     }

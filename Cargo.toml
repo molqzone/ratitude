@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-  "crates/rttd",
+  "crates/ratd",
   "crates/ratsync",
   "crates/rat-config",
   "crates/rat-sync",

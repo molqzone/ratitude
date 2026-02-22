@@ -31,4 +31,4 @@ MOCK_PID="$!"
 
 sleep 0.3
 
-cargo run -p rttd -- --config "${CONFIG_PATH}"
+cargo run -p ratd -- --config "${CONFIG_PATH}"

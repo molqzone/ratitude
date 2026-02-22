@@ -98,7 +98,7 @@ pub enum RuntimeError {
     SchemaCommitBeforeComplete { received: usize, expected: usize },
 
     #[error(
-        "schema hash mismatch: expected 0x{expected:016X}, actual 0x{actual:016X}; run ratsync, rebuild firmware, and reflash before starting rttd"
+        "schema hash mismatch: expected 0x{expected:016X}, actual 0x{actual:016X}; run ratsync, rebuild firmware, and reflash before starting ratd"
     )]
     SchemaHashMismatch { expected: u64, actual: u64 },
 
