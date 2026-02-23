@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
@@ -11,6 +10,9 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+
+const JSONL_SINK_KEY: &str = "jsonl";
+const FOXGLOVE_SINK_KEY: &str = "foxglove";
 
 #[derive(Clone, Debug)]
 pub struct OutputState {
@@ -26,17 +28,16 @@ struct SinkContext {
     packets: Vec<PacketDef>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum SinkKey {
-    Jsonl,
-    Foxglove,
-}
-
 trait PacketSink {
-    fn key(&self) -> SinkKey;
+    fn key(&self) -> &'static str;
     fn sync(&mut self, desired: &OutputState, context: Option<&SinkContext>) -> Result<()>;
     fn shutdown(&mut self);
     fn poll_failure(&mut self) -> Option<anyhow::Error>;
+}
+
+struct RegisteredSink {
+    key: &'static str,
+    sink: Box<dyn PacketSink>,
 }
 
 struct JsonlSink {
@@ -54,8 +55,8 @@ impl JsonlSink {
 }
 
 impl PacketSink for JsonlSink {
-    fn key(&self) -> SinkKey {
-        SinkKey::Jsonl
+    fn key(&self) -> &'static str {
+        JSONL_SINK_KEY
     }
 
     fn sync(&mut self, desired: &OutputState, context: Option<&SinkContext>) -> Result<()> {
@@ -125,8 +126,8 @@ impl FoxgloveSink {
 }
 
 impl PacketSink for FoxgloveSink {
-    fn key(&self) -> SinkKey {
-        SinkKey::Foxglove
+    fn key(&self) -> &'static str {
+        FOXGLOVE_SINK_KEY
     }
 
     fn sync(&mut self, desired: &OutputState, context: Option<&SinkContext>) -> Result<()> {
@@ -188,7 +189,7 @@ impl PacketSink for FoxgloveSink {
 pub struct OutputManager {
     desired: OutputState,
     context: Option<SinkContext>,
-    sinks: Vec<Box<dyn PacketSink>>,
+    sinks: Vec<RegisteredSink>,
 }
 
 impl OutputManager {
@@ -205,9 +206,9 @@ impl OutputManager {
             foxglove_ws_addr: cfg.ratd.outputs.foxglove.ws_addr.clone(),
         };
 
-        let sinks: Vec<Box<dyn PacketSink>> =
-            vec![Box::new(JsonlSink::new()), Box::new(FoxgloveSink::new())];
-        validate_unique_sink_keys(&sinks);
+        let mut sinks = Vec::new();
+        register_sink(&mut sinks, Box::new(JsonlSink::new()));
+        register_sink(&mut sinks, Box::new(FoxgloveSink::new()));
 
         Self {
             desired,
@@ -218,10 +219,14 @@ impl OutputManager {
 
     #[cfg(test)]
     fn with_sinks_for_test(desired: OutputState, sinks: Vec<Box<dyn PacketSink>>) -> Self {
+        let mut registered = Vec::new();
+        for sink in sinks {
+            register_sink(&mut registered, sink);
+        }
         Self {
             desired,
             context: None,
-            sinks,
+            sinks: registered,
         }
     }
 
@@ -238,7 +243,7 @@ impl OutputManager {
                 Some(path)
             };
         }
-        self.reconcile_sink(SinkKey::Jsonl)
+        self.reconcile_sink(JSONL_SINK_KEY)
     }
 
     pub fn set_foxglove(&mut self, enabled: bool, ws_addr: Option<String>) -> Result<()> {
@@ -248,7 +253,7 @@ impl OutputManager {
                 self.desired.foxglove_ws_addr = ws_addr;
             }
         }
-        self.reconcile_sink(SinkKey::Foxglove)
+        self.reconcile_sink(FOXGLOVE_SINK_KEY)
     }
 
     pub async fn apply(&mut self, hub: Hub, packets: Vec<PacketDef>) -> Result<()> {
@@ -258,14 +263,14 @@ impl OutputManager {
 
     pub async fn shutdown(&mut self) {
         self.context = None;
-        for sink in &mut self.sinks {
-            sink.shutdown();
+        for entry in &mut self.sinks {
+            entry.sink.shutdown();
         }
     }
 
     pub fn poll_failure(&mut self) -> Option<anyhow::Error> {
-        for sink in &mut self.sinks {
-            if let Some(err) = sink.poll_failure() {
+        for entry in &mut self.sinks {
+            if let Some(err) = entry.sink.poll_failure() {
                 return Some(err);
             }
         }
@@ -273,26 +278,25 @@ impl OutputManager {
     }
 
     fn reconcile_all(&mut self) -> Result<()> {
-        for sink in &mut self.sinks {
-            sink.sync(&self.desired, self.context.as_ref())?;
+        for entry in &mut self.sinks {
+            entry.sink.sync(&self.desired, self.context.as_ref())?;
         }
         Ok(())
     }
 
-    fn reconcile_sink(&mut self, key: SinkKey) -> Result<()> {
-        if let Some(sink) = self.sinks.iter_mut().find(|sink| sink.key() == key) {
-            sink.sync(&self.desired, self.context.as_ref())?;
+    fn reconcile_sink(&mut self, key: &str) -> Result<()> {
+        if let Some(entry) = self.sinks.iter_mut().find(|entry| entry.key == key) {
+            entry.sink.sync(&self.desired, self.context.as_ref())?;
         }
         Ok(())
     }
 }
 
-fn validate_unique_sink_keys(sinks: &[Box<dyn PacketSink>]) {
-    let mut seen = BTreeSet::new();
-    for sink in sinks {
-        let inserted = seen.insert(sink.key());
-        assert!(inserted, "duplicate sink key in OutputManager");
-    }
+fn register_sink(sinks: &mut Vec<RegisteredSink>, sink: Box<dyn PacketSink>) {
+    let key = sink.key();
+    let duplicate = sinks.iter().any(|entry| entry.key == key);
+    assert!(!duplicate, "duplicate sink key in OutputManager: {}", key);
+    sinks.push(RegisteredSink { key, sink });
 }
 
 #[cfg(test)]
@@ -304,8 +308,8 @@ mod tests {
     }
 
     impl PacketSink for FailOnceSink {
-        fn key(&self) -> SinkKey {
-            SinkKey::Jsonl
+        fn key(&self) -> &'static str {
+            JSONL_SINK_KEY
         }
 
         fn sync(&mut self, _desired: &OutputState, _context: Option<&SinkContext>) -> Result<()> {

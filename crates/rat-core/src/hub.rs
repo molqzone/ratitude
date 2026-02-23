@@ -14,8 +14,11 @@ impl Hub {
         Self { tx }
     }
 
-    pub fn publish(&self, packet: PacketEnvelope) {
-        let _ = self.tx.send(packet);
+    pub fn publish(
+        &self,
+        packet: PacketEnvelope,
+    ) -> Result<usize, broadcast::error::SendError<PacketEnvelope>> {
+        self.tx.send(packet)
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<PacketEnvelope> {

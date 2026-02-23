@@ -13,27 +13,95 @@ use crate::console::spawn_console_reader;
 use crate::output_manager::OutputManager;
 use crate::runtime_lifecycle::{activate_runtime, apply_schema_ready};
 use crate::runtime_schema::RuntimeSchemaState;
-use crate::source_scan::SourceCandidate;
+use crate::source_scan::{render_candidates, SourceCandidate};
 use crate::source_state::build_state;
 
 #[derive(Debug, Clone)]
 pub struct DaemonState {
-    pub config_path: String,
-    pub config: RatitudeConfig,
-    pub source_candidates: Vec<SourceCandidate>,
-    pub active_source: String,
-    pub runtime_schema: RuntimeSchemaState,
+    config_path: String,
+    config: RatitudeConfig,
+    source_candidates: Vec<SourceCandidate>,
+    active_source: String,
+    runtime_schema: RuntimeSchemaState,
+}
+
+impl DaemonState {
+    pub(crate) fn new(
+        config_path: String,
+        config: RatitudeConfig,
+        source_candidates: Vec<SourceCandidate>,
+        active_source: String,
+        runtime_schema: RuntimeSchemaState,
+    ) -> Self {
+        Self {
+            config_path,
+            config,
+            source_candidates,
+            active_source,
+            runtime_schema,
+        }
+    }
+
+    pub(crate) fn config_path(&self) -> &str {
+        &self.config_path
+    }
+
+    pub(crate) fn config(&self) -> &RatitudeConfig {
+        &self.config
+    }
+
+    pub(crate) fn config_mut(&mut self) -> &mut RatitudeConfig {
+        &mut self.config
+    }
+
+    pub(crate) fn replace_config(&mut self, config: RatitudeConfig) {
+        self.config = config;
+    }
+
+    pub(crate) fn source_candidates(&self) -> &[SourceCandidate] {
+        &self.source_candidates
+    }
+
+    pub(crate) fn source_candidate(&self, index: usize) -> Option<&SourceCandidate> {
+        self.source_candidates.get(index)
+    }
+
+    pub(crate) fn set_source_candidates(&mut self, candidates: Vec<SourceCandidate>) {
+        self.source_candidates = candidates;
+    }
+
+    pub(crate) fn active_source(&self) -> &str {
+        &self.active_source
+    }
+
+    pub(crate) fn select_active_source(&mut self, addr: String) {
+        self.active_source = addr.clone();
+        self.config.ratd.source.last_selected_addr = addr;
+    }
+
+    pub(crate) fn runtime_schema(&self) -> &RuntimeSchemaState {
+        &self.runtime_schema
+    }
+
+    pub(crate) fn runtime_schema_mut(&mut self) -> &mut RuntimeSchemaState {
+        &mut self.runtime_schema
+    }
+
+    pub(crate) fn clear_runtime_schema(&mut self) {
+        self.runtime_schema.clear();
+    }
 }
 
 pub async fn run_daemon(cli: Cli) -> Result<()> {
     let cfg = load_config(&cli.config).await?;
     let mut state = build_state(cli.config.clone(), cfg).await?;
-    let mut output_manager = OutputManager::from_config(&state.config);
+    render_candidates(state.source_candidates());
+    let mut output_manager = OutputManager::from_config(state.config());
     let mut runtime = activate_runtime(None, &mut state, &mut output_manager).await?;
     let mut output_health_tick = tokio::time::interval(Duration::from_millis(200));
     output_health_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-    println!("ratd daemon started at source {}", state.active_source);
+    println!("ratd daemon started at source {}", state.active_source());
     println!("type `$help` to show available commands");
 
     let console_shutdown = CancellationToken::new();
@@ -71,8 +139,11 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
                         .await?;
                         println!(
                             "runtime schema ready: packets={}, hash=0x{:016X}",
-                            state.runtime_schema.packet_count(),
-                            state.runtime_schema.schema_hash().unwrap_or(schema_hash)
+                            state.runtime_schema().packet_count(),
+                            state
+                                .runtime_schema()
+                                .schema_hash()
+                                .unwrap_or(schema_hash)
                         );
                     }
                     Some(RuntimeSignal::Fatal(err)) => {

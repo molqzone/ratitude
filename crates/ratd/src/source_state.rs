@@ -3,29 +3,26 @@ use rat_config::RatitudeConfig;
 
 use crate::daemon::DaemonState;
 use crate::runtime_schema::RuntimeSchemaState;
-use crate::source_scan::{discover_sources, render_candidates, SourceCandidate};
+use crate::source_scan::{discover_sources, SourceCandidate};
 
 pub(crate) async fn build_state(config_path: String, cfg: RatitudeConfig) -> Result<DaemonState> {
     let source_candidates = discover_sources(&cfg.ratd.source).await;
-    render_candidates(&source_candidates);
 
     let active_source =
         select_active_source(&source_candidates, &cfg.ratd.source.last_selected_addr)?;
 
-    Ok(DaemonState {
+    Ok(DaemonState::new(
         config_path,
-        config: cfg,
+        cfg,
         source_candidates,
         active_source,
-        runtime_schema: RuntimeSchemaState::default(),
-    })
+        RuntimeSchemaState::default(),
+    ))
 }
 
-pub(crate) async fn refresh_source_candidates(state: &mut DaemonState, render: bool) {
-    state.source_candidates = discover_sources(&state.config.ratd.source).await;
-    if render {
-        render_candidates(&state.source_candidates);
-    }
+pub(crate) async fn refresh_source_candidates(state: &mut DaemonState) {
+    let candidates = discover_sources(&state.config().ratd.source).await;
+    state.set_source_candidates(candidates);
 }
 
 pub(crate) fn select_active_source(
