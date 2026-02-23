@@ -29,11 +29,7 @@ pub(crate) fn write_generated_header(
     ));
     let schema_toml = build_runtime_schema_toml(generated);
     let schema_bytes = schema_toml.as_bytes();
-    let schema_hash = parse_schema_hash(&generated.meta.schema_hash).unwrap_or_else(|| {
-        // Keep header generation deterministic even if upstream metadata is malformed.
-        // Pipeline currently writes canonical hex strings, so this is a safety fallback.
-        crate::ids::fnv1a64(schema_bytes)
-    });
+    let schema_hash = parse_schema_hash(&generated.meta.schema_hash)?;
     out.push_str(&format!(
         "#define RAT_GEN_SCHEMA_HASH 0x{:016X}ULL\n",
         schema_hash
@@ -109,13 +105,18 @@ fn emit_schema_bytes(out: &mut String, schema_bytes: &[u8]) {
     out.push_str("#define RAT_GEN_SCHEMA_BYTES rat_gen_schema_bytes\n");
 }
 
-fn parse_schema_hash(raw: &str) -> Option<u64> {
+fn parse_schema_hash(raw: &str) -> Result<u64, SyncError> {
     let trimmed = raw.trim();
     let hex = trimmed
         .strip_prefix("0x")
         .or_else(|| trimmed.strip_prefix("0X"))
         .unwrap_or(trimmed);
-    u64::from_str_radix(hex, 16).ok()
+    u64::from_str_radix(hex, 16).map_err(|_| {
+        SyncError::Validation(format!(
+            "invalid schema hash in generated metadata: {}",
+            raw
+        ))
+    })
 }
 
 #[cfg(test)]
@@ -179,6 +180,28 @@ mod tests {
         assert!(raw.contains("#define RAT_GEN_SCHEMA_LEN "));
         assert!(raw.contains("static const uint8_t rat_gen_schema_bytes"));
         assert!(raw.contains("#define RAT_GEN_SCHEMA_BYTES rat_gen_schema_bytes"));
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn write_generated_header_fails_on_invalid_schema_hash() {
+        let dir = std::env::temp_dir().join(format!(
+            "rat_sync_header_schema_invalid_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join("rat_gen.h");
+
+        let mut generated = sample_generated();
+        generated.meta.schema_hash = "not-a-hex-hash".to_string();
+
+        let err = write_generated_header(&path, &generated).expect_err("must fail");
+        assert!(err
+            .to_string()
+            .contains("invalid schema hash in generated metadata"));
 
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir_all(dir);

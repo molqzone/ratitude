@@ -24,6 +24,7 @@ pub(crate) async fn activate_runtime(
     }
 
     state.replace_config(load_config(state.config_path()).await?);
+    output_manager.reload_from_config(state.config())?;
     let runtime = start_runtime(state.config(), state.source().active_addr()).await?;
     state.runtime_mut().clear_schema();
     info!(

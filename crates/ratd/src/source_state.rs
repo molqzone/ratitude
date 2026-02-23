@@ -2,7 +2,6 @@ use anyhow::{anyhow, Result};
 use rat_config::RatitudeConfig;
 
 use crate::daemon::DaemonState;
-use crate::runtime_schema::RuntimeSchemaState;
 use crate::source_scan::{discover_sources, SourceCandidate};
 
 pub(crate) async fn build_state(config_path: String, cfg: RatitudeConfig) -> Result<DaemonState> {
@@ -16,7 +15,6 @@ pub(crate) async fn build_state(config_path: String, cfg: RatitudeConfig) -> Res
         cfg,
         source_candidates,
         active_source,
-        RuntimeSchemaState::default(),
     ))
 }
 

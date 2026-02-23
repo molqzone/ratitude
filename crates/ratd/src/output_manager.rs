@@ -197,17 +197,7 @@ pub struct OutputManager {
 
 impl OutputManager {
     pub fn from_config(cfg: &RatitudeConfig) -> Self {
-        let jsonl_path = cfg.ratd.outputs.jsonl.path.trim();
-        let desired = OutputState {
-            jsonl_enabled: cfg.ratd.outputs.jsonl.enabled,
-            jsonl_path: if jsonl_path.is_empty() {
-                None
-            } else {
-                Some(jsonl_path.to_string())
-            },
-            foxglove_enabled: cfg.ratd.outputs.foxglove.enabled,
-            foxglove_ws_addr: cfg.ratd.outputs.foxglove.ws_addr.clone(),
-        };
+        let desired = output_state_from_config(cfg);
 
         let mut sinks = Vec::new();
         register_sink(&mut sinks, Box::new(JsonlSink::new()));
@@ -235,6 +225,11 @@ impl OutputManager {
 
     pub fn snapshot(&self) -> OutputState {
         self.desired.clone()
+    }
+
+    pub fn reload_from_config(&mut self, cfg: &RatitudeConfig) -> Result<()> {
+        self.desired = output_state_from_config(cfg);
+        self.reconcile_all()
     }
 
     pub fn set_jsonl(&mut self, enabled: bool, path: Option<String>) -> Result<()> {
@@ -295,6 +290,20 @@ impl OutputManager {
     }
 }
 
+fn output_state_from_config(cfg: &RatitudeConfig) -> OutputState {
+    let jsonl_path = cfg.ratd.outputs.jsonl.path.trim();
+    OutputState {
+        jsonl_enabled: cfg.ratd.outputs.jsonl.enabled,
+        jsonl_path: if jsonl_path.is_empty() {
+            None
+        } else {
+            Some(jsonl_path.to_string())
+        },
+        foxglove_enabled: cfg.ratd.outputs.foxglove.enabled,
+        foxglove_ws_addr: cfg.ratd.outputs.foxglove.ws_addr.clone(),
+    }
+}
+
 fn register_sink(sinks: &mut Vec<RegisteredSink>, sink: Box<dyn PacketSink>) {
     let key = sink.key();
     let duplicate = sinks.iter().any(|entry| entry.key == key);
@@ -345,5 +354,30 @@ mod tests {
         let first = manager.poll_failure().expect("first failure");
         assert!(first.to_string().contains("sink failed"));
         assert!(manager.poll_failure().is_none());
+    }
+
+    #[test]
+    fn reload_from_config_replaces_desired_state() {
+        let mut manager = OutputManager::with_sinks_for_test(
+            OutputState {
+                jsonl_enabled: false,
+                jsonl_path: None,
+                foxglove_enabled: false,
+                foxglove_ws_addr: "127.0.0.1:8765".to_string(),
+            },
+            vec![Box::new(FailOnceSink { failed: true })],
+        );
+        let mut cfg = RatitudeConfig::default();
+        cfg.ratd.outputs.jsonl.enabled = true;
+        cfg.ratd.outputs.jsonl.path = "out.jsonl".to_string();
+        cfg.ratd.outputs.foxglove.enabled = true;
+        cfg.ratd.outputs.foxglove.ws_addr = "127.0.0.1:9000".to_string();
+
+        manager.reload_from_config(&cfg).expect("reload");
+        let snapshot = manager.snapshot();
+        assert!(snapshot.jsonl_enabled);
+        assert_eq!(snapshot.jsonl_path.as_deref(), Some("out.jsonl"));
+        assert!(snapshot.foxglove_enabled);
+        assert_eq!(snapshot.foxglove_ws_addr, "127.0.0.1:9000");
     }
 }

@@ -124,14 +124,13 @@ impl DaemonState {
         config: RatitudeConfig,
         source_candidates: Vec<SourceCandidate>,
         active_source: String,
-        runtime_schema: RuntimeSchemaState,
     ) -> Self {
         let output = OutputDomainState::from_config(&config);
         Self {
             config_path,
             config,
             source: SourceDomainState::new(source_candidates, active_source),
-            runtime: RuntimeDomainState::new(runtime_schema),
+            runtime: RuntimeDomainState::new(RuntimeSchemaState::default()),
             output,
         }
     }
@@ -378,7 +377,6 @@ mod tests {
                 },
             ],
             addr.clone(),
-            RuntimeSchemaState::default(),
         );
         let mut output_manager = OutputManager::from_config(&cfg);
         let action =
@@ -417,7 +415,6 @@ mod tests {
                 },
             ],
             original_active.clone(),
-            RuntimeSchemaState::default(),
         );
         let mut output_manager = OutputManager::from_config(&cfg);
         let action = handle_console_command(
@@ -454,7 +451,6 @@ mod tests {
             cfg.clone(),
             Vec::new(),
             "127.0.0.1:19021".to_string(),
-            RuntimeSchemaState::default(),
         );
         let mut output_manager = OutputManager::from_config(&cfg);
         let foxglove_action = handle_console_command(
