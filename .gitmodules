@@ -1,4 +1,4 @@
-﻿[submodule "firmware"]
+[submodule "firmware"]
 	path = firmware
 	url = https://github.com/molqzone/librat
 	ignore = untracked
