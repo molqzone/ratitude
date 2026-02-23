@@ -82,25 +82,6 @@ fn compute_signature_hash_parts(
     fnv1a64(signature.as_bytes())
 }
 
-pub(crate) fn compute_schema_hash(packets: &[GeneratedPacketDef]) -> u64 {
-    let mut ordered = packets.to_vec();
-    ordered.sort_by_key(|packet| packet.id);
-
-    let mut input = String::new();
-    for packet in &ordered {
-        let _ = write!(
-            input,
-            "{:02X}|{}|{}|{}|{};",
-            packet.id,
-            packet.signature_hash,
-            packet.struct_name,
-            packet.packet_type,
-            packet.byte_size
-        );
-    }
-    fnv1a64(input.as_bytes())
-}
-
 pub(crate) fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf29ce484222325_u64;
     for byte in bytes {

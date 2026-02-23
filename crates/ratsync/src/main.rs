@@ -159,6 +159,11 @@ typedef struct {
         let summary = execute(&cli).expect("sync should pass");
         assert_eq!(summary.packet_count, 1);
         assert!(summary.header_path.exists());
+        let header_raw = fs::read_to_string(&summary.header_path).expect("read header");
+        assert!(header_raw.contains(&format!(
+            "#define RAT_GEN_SCHEMA_HASH {}ULL",
+            summary.schema_hash
+        )));
 
         let _ = fs::remove_dir_all(&dir);
     }

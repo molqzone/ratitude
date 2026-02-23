@@ -15,6 +15,7 @@ mod parser;
 mod parser_runner;
 mod pipeline;
 mod scanner;
+mod schema;
 
 pub use fs_adapter::sync_packets_fs;
 pub use model::{DiscoveredPacket, SyncFsResult, SyncPipelineInput, SyncPipelineOutput};
@@ -56,6 +57,9 @@ pub(crate) use pipeline::*;
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use scanner::*;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use schema::*;
 
 pub(crate) const RAT_ID_MIN: u16 = 1;
 pub(crate) const RAT_ID_MAX: u16 = 0xFE;

@@ -5,7 +5,7 @@ use std::path::Path;
 
 use rat_config::GeneratedConfig;
 
-use crate::ids::fnv1a64;
+use crate::schema::build_runtime_schema_toml;
 use crate::SyncError;
 
 pub(crate) fn write_generated_header(
@@ -31,7 +31,11 @@ pub(crate) fn write_generated_header(
     );
     let schema_toml = build_runtime_schema_toml(generated);
     let schema_bytes = schema_toml.as_bytes();
-    let schema_hash = fnv1a64(schema_bytes);
+    let schema_hash = parse_schema_hash(&generated.meta.schema_hash).unwrap_or_else(|| {
+        // Keep header generation deterministic even if upstream metadata is malformed.
+        // Pipeline currently writes canonical hex strings, so this is a safety fallback.
+        crate::ids::fnv1a64(schema_bytes)
+    });
     let _ = writeln!(out, "#define RAT_GEN_SCHEMA_HASH 0x{:016X}ULL", schema_hash);
     let _ = writeln!(out, "#define RAT_GEN_SCHEMA_LEN {}u", schema_bytes.len());
     emit_schema_bytes(&mut out, schema_bytes);
@@ -101,34 +105,13 @@ fn emit_schema_bytes(out: &mut String, schema_bytes: &[u8]) {
     out.push_str("#define RAT_GEN_SCHEMA_BYTES rat_gen_schema_bytes\n");
 }
 
-fn build_runtime_schema_toml(generated: &GeneratedConfig) -> String {
-    let mut out = String::new();
-    for packet in &generated.packets {
-        out.push_str("[[packets]]\n");
-        let _ = writeln!(out, "id = {}", packet.id);
-        let _ = writeln!(
-            out,
-            "struct_name = \"{}\"",
-            escape_toml_string(&packet.struct_name)
-        );
-        let _ = writeln!(out, "packed = {}", packet.packed);
-        let _ = writeln!(out, "byte_size = {}", packet.byte_size);
-        out.push('\n');
-
-        for field in &packet.fields {
-            out.push_str("[[packets.fields]]\n");
-            let _ = writeln!(out, "name = \"{}\"", escape_toml_string(&field.name));
-            let _ = writeln!(out, "c_type = \"{}\"", escape_toml_string(&field.c_type));
-            let _ = writeln!(out, "offset = {}", field.offset);
-            let _ = writeln!(out, "size = {}", field.size);
-            out.push('\n');
-        }
-    }
-    out
-}
-
-fn escape_toml_string(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
+fn parse_schema_hash(raw: &str) -> Option<u64> {
+    let trimmed = raw.trim();
+    let hex = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .unwrap_or(trimmed);
+    u64::from_str_radix(hex, 16).ok()
 }
 
 #[cfg(test)]
@@ -140,26 +123,29 @@ mod tests {
     use super::*;
 
     fn sample_generated() -> GeneratedConfig {
+        let packets = vec![GeneratedPacketDef {
+            id: 0x21,
+            signature_hash: "0x2".to_string(),
+            struct_name: "DemoPacket".to_string(),
+            packet_type: "plot".to_string(),
+            packed: true,
+            byte_size: 4,
+            source: "src/main.c".to_string(),
+            fields: vec![FieldDef {
+                name: "value".to_string(),
+                c_type: "uint32_t".to_string(),
+                offset: 0,
+                size: 4,
+            }],
+        }];
+        let schema_hash = crate::schema::compute_runtime_schema_hash_from_packets(&packets);
+
         GeneratedConfig {
             meta: GeneratedMeta {
                 project: "demo".to_string(),
-                schema_hash: "0x1".to_string(),
+                schema_hash: format!("0x{schema_hash:016X}"),
             },
-            packets: vec![GeneratedPacketDef {
-                id: 0x21,
-                signature_hash: "0x2".to_string(),
-                struct_name: "DemoPacket".to_string(),
-                packet_type: "plot".to_string(),
-                packed: true,
-                byte_size: 4,
-                source: "src/main.c".to_string(),
-                fields: vec![FieldDef {
-                    name: "value".to_string(),
-                    c_type: "uint32_t".to_string(),
-                    offset: 0,
-                    size: 4,
-                }],
-            }],
+            packets,
         }
     }
 
@@ -169,6 +155,7 @@ mod tests {
         assert!(schema.contains("[[packets]]"));
         assert!(schema.contains("id = 33"));
         assert!(schema.contains("struct_name = \"DemoPacket\""));
+        assert!(schema.contains("type = \"plot\""));
         assert!(schema.contains("[[packets.fields]]"));
         assert!(schema.contains("name = \"value\""));
     }

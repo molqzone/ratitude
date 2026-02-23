@@ -1,8 +1,9 @@
 use rat_config::{GeneratedConfig, GeneratedMeta};
 
-use crate::ids::{allocate_packet_ids, compute_schema_hash};
+use crate::ids::allocate_packet_ids;
 use crate::layout::{collect_layout_blockers, collect_layout_warnings};
 use crate::model::{SyncPipelineInput, SyncPipelineOutput};
+use crate::schema::compute_runtime_schema_hash_from_packets;
 use crate::SyncError;
 
 pub fn run_sync_pipeline(input: SyncPipelineInput) -> Result<SyncPipelineOutput, SyncError> {
@@ -16,7 +17,7 @@ pub fn run_sync_pipeline(input: SyncPipelineInput) -> Result<SyncPipelineOutput,
     let layout_warnings = collect_layout_warnings(&input.discovered_packets);
 
     let packets = allocate_packet_ids(&input.discovered_packets)?;
-    let schema_hash = compute_schema_hash(&packets);
+    let schema_hash = compute_runtime_schema_hash_from_packets(&packets);
 
     let generated = GeneratedConfig {
         meta: GeneratedMeta {

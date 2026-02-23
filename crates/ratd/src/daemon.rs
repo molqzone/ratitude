@@ -26,7 +26,7 @@ pub struct DaemonState {
 }
 
 pub async fn run_daemon(cli: Cli) -> Result<()> {
-    let cfg = load_config(&cli.config)?;
+    let cfg = load_config(&cli.config).await?;
     let mut state = build_state(cli.config.clone(), cfg).await?;
     let mut output_manager = OutputManager::from_config(&state.config);
     let mut runtime = activate_runtime(None, &mut state, &mut output_manager).await?;
@@ -131,14 +131,14 @@ async fn handle_console_command(
             };
             state.active_source = candidate.addr.clone();
             state.config.ratd.source.last_selected_addr = candidate.addr.clone();
-            ConfigStore::new(&state.config_path).save(&state.config)?;
+            save_config(&state.config_path, &state.config).await?;
             println!("selected source: {}", state.active_source);
             action.restart_runtime = true;
         }
         ConsoleCommand::Foxglove(enabled) => {
             output_manager.set_foxglove(enabled, None)?;
             state.config.ratd.outputs.foxglove.enabled = enabled;
-            ConfigStore::new(&state.config_path).save(&state.config)?;
+            save_config(&state.config_path, &state.config).await?;
             println!("foxglove output: {}", if enabled { "on" } else { "off" });
         }
         ConsoleCommand::Jsonl { enabled, path } => {
@@ -147,7 +147,7 @@ async fn handle_console_command(
             if let Some(path) = path {
                 state.config.ratd.outputs.jsonl.path = path;
             }
-            ConfigStore::new(&state.config_path).save(&state.config)?;
+            save_config(&state.config_path, &state.config).await?;
             println!("jsonl output: {}", if enabled { "on" } else { "off" });
         }
         ConsoleCommand::PacketLookup {
@@ -204,7 +204,7 @@ async fn activate_runtime(
         old_runtime.shutdown(false).await;
     }
 
-    state.config = load_config(&state.config_path)?;
+    state.config = load_config(&state.config_path).await?;
     let runtime = start_runtime(&state.config, &state.active_source).await?;
     state.runtime_schema.clear();
     output_manager
@@ -218,9 +218,25 @@ async fn activate_runtime(
     Ok(runtime)
 }
 
-fn load_config(config_path: &str) -> Result<RatitudeConfig> {
-    let (cfg, _) = ConfigStore::new(config_path).load_or_default()?;
-    Ok(cfg)
+async fn load_config(config_path: &str) -> Result<RatitudeConfig> {
+    let path = config_path.to_string();
+    tokio::task::spawn_blocking(move || -> Result<RatitudeConfig> {
+        let (cfg, _) = ConfigStore::new(path).load_or_default()?;
+        Ok(cfg)
+    })
+    .await
+    .context("failed to join config load task")?
+}
+
+async fn save_config(config_path: &str, config: &RatitudeConfig) -> Result<()> {
+    let path = config_path.to_string();
+    let config = config.clone();
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        ConfigStore::new(path).save(&config)?;
+        Ok(())
+    })
+    .await
+    .context("failed to join config save task")?
 }
 
 async fn build_state(config_path: String, cfg: RatitudeConfig) -> Result<DaemonState> {
@@ -263,7 +279,7 @@ fn runtime_packets_to_packet_defs(runtime_packets: Vec<RuntimePacketDef>) -> Vec
         .map(|packet| PacketDef {
             id: packet.id,
             struct_name: packet.struct_name,
-            packet_type: "plot".to_string(),
+            packet_type: packet.packet_type,
             packed: packet.packed,
             byte_size: packet.byte_size,
             source: "runtime-schema".to_string(),
@@ -499,8 +515,8 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
-    #[test]
-    fn load_config_does_not_rewrite_existing_file() {
+    #[tokio::test]
+    async fn load_config_does_not_rewrite_existing_file() {
         let dir = unique_temp_dir("ratd_load_config_read_only");
         let config_path = dir.join("rat.toml");
 
@@ -520,7 +536,9 @@ text_id = 255
 "#;
         fs::write(&config_path, raw).expect("write config");
 
-        let _cfg = load_config(&config_path.to_string_lossy()).expect("load");
+        let _cfg = load_config(&config_path.to_string_lossy())
+            .await
+            .expect("load");
         let after = fs::read_to_string(&config_path).expect("read config");
         assert_eq!(after, raw);
 
@@ -528,13 +546,15 @@ text_id = 255
         let _ = fs::remove_dir_all(dir);
     }
 
-    #[test]
-    fn load_config_does_not_create_file_when_missing() {
+    #[tokio::test]
+    async fn load_config_does_not_create_file_when_missing() {
         let dir = unique_temp_dir("ratd_load_config_missing");
         let config_path = dir.join("rat.toml");
         assert!(!config_path.exists());
 
-        let _cfg = load_config(&config_path.to_string_lossy()).expect("load default");
+        let _cfg = load_config(&config_path.to_string_lossy())
+            .await
+            .expect("load default");
         assert!(!config_path.exists());
 
         let _ = fs::remove_dir_all(dir);

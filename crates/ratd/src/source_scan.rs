@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use rat_config::RatdSourceConfig;
 use tokio::net::TcpStream;
+use tokio::task::JoinSet;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourceCandidate {
@@ -23,10 +24,19 @@ pub async fn discover_sources(config: &RatdSourceConfig) -> Vec<SourceCandidate>
     }
 
     let timeout = Duration::from_millis(config.scan_timeout_ms.max(1));
-    let mut candidates = Vec::new();
+    let mut probe_tasks = JoinSet::new();
     for addr in addresses {
-        let reachable = probe_addr(&addr, timeout).await;
-        candidates.push(SourceCandidate { addr, reachable });
+        probe_tasks.spawn(async move {
+            let reachable = probe_addr(&addr, timeout).await;
+            SourceCandidate { addr, reachable }
+        });
+    }
+
+    let mut candidates = Vec::new();
+    while let Some(result) = probe_tasks.join_next().await {
+        if let Ok(candidate) = result {
+            candidates.push(candidate);
+        }
     }
 
     candidates.sort_by(|a, b| {
