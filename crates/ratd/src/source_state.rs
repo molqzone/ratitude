@@ -22,7 +22,7 @@ pub(crate) async fn build_state(config_path: String, cfg: RatitudeConfig) -> Res
 
 pub(crate) async fn refresh_source_candidates(state: &mut DaemonState) {
     let candidates = discover_sources(&state.config().ratd.source).await;
-    state.set_source_candidates(candidates);
+    state.source_mut().set_candidates(candidates);
 }
 
 pub(crate) fn select_active_source(

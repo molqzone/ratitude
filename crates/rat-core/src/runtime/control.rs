@@ -4,7 +4,7 @@ use tokio::time::Instant as TokioInstant;
 use tracing::{debug, info};
 
 use crate::protocol_engine::{
-    build_dynamic_packet_def, ProtocolEngineError, RatProtocolEngine, RuntimeDynamicFieldDef,
+    ProtocolEngine, ProtocolEngineError, RuntimeDynamicFieldDef, RuntimeDynamicPacketDef,
 };
 
 use super::{RuntimeError, RuntimeFieldDef, RuntimePacketDef};
@@ -31,7 +31,7 @@ pub(crate) enum ControlOutcome {
 pub(crate) fn handle_control_payload(
     payload: &[u8],
     schema_state: &mut SchemaState,
-    protocol: &mut RatProtocolEngine,
+    protocol: &mut dyn ProtocolEngine,
 ) -> Result<ControlOutcome, RuntimeError> {
     match parse_control_message(payload)? {
         ControlMessage::Hello {
@@ -77,7 +77,7 @@ pub(crate) fn handle_control_payload(
 }
 
 fn register_runtime_schema(
-    protocol: &mut RatProtocolEngine,
+    protocol: &mut dyn ProtocolEngine,
     packets: &[RuntimePacketDef],
 ) -> Result<(), RuntimeError> {
     protocol.clear_dynamic_registry();
@@ -103,13 +103,13 @@ fn register_runtime_schema(
             .collect::<Vec<RuntimeDynamicFieldDef>>();
 
         protocol
-            .register_dynamic(build_dynamic_packet_def(
-                packet.id as u8,
-                packet.struct_name.clone(),
-                packet.packed,
-                packet.byte_size,
+            .register_dynamic(RuntimeDynamicPacketDef {
+                id: packet.id as u8,
+                struct_name: packet.struct_name.clone(),
+                packed: packet.packed,
+                byte_size: packet.byte_size,
                 fields,
-            ))
+            })
             .map_err(|err| RuntimeError::PacketRegisterFailed {
                 id: packet.id,
                 struct_name: packet.struct_name.clone(),

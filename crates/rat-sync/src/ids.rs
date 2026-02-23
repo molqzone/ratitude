@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::fmt::Write as _;
 
 use rat_config::{FieldDef, GeneratedPacketDef};
 
@@ -66,18 +65,16 @@ fn compute_signature_hash_parts(
     byte_size: usize,
     fields: &[FieldDef],
 ) -> u64 {
-    let mut signature = String::new();
-    let _ = write!(
-        signature,
-        "{}|{}|{}|{}",
-        struct_name, packet_type, packed, byte_size
-    );
+    let mut signature = format!("{struct_name}|{packet_type}|{packed}|{byte_size}");
     for field in fields {
-        let _ = write!(
-            signature,
-            "|{}:{}:{}:{}",
-            field.name, field.c_type, field.offset, field.size
-        );
+        signature.push('|');
+        signature.push_str(&field.name);
+        signature.push(':');
+        signature.push_str(&field.c_type);
+        signature.push(':');
+        signature.push_str(&field.offset.to_string());
+        signature.push(':');
+        signature.push_str(&field.size.to_string());
     }
     fnv1a64(signature.as_bytes())
 }

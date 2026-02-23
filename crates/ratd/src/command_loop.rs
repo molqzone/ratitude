@@ -27,8 +27,8 @@ pub(crate) async fn handle_console_command(
         ConsoleCommand::Status => {
             let output = output_manager.snapshot();
             println!("status:");
-            println!("  source: {}", state.active_source());
-            println!("  packets: {}", state.runtime_schema().packet_count());
+            println!("  source: {}", state.source().active_addr());
+            println!("  packets: {}", state.runtime().schema().packet_count());
             println!(
                 "  jsonl: {}",
                 if output.jsonl_enabled { "on" } else { "off" }
@@ -41,31 +41,31 @@ pub(crate) async fn handle_console_command(
         }
         ConsoleCommand::SourceList => {
             refresh_source_candidates(state).await;
-            render_candidates(state.source_candidates());
+            render_candidates(state.source().candidates());
         }
         ConsoleCommand::SourceUse(index) => {
             refresh_source_candidates(state).await;
-            let Some(candidate) = state.source_candidate(index).cloned() else {
+            let Some(candidate) = state.source().candidate(index).cloned() else {
                 println!("invalid source index: {}", index);
-                render_candidates(state.source_candidates());
+                render_candidates(state.source().candidates());
                 return Ok(action);
             };
             state.select_active_source(candidate.addr.clone());
             save_config(state.config_path(), state.config()).await?;
-            println!("selected source: {}", state.active_source());
+            println!("selected source: {}", state.source().active_addr());
             action.restart_runtime = true;
         }
         ConsoleCommand::Foxglove(enabled) => {
             output_manager.set_foxglove(enabled, None)?;
-            state.config_mut().ratd.outputs.foxglove.enabled = enabled;
+            state.set_foxglove_enabled(enabled);
             save_config(state.config_path(), state.config()).await?;
             println!("foxglove output: {}", if enabled { "on" } else { "off" });
         }
         ConsoleCommand::Jsonl { enabled, path } => {
             output_manager.set_jsonl(enabled, path.clone())?;
-            state.config_mut().ratd.outputs.jsonl.enabled = enabled;
+            state.set_jsonl_enabled(enabled);
             if let Some(path) = path {
-                state.config_mut().ratd.outputs.jsonl.path = path;
+                state.set_jsonl_path(path);
             }
             save_config(state.config_path(), state.config()).await?;
             println!("jsonl output: {}", if enabled { "on" } else { "off" });
@@ -75,7 +75,8 @@ pub(crate) async fn handle_console_command(
             field_name,
         } => {
             let packet = state
-                .runtime_schema()
+                .runtime()
+                .schema()
                 .packets()
                 .iter()
                 .find(|packet| packet.struct_name.eq_ignore_ascii_case(&struct_name));

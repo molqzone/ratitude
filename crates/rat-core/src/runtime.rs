@@ -134,15 +134,31 @@ impl IngestRuntime {
 
         shutdown.cancel();
         listener_task.abort();
-        let _ = listener_task.await;
+        if let Err(err) = listener_task.await {
+            if !err.is_cancelled() {
+                warn!(error = %err, "listener task join failed during runtime shutdown");
+            }
+        }
         if join_consumer {
-            let _ = consume_task.await;
+            if let Err(err) = consume_task.await {
+                if !err.is_cancelled() {
+                    warn!(error = %err, "consumer task join failed during runtime shutdown");
+                }
+            }
         }
     }
 }
 
 pub async fn start_ingest_runtime(cfg: IngestRuntimeConfig) -> Result<IngestRuntime, RuntimeError> {
-    let protocol = build_protocol_engine(cfg.text_packet_id);
+    start_ingest_runtime_with_protocol(cfg, Box::new(RatProtocolEngine::new())).await
+}
+
+async fn start_ingest_runtime_with_protocol(
+    cfg: IngestRuntimeConfig,
+    mut protocol: Box<dyn ProtocolEngine>,
+) -> Result<IngestRuntime, RuntimeError> {
+    protocol.set_text_packet_id(cfg.text_packet_id);
+    protocol.clear_dynamic_registry();
 
     let shutdown = CancellationToken::new();
     let hub = Hub::new(cfg.hub_buffer.max(1));
@@ -171,17 +187,10 @@ pub async fn start_ingest_runtime(cfg: IngestRuntimeConfig) -> Result<IngestRunt
     })
 }
 
-fn build_protocol_engine(text_packet_id: u8) -> RatProtocolEngine {
-    let mut protocol = RatProtocolEngine::new();
-    protocol.set_text_packet_id(text_packet_id);
-    protocol.clear_dynamic_registry();
-    protocol
-}
-
 fn spawn_frame_consumer_monitor(
     receiver: mpsc::Receiver<Vec<u8>>,
     hub: Hub,
-    protocol: RatProtocolEngine,
+    protocol: Box<dyn ProtocolEngine>,
     shutdown: CancellationToken,
     schema_timeout: Duration,
     unknown_window: Duration,
@@ -224,7 +233,7 @@ fn spawn_frame_consumer_monitor(
 async fn run_frame_consumer(
     mut receiver: mpsc::Receiver<Vec<u8>>,
     hub: Hub,
-    mut protocol: RatProtocolEngine,
+    mut protocol: Box<dyn ProtocolEngine>,
     shutdown: CancellationToken,
     schema_timeout: Duration,
     unknown_window: Duration,
@@ -261,7 +270,8 @@ async fn run_frame_consumer(
                 let payload = decoded[1..].to_vec();
 
                 if id == CONTROL_PACKET_ID {
-                    let control_outcome = handle_control_payload(&payload, &mut schema_state, &mut protocol)?;
+                    let control_outcome =
+                        handle_control_payload(&payload, &mut schema_state, protocol.as_mut())?;
                     match control_outcome {
                         ControlOutcome::SchemaReset => {
                             unknown_monitor = UnknownPacketMonitor::new(unknown_window, unknown_threshold);

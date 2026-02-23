@@ -24,11 +24,11 @@ pub(crate) async fn activate_runtime(
     }
 
     state.replace_config(load_config(state.config_path()).await?);
-    let runtime = start_runtime(state.config(), state.active_source()).await?;
-    state.clear_runtime_schema();
+    let runtime = start_runtime(state.config(), state.source().active_addr()).await?;
+    state.runtime_mut().clear_schema();
     info!(
-        source = %state.active_source(),
-        packets = state.runtime_schema().packet_count(),
+        source = %state.source().active_addr(),
+        packets = state.runtime().schema().packet_count(),
         "ingest runtime started"
     );
     Ok(runtime)
@@ -42,9 +42,12 @@ pub(crate) async fn apply_schema_ready(
     packets: Vec<RuntimePacketDef>,
 ) -> Result<()> {
     let packet_defs = runtime_packets_to_packet_defs(packets);
-    state.runtime_schema_mut().replace(schema_hash, packet_defs);
+    state
+        .runtime_mut()
+        .schema_mut()
+        .replace(schema_hash, packet_defs);
     output_manager
-        .apply(runtime.hub(), state.runtime_schema().packets().to_vec())
+        .apply(runtime.hub(), state.runtime().schema().packets().to_vec())
         .await
 }
 

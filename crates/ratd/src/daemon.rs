@@ -17,12 +17,105 @@ use crate::source_scan::{render_candidates, SourceCandidate};
 use crate::source_state::build_state;
 
 #[derive(Debug, Clone)]
+pub(crate) struct SourceDomainState {
+    candidates: Vec<SourceCandidate>,
+    active_addr: String,
+}
+
+impl SourceDomainState {
+    fn new(candidates: Vec<SourceCandidate>, active_addr: String) -> Self {
+        Self {
+            candidates,
+            active_addr,
+        }
+    }
+
+    pub(crate) fn candidates(&self) -> &[SourceCandidate] {
+        &self.candidates
+    }
+
+    pub(crate) fn candidate(&self, index: usize) -> Option<&SourceCandidate> {
+        self.candidates.get(index)
+    }
+
+    pub(crate) fn set_candidates(&mut self, candidates: Vec<SourceCandidate>) {
+        self.candidates = candidates;
+    }
+
+    pub(crate) fn active_addr(&self) -> &str {
+        &self.active_addr
+    }
+
+    pub(crate) fn set_active_addr(&mut self, addr: String) {
+        self.active_addr = addr;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct RuntimeDomainState {
+    schema: RuntimeSchemaState,
+}
+
+impl RuntimeDomainState {
+    fn new(schema: RuntimeSchemaState) -> Self {
+        Self { schema }
+    }
+
+    pub(crate) fn schema(&self) -> &RuntimeSchemaState {
+        &self.schema
+    }
+
+    pub(crate) fn schema_mut(&mut self) -> &mut RuntimeSchemaState {
+        &mut self.schema
+    }
+
+    pub(crate) fn clear_schema(&mut self) {
+        self.schema.clear();
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct OutputDomainState {
+    jsonl_enabled: bool,
+    jsonl_path: String,
+    foxglove_enabled: bool,
+}
+
+impl OutputDomainState {
+    fn from_config(cfg: &RatitudeConfig) -> Self {
+        Self {
+            jsonl_enabled: cfg.ratd.outputs.jsonl.enabled,
+            jsonl_path: cfg.ratd.outputs.jsonl.path.clone(),
+            foxglove_enabled: cfg.ratd.outputs.foxglove.enabled,
+        }
+    }
+
+    fn apply_to_config(&self, cfg: &mut RatitudeConfig) {
+        cfg.ratd.outputs.jsonl.enabled = self.jsonl_enabled;
+        cfg.ratd.outputs.jsonl.path = self.jsonl_path.clone();
+        cfg.ratd.outputs.foxglove.enabled = self.foxglove_enabled;
+    }
+
+    pub(crate) fn set_foxglove_enabled(&mut self, enabled: bool) {
+        self.foxglove_enabled = enabled;
+    }
+
+    pub(crate) fn set_jsonl_enabled(&mut self, enabled: bool) {
+        self.jsonl_enabled = enabled;
+    }
+
+    pub(crate) fn set_jsonl_path(&mut self, path: String) {
+        self.jsonl_path = path;
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct DaemonState {
     config_path: String,
     config: RatitudeConfig,
-    source_candidates: Vec<SourceCandidate>,
-    active_source: String,
-    runtime_schema: RuntimeSchemaState,
+    source: SourceDomainState,
+    runtime: RuntimeDomainState,
+    output: OutputDomainState,
 }
 
 impl DaemonState {
@@ -33,12 +126,13 @@ impl DaemonState {
         active_source: String,
         runtime_schema: RuntimeSchemaState,
     ) -> Self {
+        let output = OutputDomainState::from_config(&config);
         Self {
             config_path,
             config,
-            source_candidates,
-            active_source,
-            runtime_schema,
+            source: SourceDomainState::new(source_candidates, active_source),
+            runtime: RuntimeDomainState::new(runtime_schema),
+            output,
         }
     }
 
@@ -50,58 +144,61 @@ impl DaemonState {
         &self.config
     }
 
-    pub(crate) fn config_mut(&mut self) -> &mut RatitudeConfig {
-        &mut self.config
-    }
-
     pub(crate) fn replace_config(&mut self, config: RatitudeConfig) {
         self.config = config;
+        self.output = OutputDomainState::from_config(&self.config);
     }
 
-    pub(crate) fn source_candidates(&self) -> &[SourceCandidate] {
-        &self.source_candidates
+    pub(crate) fn source(&self) -> &SourceDomainState {
+        &self.source
     }
 
-    pub(crate) fn source_candidate(&self, index: usize) -> Option<&SourceCandidate> {
-        self.source_candidates.get(index)
+    pub(crate) fn source_mut(&mut self) -> &mut SourceDomainState {
+        &mut self.source
     }
 
-    pub(crate) fn set_source_candidates(&mut self, candidates: Vec<SourceCandidate>) {
-        self.source_candidates = candidates;
+    pub(crate) fn runtime(&self) -> &RuntimeDomainState {
+        &self.runtime
     }
 
-    pub(crate) fn active_source(&self) -> &str {
-        &self.active_source
+    pub(crate) fn runtime_mut(&mut self) -> &mut RuntimeDomainState {
+        &mut self.runtime
     }
 
     pub(crate) fn select_active_source(&mut self, addr: String) {
-        self.active_source = addr.clone();
+        self.source.set_active_addr(addr.clone());
         self.config.ratd.source.last_selected_addr = addr;
     }
 
-    pub(crate) fn runtime_schema(&self) -> &RuntimeSchemaState {
-        &self.runtime_schema
+    pub(crate) fn set_foxglove_enabled(&mut self, enabled: bool) {
+        self.output.set_foxglove_enabled(enabled);
+        self.output.apply_to_config(&mut self.config);
     }
 
-    pub(crate) fn runtime_schema_mut(&mut self) -> &mut RuntimeSchemaState {
-        &mut self.runtime_schema
+    pub(crate) fn set_jsonl_enabled(&mut self, enabled: bool) {
+        self.output.set_jsonl_enabled(enabled);
+        self.output.apply_to_config(&mut self.config);
     }
 
-    pub(crate) fn clear_runtime_schema(&mut self) {
-        self.runtime_schema.clear();
+    pub(crate) fn set_jsonl_path(&mut self, path: String) {
+        self.output.set_jsonl_path(path);
+        self.output.apply_to_config(&mut self.config);
     }
 }
 
 pub async fn run_daemon(cli: Cli) -> Result<()> {
     let cfg = load_config(&cli.config).await?;
     let mut state = build_state(cli.config.clone(), cfg).await?;
-    render_candidates(state.source_candidates());
+    render_candidates(state.source().candidates());
     let mut output_manager = OutputManager::from_config(state.config());
     let mut runtime = activate_runtime(None, &mut state, &mut output_manager).await?;
     let mut output_health_tick = tokio::time::interval(Duration::from_millis(200));
     output_health_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-    println!("ratd daemon started at source {}", state.active_source());
+    println!(
+        "ratd daemon started at source {}",
+        state.source().active_addr()
+    );
     println!("type `$help` to show available commands");
 
     let console_shutdown = CancellationToken::new();
@@ -139,9 +236,10 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
                         .await?;
                         println!(
                             "runtime schema ready: packets={}, hash=0x{:016X}",
-                            state.runtime_schema().packet_count(),
+                            state.runtime().schema().packet_count(),
                             state
-                                .runtime_schema()
+                                .runtime()
+                                .schema()
                                 .schema_hash()
                                 .unwrap_or(schema_hash)
                         );
@@ -243,9 +341,9 @@ mod tests {
         let state = build_state(config_path.to_string_lossy().to_string(), cfg)
             .await
             .expect("build state");
-        assert_eq!(state.active_source, "10.10.10.10:19021");
+        assert_eq!(state.source().active_addr(), "10.10.10.10:19021");
         assert_eq!(
-            state.config.ratd.source.last_selected_addr,
+            state.config().ratd.source.last_selected_addr,
             "10.10.10.10:19021"
         );
 
@@ -266,10 +364,10 @@ mod tests {
         cfg.ratd.source.scan_timeout_ms = 100;
         cfg.ratd.source.last_selected_addr = addr.clone();
 
-        let mut state = DaemonState {
-            config_path: String::new(),
-            config: cfg.clone(),
-            source_candidates: vec![
+        let mut state = DaemonState::new(
+            String::new(),
+            cfg.clone(),
+            vec![
                 SourceCandidate {
                     addr: "127.0.0.1:19021".to_string(),
                     reachable: false,
@@ -279,9 +377,9 @@ mod tests {
                     reachable: false,
                 },
             ],
-            active_source: addr.clone(),
-            runtime_schema: RuntimeSchemaState::default(),
-        };
+            addr.clone(),
+            RuntimeSchemaState::default(),
+        );
         let mut output_manager = OutputManager::from_config(&cfg);
         let action =
             handle_console_command(ConsoleCommand::SourceList, &mut state, &mut output_manager)
@@ -289,9 +387,9 @@ mod tests {
                 .expect("source list");
         assert!(!action.should_quit);
         assert!(!action.restart_runtime);
-        assert_eq!(state.source_candidates.len(), 1);
-        assert_eq!(state.source_candidates[0].addr, addr);
-        assert!(state.source_candidates[0].reachable);
+        assert_eq!(state.source().candidates().len(), 1);
+        assert_eq!(state.source().candidates()[0].addr, addr);
+        assert!(state.source().candidates()[0].reachable);
     }
 
     #[tokio::test]
@@ -305,10 +403,10 @@ mod tests {
         cfg.ratd.source.last_selected_addr = addr.clone();
 
         let original_active = addr.clone();
-        let mut state = DaemonState {
-            config_path: String::new(),
-            config: cfg.clone(),
-            source_candidates: vec![
+        let mut state = DaemonState::new(
+            String::new(),
+            cfg.clone(),
+            vec![
                 SourceCandidate {
                     addr: addr.clone(),
                     reachable: true,
@@ -318,9 +416,9 @@ mod tests {
                     reachable: true,
                 },
             ],
-            active_source: original_active.clone(),
-            runtime_schema: RuntimeSchemaState::default(),
-        };
+            original_active.clone(),
+            RuntimeSchemaState::default(),
+        );
         let mut output_manager = OutputManager::from_config(&cfg);
         let action = handle_console_command(
             ConsoleCommand::SourceUse(1),
@@ -335,9 +433,9 @@ mod tests {
             !action.restart_runtime,
             "index 1 should be invalid after refresh"
         );
-        assert_eq!(state.active_source, original_active);
-        assert_eq!(state.source_candidates.len(), 1);
-        assert_eq!(state.source_candidates[0].addr, addr);
+        assert_eq!(state.source().active_addr(), original_active);
+        assert_eq!(state.source().candidates().len(), 1);
+        assert_eq!(state.source().candidates()[0].addr, addr);
     }
 
     #[tokio::test]
@@ -351,13 +449,13 @@ mod tests {
             .save(&cfg)
             .expect("save config");
 
-        let mut state = DaemonState {
-            config_path: config_path_str.clone(),
-            config: cfg.clone(),
-            source_candidates: Vec::new(),
-            active_source: "127.0.0.1:19021".to_string(),
-            runtime_schema: RuntimeSchemaState::default(),
-        };
+        let mut state = DaemonState::new(
+            config_path_str.clone(),
+            cfg.clone(),
+            Vec::new(),
+            "127.0.0.1:19021".to_string(),
+            RuntimeSchemaState::default(),
+        );
         let mut output_manager = OutputManager::from_config(&cfg);
         let foxglove_action = handle_console_command(
             ConsoleCommand::Foxglove(true),
