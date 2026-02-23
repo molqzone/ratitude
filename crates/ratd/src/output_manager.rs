@@ -41,11 +41,15 @@ trait PacketSink {
 
 struct JsonlSink {
     task: Option<JoinHandle<()>>,
+    failure_rx: Option<mpsc::UnboundedReceiver<String>>,
 }
 
 impl JsonlSink {
     fn new() -> Self {
-        Self { task: None }
+        Self {
+            task: None,
+            failure_rx: None,
+        }
     }
 }
 
@@ -73,19 +77,34 @@ impl PacketSink for JsonlSink {
             Box::new(io::stdout())
         };
         let writer = Arc::new(Mutex::new(writer));
-        self.task = Some(spawn_jsonl_writer(context.hub.subscribe(), writer));
+        let (failure_tx, failure_rx) = mpsc::unbounded_channel::<String>();
+        self.task = Some(spawn_jsonl_writer(
+            context.hub.subscribe(),
+            writer,
+            failure_tx,
+        ));
+        self.failure_rx = Some(failure_rx);
 
         Ok(())
     }
 
     fn shutdown(&mut self) {
+        self.failure_rx = None;
         if let Some(task) = self.task.take() {
             task.abort();
         }
     }
 
     fn poll_failure(&mut self) -> Option<anyhow::Error> {
-        None
+        let Some(failure_rx) = self.failure_rx.as_mut() else {
+            return None;
+        };
+
+        match failure_rx.try_recv() {
+            Ok(reason) => Some(anyhow!("jsonl sink stopped: {reason}")),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => Some(anyhow!("jsonl sink stopped unexpectedly")),
+        }
     }
 }
 
@@ -272,7 +291,7 @@ fn validate_unique_sink_keys(sinks: &[Box<dyn PacketSink>]) {
     let mut seen = BTreeSet::new();
     for sink in sinks {
         let inserted = seen.insert(sink.key());
-        debug_assert!(inserted, "duplicate sink key in OutputManager");
+        assert!(inserted, "duplicate sink key in OutputManager");
     }
 }
 

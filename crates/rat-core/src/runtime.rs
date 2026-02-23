@@ -215,7 +215,13 @@ fn spawn_frame_consumer_monitor(
         };
 
         if let Some(err) = fatal {
-            let _ = signals.try_send(RuntimeSignal::Fatal(err));
+            if signals
+                .send(RuntimeSignal::Fatal(err.clone()))
+                .await
+                .is_err()
+            {
+                warn!(error = %err, "failed to deliver runtime fatal signal");
+            }
             shutdown.cancel();
         }
     })
@@ -271,10 +277,16 @@ async fn run_frame_consumer(
                             packets,
                         } => {
                             unknown_monitor = UnknownPacketMonitor::new(unknown_window, unknown_threshold);
-                            let _ = signals.try_send(RuntimeSignal::SchemaReady {
-                                schema_hash,
-                                packets,
-                            });
+                            if signals
+                                .send(RuntimeSignal::SchemaReady {
+                                    schema_hash,
+                                    packets,
+                                })
+                                .await
+                                .is_err()
+                            {
+                                return Err(RuntimeError::FrameConsumerStopped);
+                            }
                         }
                         ControlOutcome::Noop => {}
                     }

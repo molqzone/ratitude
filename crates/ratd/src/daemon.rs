@@ -1,20 +1,20 @@
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
-use rat_config::{ConfigStore, FieldDef, PacketDef, RatitudeConfig};
-use rat_core::{start_ingest_runtime, IngestRuntime, RuntimePacketDef, RuntimeSignal};
+use rat_config::RatitudeConfig;
+use rat_core::RuntimeSignal;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use crate::cli::Cli;
-use crate::console::{print_help, spawn_console_reader, ConsoleCommand};
+use crate::command_loop::handle_console_command;
+use crate::config_io::load_config;
+use crate::console::spawn_console_reader;
 use crate::output_manager::OutputManager;
+use crate::runtime_lifecycle::{activate_runtime, apply_schema_ready};
 use crate::runtime_schema::RuntimeSchemaState;
-use crate::runtime_spec::build_runtime_spec;
-use crate::source_scan::{discover_sources, render_candidates, SourceCandidate};
-
-const UNKNOWN_PACKET_WINDOW: Duration = Duration::from_secs(5);
-const UNKNOWN_PACKET_THRESHOLD: u32 = 20;
+use crate::source_scan::SourceCandidate;
+use crate::source_state::build_state;
 
 #[derive(Debug, Clone)]
 pub struct DaemonState {
@@ -61,11 +61,14 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
             maybe_signal = runtime.recv_signal() => {
                 match maybe_signal {
                     Some(RuntimeSignal::SchemaReady { schema_hash, packets }) => {
-                        let packet_defs = runtime_packets_to_packet_defs(packets);
-                        state.runtime_schema.replace(schema_hash, packet_defs);
-                        output_manager
-                            .apply(runtime.hub(), state.runtime_schema.packets().to_vec())
-                            .await?;
+                        apply_schema_ready(
+                            &mut state,
+                            &mut output_manager,
+                            &runtime,
+                            schema_hash,
+                            packets,
+                        )
+                        .await?;
                         println!(
                             "runtime schema ready: packets={}, hash=0x{:016X}",
                             state.runtime_schema.packet_count(),
@@ -94,229 +97,20 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
     Ok(())
 }
 
-#[derive(Default)]
-struct CommandAction {
-    should_quit: bool,
-    restart_runtime: bool,
-}
-
-async fn handle_console_command(
-    command: ConsoleCommand,
-    state: &mut DaemonState,
-    output_manager: &mut OutputManager,
-) -> Result<CommandAction> {
-    let mut action = CommandAction::default();
-
-    match command {
-        ConsoleCommand::Help => {
-            print_help();
-        }
-        ConsoleCommand::Status => {
-            let output = output_manager.snapshot();
-            println!("status:");
-            println!("  source: {}", state.active_source);
-            println!("  packets: {}", state.runtime_schema.packet_count());
-            println!(
-                "  jsonl: {}",
-                if output.jsonl_enabled { "on" } else { "off" }
-            );
-            println!(
-                "  foxglove: {} ({})",
-                if output.foxglove_enabled { "on" } else { "off" },
-                output.foxglove_ws_addr
-            );
-        }
-        ConsoleCommand::SourceList => {
-            refresh_source_candidates(state, true).await;
-        }
-        ConsoleCommand::SourceUse(index) => {
-            refresh_source_candidates(state, false).await;
-            let Some(candidate) = state.source_candidates.get(index) else {
-                println!("invalid source index: {}", index);
-                render_candidates(&state.source_candidates);
-                return Ok(action);
-            };
-            state.active_source = candidate.addr.clone();
-            state.config.ratd.source.last_selected_addr = candidate.addr.clone();
-            save_config(&state.config_path, &state.config).await?;
-            println!("selected source: {}", state.active_source);
-            action.restart_runtime = true;
-        }
-        ConsoleCommand::Foxglove(enabled) => {
-            output_manager.set_foxglove(enabled, None)?;
-            state.config.ratd.outputs.foxglove.enabled = enabled;
-            save_config(&state.config_path, &state.config).await?;
-            println!("foxglove output: {}", if enabled { "on" } else { "off" });
-        }
-        ConsoleCommand::Jsonl { enabled, path } => {
-            output_manager.set_jsonl(enabled, path.clone())?;
-            state.config.ratd.outputs.jsonl.enabled = enabled;
-            if let Some(path) = path {
-                state.config.ratd.outputs.jsonl.path = path;
-            }
-            save_config(&state.config_path, &state.config).await?;
-            println!("jsonl output: {}", if enabled { "on" } else { "off" });
-        }
-        ConsoleCommand::PacketLookup {
-            struct_name,
-            field_name,
-        } => {
-            let packet = state
-                .runtime_schema
-                .packets()
-                .iter()
-                .find(|packet| packet.struct_name.eq_ignore_ascii_case(&struct_name));
-            if let Some(packet) = packet {
-                let field = packet
-                    .fields
-                    .iter()
-                    .find(|field| field.name.eq_ignore_ascii_case(&field_name));
-                if let Some(field) = field {
-                    println!(
-                        "packet {} field {} => type={}, offset={}, size={}",
-                        packet.struct_name, field.name, field.c_type, field.offset, field.size
-                    );
-                } else {
-                    println!("field not found: {}", field_name);
-                }
-            } else {
-                println!("packet not found: {}", struct_name);
-            }
-        }
-        ConsoleCommand::Quit => {
-            action.should_quit = true;
-        }
-        ConsoleCommand::Unknown(raw) => {
-            println!("unknown command: {}", raw);
-        }
-    }
-
-    Ok(action)
-}
-
-async fn refresh_source_candidates(state: &mut DaemonState, render: bool) {
-    state.source_candidates = discover_sources(&state.config.ratd.source).await;
-    if render {
-        render_candidates(&state.source_candidates);
-    }
-}
-
-async fn activate_runtime(
-    old_runtime: Option<IngestRuntime>,
-    state: &mut DaemonState,
-    output_manager: &mut OutputManager,
-) -> Result<IngestRuntime> {
-    if let Some(old_runtime) = old_runtime {
-        output_manager.shutdown().await;
-        old_runtime.shutdown(false).await;
-    }
-
-    state.config = load_config(&state.config_path).await?;
-    let runtime = start_runtime(&state.config, &state.active_source).await?;
-    state.runtime_schema.clear();
-    info!(
-        source = %state.active_source,
-        packets = state.runtime_schema.packet_count(),
-        "ingest runtime started"
-    );
-    Ok(runtime)
-}
-
-async fn load_config(config_path: &str) -> Result<RatitudeConfig> {
-    let path = config_path.to_string();
-    tokio::task::spawn_blocking(move || -> Result<RatitudeConfig> {
-        let (cfg, _) = ConfigStore::new(path).load_or_default()?;
-        Ok(cfg)
-    })
-    .await
-    .context("failed to join config load task")?
-}
-
-async fn save_config(config_path: &str, config: &RatitudeConfig) -> Result<()> {
-    let path = config_path.to_string();
-    let config = config.clone();
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        ConfigStore::new(path).save(&config)?;
-        Ok(())
-    })
-    .await
-    .context("failed to join config save task")?
-}
-
-async fn build_state(config_path: String, cfg: RatitudeConfig) -> Result<DaemonState> {
-    let source_candidates = discover_sources(&cfg.ratd.source).await;
-    render_candidates(&source_candidates);
-
-    let active_source =
-        select_active_source(&source_candidates, &cfg.ratd.source.last_selected_addr)?;
-
-    Ok(DaemonState {
-        config_path,
-        config: cfg,
-        source_candidates,
-        active_source,
-        runtime_schema: RuntimeSchemaState::default(),
-    })
-}
-
-fn select_active_source(
-    candidates: &[SourceCandidate],
-    last_selected_addr: &str,
-) -> Result<String> {
-    if let Some(candidate) = candidates
-        .iter()
-        .find(|candidate| candidate.reachable && candidate.addr == last_selected_addr)
-    {
-        return Ok(candidate.addr.clone());
-    }
-    if let Some(candidate) = candidates.iter().find(|candidate| candidate.reachable) {
-        return Ok(candidate.addr.clone());
-    }
-    Err(anyhow!(
-        "no reachable RTT source detected; start RTT endpoint first"
-    ))
-}
-
-fn runtime_packets_to_packet_defs(runtime_packets: Vec<RuntimePacketDef>) -> Vec<PacketDef> {
-    runtime_packets
-        .into_iter()
-        .map(|packet| PacketDef {
-            id: packet.id,
-            struct_name: packet.struct_name,
-            packet_type: packet.packet_type,
-            packed: packet.packed,
-            byte_size: packet.byte_size,
-            source: "runtime-schema".to_string(),
-            fields: packet
-                .fields
-                .into_iter()
-                .map(|field| FieldDef {
-                    name: field.name,
-                    c_type: field.c_type,
-                    offset: field.offset,
-                    size: field.size,
-                })
-                .collect(),
-        })
-        .collect()
-}
-
-async fn start_runtime(cfg: &RatitudeConfig, addr: &str) -> Result<IngestRuntime> {
-    let spec = build_runtime_spec(cfg, addr, UNKNOWN_PACKET_WINDOW, UNKNOWN_PACKET_THRESHOLD)?;
-    start_ingest_runtime(spec.ingest_config)
-        .await
-        .map_err(|err| anyhow!(err.to_string()))
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use rat_config::ConfigStore;
     use tokio::net::TcpListener;
 
     use super::*;
+    use crate::command_loop::handle_console_command;
+    use crate::config_io::load_config;
+    use crate::console::ConsoleCommand;
+    use crate::source_state::{build_state, select_active_source};
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {
         let unique = SystemTime::now()

@@ -5,7 +5,7 @@ use serde::Serialize;
 use serde_json::Value;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 use crate::{PacketEnvelope, PacketPayload};
@@ -24,6 +24,7 @@ struct JsonRecord {
 pub fn spawn_jsonl_writer(
     mut receiver: broadcast::Receiver<PacketEnvelope>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    failure_tx: mpsc::UnboundedSender<String>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         loop {
@@ -37,13 +38,32 @@ pub fn spawn_jsonl_writer(
                         data,
                         text,
                     };
-
-                    if let Ok(line) = serde_json::to_string(&record) {
-                        if let Ok(mut guard) = writer.lock() {
-                            let _ = guard.write_all(line.as_bytes());
-                            let _ = guard.write_all(b"\n");
-                            let _ = guard.flush();
+                    let line = match serde_json::to_string(&record) {
+                        Ok(line) => line,
+                        Err(err) => {
+                            let _ =
+                                failure_tx.send(format!("serialize jsonl record failed: {err}"));
+                            break;
                         }
+                    };
+                    let mut guard = match writer.lock() {
+                        Ok(guard) => guard,
+                        Err(err) => {
+                            let _ = failure_tx.send(format!("jsonl writer lock poisoned: {err}"));
+                            break;
+                        }
+                    };
+                    if let Err(err) = guard.write_all(line.as_bytes()) {
+                        let _ = failure_tx.send(format!("write jsonl record failed: {err}"));
+                        break;
+                    }
+                    if let Err(err) = guard.write_all(b"\n") {
+                        let _ = failure_tx.send(format!("write jsonl newline failed: {err}"));
+                        break;
+                    }
+                    if let Err(err) = guard.flush() {
+                        let _ = failure_tx.send(format!("flush jsonl writer failed: {err}"));
+                        break;
                     }
                 }
                 Err(broadcast::error::RecvError::Closed) => break,

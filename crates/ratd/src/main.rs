@@ -1,10 +1,14 @@
 mod cli;
+mod command_loop;
+mod config_io;
 mod console;
 mod daemon;
 mod output_manager;
+mod runtime_lifecycle;
 mod runtime_schema;
 mod runtime_spec;
 mod source_scan;
+mod source_state;
 
 use anyhow::Result;
 use tracing::error;
