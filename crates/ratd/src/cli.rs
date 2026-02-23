@@ -35,7 +35,7 @@ fn reject_positional_subcommand(args: &[String]) -> Result<()> {
     if let Some(first) = args.get(1) {
         if !first.starts_with('-') {
             return Err(anyhow!(
-                "positional subcommands were removed in v0.2.0; start `ratd` and use console commands"
+                "positional subcommands are not supported; start `ratd` and use console commands"
             ));
         }
     }
@@ -54,10 +54,10 @@ mod tests {
 
     #[test]
     fn cli_rejects_removed_positional_mode() {
-        let err = parse_cli_from(["ratd", "legacy_mode"]).expect_err("must reject");
+        let err = parse_cli_from(["ratd", "old_mode"]).expect_err("must reject");
         assert!(err
             .to_string()
-            .contains("positional subcommands were removed"));
+            .contains("positional subcommands are not supported"));
     }
 
     #[test]

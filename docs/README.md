@@ -8,7 +8,7 @@
 4. [@rat 声明规范](./rat-annotation-spec.md)
 5. [路线图](./roadmap.md)
 
-## 新运行模型（v0.2）
+## 新运行模型
 
 运行顺序固定为：
 

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::compat::reject_deprecated_config_keys;
+use crate::compat::reject_removed_config_keys;
 use crate::paths::normalize_config_path;
 use crate::{resolve_config_paths, ConfigError, ConfigPaths, RatitudeConfig};
 
@@ -24,7 +24,7 @@ impl ConfigStore {
     pub fn load_or_default(&self) -> Result<(RatitudeConfig, bool), ConfigError> {
         match fs::read_to_string(&self.config_path) {
             Ok(raw) => {
-                reject_deprecated_config_keys(&raw)?;
+                reject_removed_config_keys(&raw)?;
                 let mut cfg: RatitudeConfig = toml::from_str(&raw).map_err(ConfigError::Parse)?;
                 cfg.normalize();
                 cfg.validate()?;

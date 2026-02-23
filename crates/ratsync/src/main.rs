@@ -169,8 +169,8 @@ typedef struct {
     }
 
     #[test]
-    fn execute_rejects_legacy_generation_toml_name() {
-        let dir = unique_temp_dir("ratsync_legacy_generation_toml_name");
+    fn execute_rejects_removed_generation_toml_name() {
+        let dir = unique_temp_dir("ratsync_removed_generation_toml_name");
         let config_path = dir.join("rat.toml");
         let config = r#"
 [project]
@@ -189,10 +189,10 @@ header_name = "rat_gen.h"
             scan_root: None,
         };
 
-        let err = execute(&cli).expect_err("legacy key should fail");
+        let err = execute(&cli).expect_err("removed key should fail");
         let msg = format!("{err:#}");
         assert!(msg.contains("generation.toml_name"));
-        assert!(msg.contains("rat_gen.toml is no longer generated"));
+        assert!(msg.contains("rat_gen.toml is not generated"));
 
         let _ = fs::remove_dir_all(&dir);
     }

@@ -12,6 +12,6 @@ jlink-rtt:
 	./tools/jlink_rtt_server.sh --device STM32F407ZG --if SWD --speed 4000 --rtt-port 19021
 
 mock:
-	@echo "mock target is deprecated and no longer supported"; \
+	@echo "mock target is removed and no longer supported"; \
 	echo "use real RTT endpoint with ratsync + ratd"; \
 	exit 1

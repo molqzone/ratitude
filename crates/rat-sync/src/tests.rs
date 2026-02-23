@@ -190,8 +190,8 @@ typedef struct {
 }
 
 #[test]
-fn sync_packets_fs_rejects_legacy_tag_syntax() {
-    let temp = std::env::temp_dir().join(format!("rat_sync_legacy_tag_{}", std::process::id()));
+fn sync_packets_fs_rejects_invalid_tag_syntax() {
+    let temp = std::env::temp_dir().join(format!("rat_sync_invalid_tag_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp);
     fs::create_dir_all(temp.join("src")).expect("mkdir");
 
@@ -206,8 +206,8 @@ typedef struct {
 "#;
     fs::write(temp.join("src").join("main.c"), source).expect("write source");
 
-    let err = sync_packets_fs(&config_path, None).expect_err("legacy syntax should fail");
-    assert!(err.to_string().contains("legacy @rat:id syntax"));
+    let err = sync_packets_fs(&config_path, None).expect_err("invalid syntax should fail");
+    assert!(err.to_string().contains("invalid @rat annotation syntax"));
 
     let _ = fs::remove_dir_all(&temp);
 }

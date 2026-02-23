@@ -75,7 +75,7 @@ typedef struct {
     }
 
     #[test]
-    fn parse_tagged_source_rejects_legacy_tag_syntax_without_filesystem() {
+    fn parse_tagged_source_rejects_invalid_tag_syntax_without_filesystem() {
         let src = br#"
 // @rat:id=0x01, type=plot
 typedef struct {
@@ -83,7 +83,38 @@ typedef struct {
 } RatSample;
 "#;
         let err = parse_tagged_source(Path::new("mem://demo.c"), src)
-            .expect_err("legacy syntax should fail");
-        assert!(err.to_string().contains("legacy @rat:id syntax"));
+            .expect_err("invalid syntax should fail");
+        assert!(err.to_string().contains("invalid @rat annotation syntax"));
+    }
+
+    #[test]
+    fn parse_tagged_source_rejects_trailing_text_after_annotation() {
+        let src = br#"
+// @rat, plot payload packet
+typedef struct {
+  int32_t value;
+} RatSample;
+"#;
+        let err = parse_tagged_source(Path::new("mem://demo.c"), src)
+            .expect_err("trailing text should fail");
+        assert!(err.to_string().contains("invalid @rat annotation syntax"));
+    }
+
+    #[test]
+    fn parse_tagged_source_accepts_whitespace_around_type_separator() {
+        let src = br#"
+//     @rat   ,    quat    
+typedef struct {
+  float x;
+  float y;
+  float z;
+  float w;
+} RatQuat;
+"#;
+        let parsed = parse_tagged_source(Path::new("mem://demo.c"), src)
+            .expect("parse")
+            .expect("tagged file");
+        assert_eq!(parsed.tags.len(), 1);
+        assert_eq!(parsed.tags[0].packet_type, "quat");
     }
 }

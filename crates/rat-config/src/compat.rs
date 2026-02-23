@@ -1,9 +1,9 @@
 use crate::ConfigError;
 
-pub(crate) fn reject_deprecated_config_keys(raw: &str) -> Result<(), ConfigError> {
+pub(crate) fn reject_removed_config_keys(raw: &str) -> Result<(), ConfigError> {
     let value: toml::Value = toml::from_str(raw).map_err(ConfigError::Parse)?;
 
-    let mut deprecated_keys = Vec::new();
+    let mut removed_keys = Vec::new();
 
     if value
         .get("project")
@@ -11,7 +11,7 @@ pub(crate) fn reject_deprecated_config_keys(raw: &str) -> Result<(), ConfigError
         .map(|project| project.contains_key("ignore_dirs"))
         .unwrap_or(false)
     {
-        deprecated_keys.push("project.ignore_dirs");
+        removed_keys.push("project.ignore_dirs");
     }
 
     if value
@@ -20,15 +20,15 @@ pub(crate) fn reject_deprecated_config_keys(raw: &str) -> Result<(), ConfigError
         .map(|generation| generation.contains_key("toml_name"))
         .unwrap_or(false)
     {
-        deprecated_keys.push("generation.toml_name");
+        removed_keys.push("generation.toml_name");
     }
 
     if let Some(ratd) = value.get("ratd").and_then(toml::Value::as_table) {
         if ratd.contains_key("server") {
-            deprecated_keys.push("[ratd.server]");
+            removed_keys.push("[ratd.server]");
         }
         if ratd.contains_key("foxglove") {
-            deprecated_keys.push("[ratd.foxglove]");
+            removed_keys.push("[ratd.foxglove]");
         }
         if ratd
             .get("source")
@@ -36,7 +36,7 @@ pub(crate) fn reject_deprecated_config_keys(raw: &str) -> Result<(), ConfigError
             .map(|source| source.contains_key("preferred_backend"))
             .unwrap_or(false)
         {
-            deprecated_keys.push("ratd.source.preferred_backend");
+            removed_keys.push("ratd.source.preferred_backend");
         }
         if ratd
             .get("source")
@@ -44,7 +44,7 @@ pub(crate) fn reject_deprecated_config_keys(raw: &str) -> Result<(), ConfigError
             .map(|source| source.contains_key("backend"))
             .unwrap_or(false)
         {
-            deprecated_keys.push("[ratd.source.backend]");
+            removed_keys.push("[ratd.source.backend]");
         }
         if ratd
             .get("behavior")
@@ -52,7 +52,7 @@ pub(crate) fn reject_deprecated_config_keys(raw: &str) -> Result<(), ConfigError
             .map(|behavior| behavior.contains_key("auto_sync_on_start"))
             .unwrap_or(false)
         {
-            deprecated_keys.push("ratd.behavior.auto_sync_on_start");
+            removed_keys.push("ratd.behavior.auto_sync_on_start");
         }
         if ratd
             .get("behavior")
@@ -60,7 +60,7 @@ pub(crate) fn reject_deprecated_config_keys(raw: &str) -> Result<(), ConfigError
             .map(|behavior| behavior.contains_key("auto_sync_on_reset"))
             .unwrap_or(false)
         {
-            deprecated_keys.push("ratd.behavior.auto_sync_on_reset");
+            removed_keys.push("ratd.behavior.auto_sync_on_reset");
         }
         if ratd
             .get("behavior")
@@ -68,16 +68,16 @@ pub(crate) fn reject_deprecated_config_keys(raw: &str) -> Result<(), ConfigError
             .map(|behavior| behavior.contains_key("sync_debounce_ms"))
             .unwrap_or(false)
         {
-            deprecated_keys.push("ratd.behavior.sync_debounce_ms");
+            removed_keys.push("ratd.behavior.sync_debounce_ms");
         }
     }
 
-    if deprecated_keys.is_empty() {
+    if removed_keys.is_empty() {
         return Ok(());
     }
 
     Err(ConfigError::Validation(format!(
-        "deprecated config keys removed in v0.2.0: {}. Migrate ratd keys via docs/migrations/0.2.0-breaking.md, move path filters into .ratignore, and remove generation.toml_name because rat_gen.toml is no longer generated",
-        deprecated_keys.join(", ")
+        "removed config keys are not supported: {}. Use current rat.toml schema, move path filters into .ratignore, and remove generation.toml_name because rat_gen.toml is not generated",
+        removed_keys.join(", ")
     )))
 }

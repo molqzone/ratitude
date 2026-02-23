@@ -17,12 +17,10 @@ pub(crate) fn collect_comment_tags(
     source: &[u8],
     path: &Path,
 ) -> Result<Vec<TagMatch>, SyncError> {
-    let tag_re = Regex::new(r"@rat(?:\s*,\s*([A-Za-z_][A-Za-z0-9_]*))?")
-        .map_err(|err| SyncError::Validation(format!("invalid tag regex: {err}")))?;
-    let old_id_re = Regex::new(r"@rat\s*:\s*id\s*=")
-        .map_err(|err| SyncError::Validation(format!("invalid old-id regex: {err}")))?;
-    let old_type_re = Regex::new(r"@rat\s*,\s*type\s*=")
-        .map_err(|err| SyncError::Validation(format!("invalid old-type regex: {err}")))?;
+    let strict_tag_re = Regex::new(
+        r"(?s)^\s*(?://+|/\*)\s*@rat(?:\s*,\s*([A-Za-z_][A-Za-z0-9_]*))?\s*(?:\*/)?\s*$",
+    )
+    .map_err(|err| SyncError::Validation(format!("invalid tag regex: {err}")))?;
 
     let mut tags = Vec::new();
     walk_nodes(tree.root_node(), &mut |node| {
@@ -38,36 +36,12 @@ pub(crate) fn collect_comment_tags(
             return Ok(());
         }
 
-        if old_id_re.is_match(text) {
+        let Some(cap) = strict_tag_re.captures(text) else {
             return Err(SyncError::Validation(format!(
-                "legacy @rat:id syntax is not supported in {}:{}; use // @rat, <type>",
+                "invalid @rat annotation syntax in {}:{}; use // @rat, <type>",
                 path.display(),
                 node.start_position().row + 1
             )));
-        }
-        if old_type_re.is_match(text) {
-            return Err(SyncError::Validation(format!(
-                "legacy @rat, type= syntax is not supported in {}:{}; use // @rat, <type>",
-                path.display(),
-                node.start_position().row + 1
-            )));
-        }
-
-        let mut matches = tag_re.captures_iter(text);
-        let first = matches.next();
-        if first.is_none() {
-            return Ok(());
-        }
-        if matches.next().is_some() {
-            return Err(SyncError::Validation(format!(
-                "multiple @rat tags in one comment block at {}:{}",
-                path.display(),
-                node.start_position().row + 1
-            )));
-        }
-
-        let Some(cap) = first else {
-            return Ok(());
         };
 
         let raw_packet_type = cap.get(1).map(|value| value.as_str()).unwrap_or("plot");
@@ -80,16 +54,8 @@ pub(crate) fn collect_comment_tags(
             ))
         })?;
 
-        let matched = cap.get(0).ok_or_else(|| {
-            SyncError::Validation(format!(
-                "missing full tag capture at {}:{}",
-                path.display(),
-                node.start_position().row + 1
-            ))
-        })?;
-
         tags.push(TagMatch {
-            end_byte: node.start_byte() + matched.end(),
+            end_byte: node.end_byte(),
             packet_type,
             line: node.start_position().row + 1,
         });

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Deprecated mock entrypoint kept only for explicit migration guidance."""
+"""Removed mock entrypoint kept only as an explicit hard-stop."""
 
 import sys
 
 
 def main() -> int:
     sys.stderr.write(
-        "openocd_rtt_mock.py has been deprecated and is no longer supported.\n"
+        "openocd_rtt_mock.py is removed and no longer supported.\n"
         "Mock RTT pipeline was decommissioned.\n"
         "Use a real RTT endpoint, then run:\n"
         "  cargo run -p ratsync -- --config <path/to/rat.toml>\n"

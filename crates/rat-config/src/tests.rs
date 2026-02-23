@@ -97,8 +97,8 @@ fn validate_rejects_zero_scan_timeout() {
 }
 
 #[test]
-fn legacy_ratd_sections_are_rejected() {
-    let dir = unique_temp_dir("ratitude_cfg_legacy_sections");
+fn removed_ratd_sections_are_rejected() {
+    let dir = unique_temp_dir("ratitude_cfg_removed_sections");
     let path = dir.join("rat.toml");
     let raw = r#"
 [project]
@@ -120,19 +120,18 @@ ws_addr = "127.0.0.1:8765"
 "#;
     fs::write(&path, raw).expect("write config");
 
-    let err = load_or_default(&path).expect_err("legacy sections should fail");
+    let err = load_or_default(&path).expect_err("removed sections should fail");
     let msg = err.to_string();
-    assert!(msg.contains("deprecated config keys removed in v0.2.0"));
+    assert!(msg.contains("removed config keys are not supported"));
     assert!(msg.contains("[ratd.server]"));
     assert!(msg.contains("[ratd.foxglove]"));
-    assert!(msg.contains("docs/migrations/0.2.0-breaking.md"));
 
     let _ = fs::remove_file(path);
     let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
-fn preferred_backend_is_rejected_with_migration_hint() {
+fn preferred_backend_is_rejected_with_removal_hint() {
     let dir = unique_temp_dir("ratitude_cfg_preferred_backend");
     let path = dir.join("rat.toml");
     let raw = r#"
@@ -157,16 +156,15 @@ preferred_backend = "openocd"
 
     let err = load_or_default(&path).expect_err("preferred_backend should fail");
     let msg = err.to_string();
-    assert!(msg.contains("deprecated config keys removed in v0.2.0"));
+    assert!(msg.contains("removed config keys are not supported"));
     assert!(msg.contains("ratd.source.preferred_backend"));
-    assert!(msg.contains("docs/migrations/0.2.0-breaking.md"));
 
     let _ = fs::remove_file(path);
     let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
-fn ignore_dirs_is_rejected_with_ratignore_migration_hint() {
+fn ignore_dirs_is_rejected_with_ratignore_hint() {
     let dir = unique_temp_dir("ratitude_cfg_ignore_dirs");
     let path = dir.join("rat.toml");
     let raw = r#"
@@ -183,7 +181,7 @@ header_name = "rat_gen.h"
 
     let err = load_or_default(&path).expect_err("ignore_dirs should fail");
     let msg = err.to_string();
-    assert!(msg.contains("deprecated config keys removed in v0.2.0"));
+    assert!(msg.contains("removed config keys are not supported"));
     assert!(msg.contains("project.ignore_dirs"));
     assert!(msg.contains(".ratignore"));
 
@@ -192,7 +190,7 @@ header_name = "rat_gen.h"
 }
 
 #[test]
-fn source_backend_section_is_rejected_with_migration_hint() {
+fn source_backend_section_is_rejected_with_removal_hint() {
     let dir = unique_temp_dir("ratitude_cfg_source_backend");
     let path = dir.join("rat.toml");
     let raw = r#"
@@ -221,7 +219,7 @@ startup_timeout_ms = 5000
 
     let err = load_or_default(&path).expect_err("source backend section should fail");
     let msg = err.to_string();
-    assert!(msg.contains("deprecated config keys removed in v0.2.0"));
+    assert!(msg.contains("removed config keys are not supported"));
     assert!(msg.contains("[ratd.source.backend]"));
 
     let _ = fs::remove_file(path);
@@ -229,7 +227,7 @@ startup_timeout_ms = 5000
 }
 
 #[test]
-fn removed_sync_behavior_keys_are_rejected_with_migration_hint() {
+fn removed_sync_behavior_keys_are_rejected_with_removal_hint() {
     let dir = unique_temp_dir("ratitude_cfg_removed_sync_behavior");
     let path = dir.join("rat.toml");
     let raw = r#"
@@ -257,7 +255,7 @@ reader_buf = 65536
 
     let err = load_or_default(&path).expect_err("removed sync behavior keys should fail");
     let msg = err.to_string();
-    assert!(msg.contains("deprecated config keys removed in v0.2.0"));
+    assert!(msg.contains("removed config keys are not supported"));
     assert!(msg.contains("ratd.behavior.auto_sync_on_start"));
     assert!(msg.contains("ratd.behavior.auto_sync_on_reset"));
     assert!(msg.contains("ratd.behavior.sync_debounce_ms"));
@@ -267,7 +265,7 @@ reader_buf = 65536
 }
 
 #[test]
-fn generation_toml_name_is_rejected_with_migration_hint() {
+fn generation_toml_name_is_rejected_with_removal_hint() {
     let dir = unique_temp_dir("ratitude_cfg_generation_toml_name");
     let path = dir.join("rat.toml");
     let raw = r#"
@@ -284,9 +282,9 @@ header_name = "rat_gen.h"
 
     let err = load_or_default(&path).expect_err("generation.toml_name should fail");
     let msg = err.to_string();
-    assert!(msg.contains("deprecated config keys removed in v0.2.0"));
+    assert!(msg.contains("removed config keys are not supported"));
     assert!(msg.contains("generation.toml_name"));
-    assert!(msg.contains("rat_gen.toml is no longer generated"));
+    assert!(msg.contains("rat_gen.toml is not generated"));
 
     let _ = fs::remove_file(path);
     let _ = fs::remove_dir_all(dir);

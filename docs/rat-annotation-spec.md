@@ -30,7 +30,7 @@ typedef struct {
 
 ## 2. 限制
 
-- 不支持旧语法 `@rat:id=...` 与 `@rat, type=...`
+- 不支持 `@rat:id=...` 与 `@rat, type=...`
 - 不支持 `aligned(...)` / `#pragma pack`
 - 非 `packed` 且存在 padding / 8 字节字段风险会被阻断
 

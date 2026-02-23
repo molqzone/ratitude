@@ -3,7 +3,7 @@ param(
 )
 
 Write-Error @"
-run_mock_foxglove.ps1 has been deprecated and is no longer supported.
+run_mock_foxglove.ps1 is removed and no longer supported.
 Mock RTT pipeline was decommissioned.
 Use a real RTT endpoint, then run:
   cargo run -p ratsync -- --config <path/to/rat.toml>
