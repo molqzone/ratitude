@@ -30,6 +30,8 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
     let mut state = build_state(cli.config.clone(), cfg).await?;
     let mut output_manager = OutputManager::from_config(&state.config);
     let mut runtime = activate_runtime(None, &mut state, &mut output_manager).await?;
+    let mut output_health_tick = tokio::time::interval(Duration::from_millis(200));
+    output_health_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     println!("ratd daemon started at source {}", state.active_source);
     println!("type `$help` to show available commands");
@@ -76,6 +78,11 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
                     None => {
                         return Err(anyhow!("ingest runtime signal channel closed"));
                     }
+                }
+            }
+            _ = output_health_tick.tick() => {
+                if let Some(err) = output_manager.poll_failure() {
+                    return Err(anyhow!("output sink failure: {err}"));
                 }
             }
         }
@@ -207,9 +214,6 @@ async fn activate_runtime(
     state.config = load_config(&state.config_path).await?;
     let runtime = start_runtime(&state.config, &state.active_source).await?;
     state.runtime_schema.clear();
-    output_manager
-        .apply(runtime.hub(), state.runtime_schema.packets().to_vec())
-        .await?;
     info!(
         source = %state.active_source,
         packets = state.runtime_schema.packet_count(),

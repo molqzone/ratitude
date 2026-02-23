@@ -1,8 +1,7 @@
 use std::fmt::Write as _;
 
 use rat_config::{GeneratedConfig, GeneratedPacketDef};
-
-use crate::ids::fnv1a64;
+use rat_protocol::hash_schema_bytes;
 
 pub(crate) fn build_runtime_schema_toml(generated: &GeneratedConfig) -> String {
     build_runtime_schema_toml_from_packets(&generated.packets)
@@ -41,7 +40,7 @@ pub(crate) fn build_runtime_schema_toml_from_packets(packets: &[GeneratedPacketD
 
 pub(crate) fn compute_runtime_schema_hash_from_packets(packets: &[GeneratedPacketDef]) -> u64 {
     let schema_toml = build_runtime_schema_toml_from_packets(packets);
-    fnv1a64(schema_toml.as_bytes())
+    hash_schema_bytes(schema_toml.as_bytes())
 }
 
 fn escape_toml_string(value: &str) -> String {

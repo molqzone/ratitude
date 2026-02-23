@@ -17,10 +17,11 @@ use crate::{spawn_listener, Hub, ListenerOptions};
 use self::control::{handle_control_payload, ControlOutcome, SchemaState, CONTROL_PACKET_ID};
 #[cfg(test)]
 use self::control::{
-    hash_schema_bytes, CONTROL_HELLO, CONTROL_MAGIC, CONTROL_SCHEMA_CHUNK, CONTROL_SCHEMA_COMMIT,
-    CONTROL_VERSION,
+    CONTROL_HELLO, CONTROL_MAGIC, CONTROL_SCHEMA_CHUNK, CONTROL_SCHEMA_COMMIT, CONTROL_VERSION,
 };
 use self::unknown_monitor::UnknownPacketMonitor;
+#[cfg(test)]
+use rat_protocol::hash_schema_bytes;
 
 const SIGNAL_BUFFER: usize = 8;
 

@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 rat-config = { path = "../rat-config" }
+rat-protocol = { path = "../rat-protocol" }
 regex.workspace = true
 thiserror.workspace = true
 tree-sitter.workspace = true

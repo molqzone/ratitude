@@ -1,3 +1,4 @@
+use rat_protocol::hash_schema_bytes;
 use serde::Deserialize;
 use tokio::time::Instant as TokioInstant;
 use tracing::{debug, info};
@@ -465,16 +466,4 @@ fn parse_runtime_packets_from_schema(
                 .collect(),
         })
         .collect())
-}
-
-pub(crate) fn hash_schema_bytes(bytes: &[u8]) -> u64 {
-    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-    const FNV_PRIME: u64 = 0x0000_0100_0000_01B3;
-
-    let mut hash = FNV_OFFSET;
-    for byte in bytes {
-        hash ^= *byte as u64;
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-    hash
 }

@@ -4,6 +4,7 @@ use std::time::Duration;
 use rat_config::RatdSourceConfig;
 use tokio::net::TcpStream;
 use tokio::task::JoinSet;
+use tracing::warn;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourceCandidate {
@@ -34,8 +35,9 @@ pub async fn discover_sources(config: &RatdSourceConfig) -> Vec<SourceCandidate>
 
     let mut candidates = Vec::new();
     while let Some(result) = probe_tasks.join_next().await {
-        if let Ok(candidate) = result {
-            candidates.push(candidate);
+        match result {
+            Ok(candidate) => candidates.push(candidate),
+            Err(err) => warn!(error = %err, "source probe task failed"),
         }
     }
 

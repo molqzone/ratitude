@@ -3,10 +3,12 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use rat_bridge_foxglove::{run_bridge, BridgeConfig};
 use rat_config::{PacketDef, RatitudeConfig};
 use rat_core::{spawn_jsonl_writer, Hub};
+use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::TryRecvError;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -34,6 +36,7 @@ trait PacketSink {
     fn key(&self) -> SinkKey;
     fn sync(&mut self, desired: &OutputState, context: Option<&SinkContext>) -> Result<()>;
     fn shutdown(&mut self);
+    fn poll_failure(&mut self) -> Option<anyhow::Error>;
 }
 
 struct JsonlSink {
@@ -80,11 +83,16 @@ impl PacketSink for JsonlSink {
             task.abort();
         }
     }
+
+    fn poll_failure(&mut self) -> Option<anyhow::Error> {
+        None
+    }
 }
 
 struct FoxgloveSink {
-    task: Option<JoinHandle<Result<()>>>,
+    task: Option<JoinHandle<()>>,
     shutdown: Option<CancellationToken>,
+    failure_rx: Option<mpsc::UnboundedReceiver<String>>,
 }
 
 impl FoxgloveSink {
@@ -92,6 +100,7 @@ impl FoxgloveSink {
         Self {
             task: None,
             shutdown: None,
+            failure_rx: None,
         }
     }
 }
@@ -116,24 +125,43 @@ impl PacketSink for FoxgloveSink {
         let bridge_cfg = BridgeConfig {
             ws_addr: desired.foxglove_ws_addr.clone(),
         };
-        let task = tokio::spawn(run_bridge(
-            bridge_cfg,
-            context.packets.clone(),
-            context.hub.clone(),
-            shutdown.clone(),
-        ));
+        let packets = context.packets.clone();
+        let hub = context.hub.clone();
+        let bridge_shutdown = shutdown.clone();
+        let (failure_tx, failure_rx) = mpsc::unbounded_channel::<String>();
+        let task = tokio::spawn(async move {
+            if let Err(err) = run_bridge(bridge_cfg, packets, hub, bridge_shutdown).await {
+                let _ = failure_tx.send(err.to_string());
+            }
+        });
         self.task = Some(task);
         self.shutdown = Some(shutdown);
+        self.failure_rx = Some(failure_rx);
 
         Ok(())
     }
 
     fn shutdown(&mut self) {
+        self.failure_rx = None;
         if let Some(shutdown) = self.shutdown.take() {
             shutdown.cancel();
         }
         if let Some(task) = self.task.take() {
             task.abort();
+        }
+    }
+
+    fn poll_failure(&mut self) -> Option<anyhow::Error> {
+        let Some(failure_rx) = self.failure_rx.as_mut() else {
+            return None;
+        };
+
+        match failure_rx.try_recv() {
+            Ok(reason) => Some(anyhow!("foxglove bridge stopped: {reason}")),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => {
+                Some(anyhow!("foxglove bridge stopped unexpectedly"))
+            }
         }
     }
 }
@@ -162,6 +190,15 @@ impl OutputManager {
             vec![Box::new(JsonlSink::new()), Box::new(FoxgloveSink::new())];
         validate_unique_sink_keys(&sinks);
 
+        Self {
+            desired,
+            context: None,
+            sinks,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_sinks_for_test(desired: OutputState, sinks: Vec<Box<dyn PacketSink>>) -> Self {
         Self {
             desired,
             context: None,
@@ -207,6 +244,15 @@ impl OutputManager {
         }
     }
 
+    pub fn poll_failure(&mut self) -> Option<anyhow::Error> {
+        for sink in &mut self.sinks {
+            if let Some(err) = sink.poll_failure() {
+                return Some(err);
+            }
+        }
+        None
+    }
+
     fn reconcile_all(&mut self) -> Result<()> {
         for sink in &mut self.sinks {
             sink.sync(&self.desired, self.context.as_ref())?;
@@ -227,5 +273,51 @@ fn validate_unique_sink_keys(sinks: &[Box<dyn PacketSink>]) {
     for sink in sinks {
         let inserted = seen.insert(sink.key());
         debug_assert!(inserted, "duplicate sink key in OutputManager");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FailOnceSink {
+        failed: bool,
+    }
+
+    impl PacketSink for FailOnceSink {
+        fn key(&self) -> SinkKey {
+            SinkKey::Jsonl
+        }
+
+        fn sync(&mut self, _desired: &OutputState, _context: Option<&SinkContext>) -> Result<()> {
+            Ok(())
+        }
+
+        fn shutdown(&mut self) {}
+
+        fn poll_failure(&mut self) -> Option<anyhow::Error> {
+            if self.failed {
+                return None;
+            }
+            self.failed = true;
+            Some(anyhow!("sink failed"))
+        }
+    }
+
+    #[test]
+    fn poll_failure_returns_sink_error_once() {
+        let mut manager = OutputManager::with_sinks_for_test(
+            OutputState {
+                jsonl_enabled: false,
+                jsonl_path: None,
+                foxglove_enabled: false,
+                foxglove_ws_addr: "127.0.0.1:8765".to_string(),
+            },
+            vec![Box::new(FailOnceSink { failed: false })],
+        );
+
+        let first = manager.poll_failure().expect("first failure");
+        assert!(first.to_string().contains("sink failed"));
+        assert!(manager.poll_failure().is_none());
     }
 }

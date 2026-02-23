@@ -1028,6 +1028,7 @@ version = "0.1.0"
 dependencies = [
  "glob",
  "rat-config",
+ "rat-protocol",
  "regex",
  "thiserror 2.0.18",
  "toml",
