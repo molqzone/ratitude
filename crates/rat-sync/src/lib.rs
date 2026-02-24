@@ -7,6 +7,7 @@ mod assembler;
 mod ast;
 mod discover;
 mod fs_adapter;
+mod generated;
 mod header;
 mod ids;
 mod layout;
@@ -18,6 +19,7 @@ mod scanner;
 mod schema;
 
 pub use fs_adapter::sync_packets_fs;
+pub use generated::{GeneratedConfig, GeneratedMeta, GeneratedPacketDef};
 pub use model::{DiscoveredPacket, SyncFsResult, SyncPipelineInput, SyncPipelineOutput};
 pub use pipeline::run_sync_pipeline;
 

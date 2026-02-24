@@ -5,6 +5,7 @@ use std::path::Path;
 use rat_config::{FieldDef, PacketType};
 
 use crate::ast::align_up;
+use crate::generated::GeneratedMeta;
 use crate::ids::{compute_signature_hash, fnv1a64, select_fresh_packet_id};
 use crate::layout::detect_packed_layout;
 use crate::model::{DiscoveredPacket, SyncPipelineInput};
@@ -163,6 +164,18 @@ fn packed_detection_is_explicit() {
 
     let packed_keyword = "typedef __packed struct { int32_t value; } Foo;";
     assert!(detect_packed_layout(packed_keyword));
+}
+
+#[test]
+fn generated_meta_rejects_removed_fingerprint_key() {
+    let raw = r#"
+project = "demo"
+fingerprint = "0x1122334455667788"
+"#;
+    let err = toml::from_str::<GeneratedMeta>(raw).expect_err("fingerprint key should fail");
+    let msg = err.to_string();
+    assert!(msg.contains("unknown field"));
+    assert!(msg.contains("fingerprint"));
 }
 
 fn write_test_config(path: &Path, scan_root: &str) {

@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use rat_protocol::PacketType;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -7,6 +9,8 @@ pub const DEFAULT_GENERATED_HEADER_NAME: &str = "rat_gen.h";
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
+    #[error("config file does not exist: {}", .0.display())]
+    NotFound(PathBuf),
     #[error("failed to read config: {0}")]
     Read(std::io::Error),
     #[error("failed to parse config: {0}")]
@@ -221,65 +225,4 @@ pub struct FieldDef {
     pub c_type: String,
     pub offset: usize,
     pub size: usize,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(default, deny_unknown_fields)]
-pub struct GeneratedMeta {
-    pub project: String,
-    pub schema_hash: String,
-}
-
-impl Default for GeneratedMeta {
-    fn default() -> Self {
-        Self {
-            project: String::new(),
-            schema_hash: String::new(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct GeneratedPacketDef {
-    pub id: u16,
-    pub signature_hash: String,
-    pub struct_name: String,
-    #[serde(rename = "type")]
-    pub packet_type: PacketType,
-    pub packed: bool,
-    pub byte_size: usize,
-    #[serde(default)]
-    pub source: String,
-    #[serde(default)]
-    pub fields: Vec<FieldDef>,
-}
-
-impl GeneratedPacketDef {
-    pub fn to_packet_def(&self) -> PacketDef {
-        PacketDef {
-            id: self.id,
-            struct_name: self.struct_name.clone(),
-            packet_type: self.packet_type,
-            packed: self.packed,
-            byte_size: self.byte_size,
-            source: self.source.clone(),
-            fields: self.fields.clone(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
-#[serde(default)]
-pub struct GeneratedConfig {
-    pub meta: GeneratedMeta,
-    pub packets: Vec<GeneratedPacketDef>,
-}
-
-impl GeneratedConfig {
-    pub fn to_packet_defs(&self) -> Vec<PacketDef> {
-        self.packets
-            .iter()
-            .map(GeneratedPacketDef::to_packet_def)
-            .collect()
-    }
 }

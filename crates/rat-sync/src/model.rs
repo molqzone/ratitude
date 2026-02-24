@@ -1,4 +1,6 @@
-use rat_config::{FieldDef, GeneratedConfig, GeneratedPacketDef, PacketType, RatitudeConfig};
+use rat_config::{FieldDef, PacketType, RatitudeConfig};
+
+use crate::generated::{GeneratedConfig, GeneratedPacketDef};
 
 #[derive(Debug, Clone)]
 pub struct DiscoveredPacket {

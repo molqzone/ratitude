@@ -7,6 +7,7 @@ edition = "2021"
 rat-config = { path = "../rat-config" }
 rat-protocol = { path = "../rat-protocol" }
 regex.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 tree-sitter.workspace = true
 tree-sitter-c.workspace = true

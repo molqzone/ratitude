@@ -1,5 +1,4 @@
-use rat_config::{GeneratedConfig, GeneratedMeta};
-
+use crate::generated::{GeneratedConfig, GeneratedMeta};
 use crate::ids::allocate_packet_ids;
 use crate::layout::{collect_layout_blockers, collect_layout_warnings};
 use crate::model::{SyncPipelineInput, SyncPipelineOutput};

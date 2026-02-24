@@ -1031,6 +1031,7 @@ dependencies = [
  "rat-config",
  "rat-protocol",
  "regex",
+ "serde",
  "thiserror 2.0.18",
  "toml",
  "tree-sitter",

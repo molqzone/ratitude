@@ -28,9 +28,9 @@ impl ConfigStore {
                 cfg.validate()?;
                 Ok(cfg)
             }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Err(ConfigError::Validation(
-                "config file does not exist".to_string(),
-            )),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                Err(ConfigError::NotFound(self.config_path.clone()))
+            }
             Err(err) => Err(ConfigError::Read(err)),
         }
     }

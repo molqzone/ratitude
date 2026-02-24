@@ -285,13 +285,14 @@ header_name = "rat_gen.h"
 }
 
 #[test]
-fn generated_meta_rejects_removed_fingerprint_key() {
-    let raw = r#"
-project = "demo"
-fingerprint = "0x1122334455667788"
-"#;
-    let err = toml::from_str::<GeneratedMeta>(raw).expect_err("fingerprint key should fail");
-    let msg = err.to_string();
-    assert!(msg.contains("unknown field"));
-    assert!(msg.contains("fingerprint"));
+fn load_missing_file_returns_not_found_error() {
+    let dir = unique_temp_dir("ratitude_cfg_missing_not_found");
+    let path = dir.join("rat.toml");
+    assert!(!path.exists());
+
+    let err = load(&path).expect_err("missing config should fail");
+    assert!(matches!(err, ConfigError::NotFound(_)));
+    assert!(err.to_string().contains("config file does not exist"));
+
+    let _ = fs::remove_dir_all(dir);
 }

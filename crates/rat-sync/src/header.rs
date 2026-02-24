@@ -2,8 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use rat_config::GeneratedConfig;
-
+use crate::generated::GeneratedConfig;
 use crate::schema::build_runtime_schema_toml;
 use crate::SyncError;
 
@@ -123,9 +122,10 @@ fn parse_schema_hash(raw: &str) -> Result<u64, SyncError> {
 mod tests {
     use std::fs;
 
-    use rat_config::{FieldDef, GeneratedMeta, GeneratedPacketDef, PacketType};
+    use rat_config::{FieldDef, PacketType};
 
     use super::*;
+    use crate::generated::{GeneratedMeta, GeneratedPacketDef};
 
     fn sample_generated() -> GeneratedConfig {
         let packets = vec![GeneratedPacketDef {

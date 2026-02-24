@@ -1,5 +1,6 @@
-use rat_config::{GeneratedConfig, GeneratedPacketDef};
 use rat_protocol::hash_schema_bytes;
+
+use crate::generated::{GeneratedConfig, GeneratedPacketDef};
 
 pub(crate) fn build_runtime_schema_toml(generated: &GeneratedConfig) -> String {
     build_runtime_schema_toml_from_packets(&generated.packets)

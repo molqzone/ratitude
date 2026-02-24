@@ -1,7 +1,8 @@
 use std::collections::BTreeSet;
 
-use rat_config::{FieldDef, GeneratedPacketDef, PacketType};
+use rat_config::{FieldDef, PacketType};
 
+use crate::generated::GeneratedPacketDef;
 use crate::model::DiscoveredPacket;
 use crate::{SyncError, RAT_ID_MAX, RAT_ID_MIN};
 
