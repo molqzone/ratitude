@@ -62,22 +62,52 @@ pub(crate) async fn handle_console_command(
             action.restart_runtime = true;
         }
         ConsoleCommand::Foxglove(enabled) => {
-            let mut next = state.config().clone();
+            let previous = state.config().clone();
+            let mut next = previous.clone();
             next.ratd.outputs.foxglove.enabled = enabled;
-            save_config(state.config_path(), &next).await?;
+            if let Err(apply_err) = output_manager.reload_from_config(&next) {
+                if let Err(rollback_err) = output_manager.reload_from_config(&previous) {
+                    return Err(apply_err.context(format!(
+                        "failed to rollback output state after foxglove apply failure: {rollback_err}"
+                    )));
+                }
+                return Err(apply_err.context("failed to apply foxglove output"));
+            }
+            if let Err(save_err) = save_config(state.config_path(), &next).await {
+                if let Err(rollback_err) = output_manager.reload_from_config(&previous) {
+                    return Err(save_err.context(format!(
+                        "failed to rollback output state after foxglove save failure: {rollback_err}"
+                    )));
+                }
+                return Err(save_err.context("failed to persist foxglove output config"));
+            }
             state.replace_config(next);
-            output_manager.reload_from_config(state.config())?;
             println!("foxglove output: {}", if enabled { "on" } else { "off" });
         }
         ConsoleCommand::Jsonl { enabled, path } => {
-            let mut next = state.config().clone();
+            let previous = state.config().clone();
+            let mut next = previous.clone();
             next.ratd.outputs.jsonl.enabled = enabled;
             if let Some(path) = path {
                 next.ratd.outputs.jsonl.path = path;
             }
-            save_config(state.config_path(), &next).await?;
+            if let Err(apply_err) = output_manager.reload_from_config(&next) {
+                if let Err(rollback_err) = output_manager.reload_from_config(&previous) {
+                    return Err(apply_err.context(format!(
+                        "failed to rollback output state after jsonl apply failure: {rollback_err}"
+                    )));
+                }
+                return Err(apply_err.context("failed to apply jsonl output"));
+            }
+            if let Err(save_err) = save_config(state.config_path(), &next).await {
+                if let Err(rollback_err) = output_manager.reload_from_config(&previous) {
+                    return Err(save_err.context(format!(
+                        "failed to rollback output state after jsonl save failure: {rollback_err}"
+                    )));
+                }
+                return Err(save_err.context("failed to persist jsonl output config"));
+            }
             state.replace_config(next);
-            output_manager.reload_from_config(state.config())?;
             println!("jsonl output: {}", if enabled { "on" } else { "off" });
         }
         ConsoleCommand::PacketLookup {

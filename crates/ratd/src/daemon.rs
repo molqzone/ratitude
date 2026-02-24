@@ -185,6 +185,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use rat_config::ConfigStore;
+    use rat_core::Hub;
     use tokio::net::TcpListener;
 
     use super::*;
@@ -390,6 +391,62 @@ mod tests {
         .expect("jsonl command");
         assert!(!jsonl_action.restart_runtime);
 
+        let _ = fs::remove_file(&config_path);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn jsonl_command_failure_does_not_persist_invalid_config() {
+        let dir = unique_temp_dir("ratd_jsonl_command_rollback");
+        let config_path = dir.join("rat.toml");
+        let config_path_str = config_path.to_string_lossy().to_string();
+
+        let cfg = RatitudeConfig::default();
+        ConfigStore::new(&config_path)
+            .save(&cfg)
+            .expect("save config");
+
+        let mut state = DaemonState::new(
+            config_path_str.clone(),
+            cfg.clone(),
+            SourceDomainState::new(Vec::new(), "127.0.0.1:19021".to_string()),
+        );
+        let mut output_manager = OutputManager::from_config(&cfg).expect("build output manager");
+        output_manager
+            .apply(Hub::new(8), Vec::new())
+            .await
+            .expect("attach runtime context");
+
+        let invalid_jsonl_path = config_path
+            .join("blocked.jsonl")
+            .to_string_lossy()
+            .to_string();
+        let result = handle_console_command(
+            ConsoleCommand::Jsonl {
+                enabled: true,
+                path: Some(invalid_jsonl_path.clone()),
+            },
+            &mut state,
+            &mut output_manager,
+        )
+        .await;
+        let err = match result {
+            Ok(_) => panic!("jsonl command should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("failed to apply jsonl output"));
+        assert_eq!(
+            state.config().ratd.outputs.jsonl.path,
+            cfg.ratd.outputs.jsonl.path
+        );
+
+        let raw = fs::read_to_string(&config_path).expect("read config");
+        assert!(
+            !raw.contains(&invalid_jsonl_path),
+            "invalid jsonl path must not be persisted on command failure"
+        );
+
+        output_manager.shutdown().await;
         let _ = fs::remove_file(&config_path);
         let _ = fs::remove_dir_all(dir);
     }
