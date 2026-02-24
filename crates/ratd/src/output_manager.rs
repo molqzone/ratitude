@@ -29,7 +29,6 @@ struct SinkContext {
     hub: Hub,
     packets: Vec<PacketDef>,
     key: SinkContextKey,
-    revision: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,7 +62,7 @@ struct JsonlSink {
 struct JsonlRuntimeState {
     enabled: bool,
     path: Option<String>,
-    context_revision: Option<u64>,
+    context_key: Option<SinkContextKey>,
 }
 
 impl JsonlSink {
@@ -89,7 +88,7 @@ impl PacketSink for JsonlSink {
         let next_state = JsonlRuntimeState {
             enabled: desired.jsonl_enabled,
             path: desired.jsonl_path.clone(),
-            context_revision: context.map(|ctx| ctx.revision),
+            context_key: context.map(|ctx| ctx.key),
         };
         if self.last_state.as_ref() == Some(&next_state) {
             return Ok(());
@@ -143,7 +142,7 @@ struct FoxgloveSink {
 struct FoxgloveRuntimeState {
     enabled: bool,
     ws_addr: String,
-    context_revision: Option<u64>,
+    context_key: Option<SinkContextKey>,
 }
 
 impl FoxgloveSink {
@@ -170,7 +169,7 @@ impl PacketSink for FoxgloveSink {
         let next_state = FoxgloveRuntimeState {
             enabled: desired.foxglove_enabled,
             ws_addr: desired.foxglove_ws_addr.clone(),
-            context_revision: context.map(|ctx| ctx.revision),
+            context_key: context.map(|ctx| ctx.key),
         };
         if self.last_state.as_ref() == Some(&next_state) {
             return Ok(());
@@ -222,7 +221,6 @@ impl PacketSink for FoxgloveSink {
 pub struct OutputManager {
     desired: OutputState,
     context: Option<SinkContext>,
-    context_revision: u64,
     sinks: Vec<RegisteredSink>,
     failure_tx: broadcast::Sender<String>,
 }
@@ -239,7 +237,6 @@ impl OutputManager {
         Ok(Self {
             desired,
             context: None,
-            context_revision: 0,
             sinks,
             failure_tx,
         })
@@ -255,7 +252,6 @@ impl OutputManager {
         Ok(Self {
             desired,
             context: None,
-            context_revision: 0,
             sinks: registered,
             failure_tx,
         })
@@ -283,12 +279,10 @@ impl OutputManager {
         };
 
         if self.context.as_ref().map(|ctx| ctx.key) != Some(key) {
-            self.context_revision = self.context_revision.wrapping_add(1);
             self.context = Some(SinkContext {
                 hub,
                 packets,
                 key,
-                revision: self.context_revision,
             });
         }
 
@@ -459,7 +453,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn apply_does_not_bump_context_revision_for_same_runtime_generation_and_hash() {
+    async fn apply_keeps_context_key_for_same_runtime_generation_and_hash() {
         let mut manager = OutputManager::with_sinks_for_test(
             OutputState {
                 jsonl_enabled: false,
@@ -476,17 +470,17 @@ mod tests {
             .apply(hub.clone(), 1, 0xABCD_EF01_u64, Vec::new())
             .await
             .expect("first apply");
-        let first_revision = manager.context_revision;
+        let first_key = manager.context.as_ref().map(|ctx| ctx.key);
 
         manager
             .apply(hub, 1, 0xABCD_EF01_u64, Vec::new())
             .await
             .expect("second apply");
-        assert_eq!(manager.context_revision, first_revision);
+        assert_eq!(manager.context.as_ref().map(|ctx| ctx.key), first_key);
     }
 
     #[tokio::test]
-    async fn apply_bumps_context_revision_when_runtime_generation_changes() {
+    async fn apply_updates_context_key_when_runtime_generation_changes() {
         let mut manager = OutputManager::with_sinks_for_test(
             OutputState {
                 jsonl_enabled: false,
@@ -503,12 +497,12 @@ mod tests {
             .apply(hub.clone(), 1, 0x1111_u64, Vec::new())
             .await
             .expect("first apply");
-        let first_revision = manager.context_revision;
+        let first_key = manager.context.as_ref().map(|ctx| ctx.key);
 
         manager
             .apply(hub, 2, 0x1111_u64, Vec::new())
             .await
             .expect("second apply");
-        assert!(manager.context_revision > first_revision);
+        assert_ne!(manager.context.as_ref().map(|ctx| ctx.key), first_key);
     }
 }

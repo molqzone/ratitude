@@ -106,7 +106,7 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
     let mut state = DaemonState::new(cli.config.clone(), cfg, source);
     render_candidates(state.source().candidates());
     let mut output_manager = OutputManager::from_config(state.config())?;
-    let mut runtime = Some(activate_runtime(None, &mut state, &mut output_manager).await?);
+    let mut runtime = activate_runtime(None, &mut state, &mut output_manager).await?;
     let mut output_failure_rx = output_manager.subscribe_failures();
 
     println!(
@@ -138,34 +138,27 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
                     Err(err) => break Err(err),
                 };
                 if action.restart_runtime {
-                    let Some(old_runtime) = runtime.take() else {
-                        break Err(anyhow!("ingest runtime missing before restart"));
-                    };
-                    match activate_runtime(Some(old_runtime), &mut state, &mut output_manager).await {
+                    match activate_runtime(Some(runtime), &mut state, &mut output_manager).await {
                         Ok(new_runtime) => {
-                            runtime = Some(new_runtime);
+                            runtime = new_runtime;
                         }
-                        Err(err) => break Err(err),
+                        Err(err) => {
+                            console_shutdown.cancel();
+                            output_manager.shutdown().await;
+                            return Err(err);
+                        }
                     }
                 }
                 if action.should_quit {
                     break Ok(());
                 }
             }
-            maybe_signal = async {
-                let Some(runtime_ref) = runtime.as_mut() else {
-                    return None;
-                };
-                runtime_ref.recv_signal().await
-            } => {
-                let Some(runtime_ref) = runtime.as_ref() else {
-                    break Err(anyhow!("ingest runtime missing while processing signal"));
-                };
+            maybe_signal = runtime.recv_signal() => {
                 if let Err(err) = process_runtime_signal(
                     maybe_signal,
                     &mut state,
                     &mut output_manager,
-                    runtime_ref,
+                    &runtime,
                 )
                 .await
                 {
@@ -182,9 +175,7 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
 
     console_shutdown.cancel();
     output_manager.shutdown().await;
-    if let Some(runtime) = runtime {
-        runtime.shutdown().await;
-    }
+    runtime.shutdown().await;
     run_result
 }
 

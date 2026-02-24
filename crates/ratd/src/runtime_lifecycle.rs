@@ -19,7 +19,7 @@ pub(crate) async fn activate_runtime(
 ) -> Result<IngestRuntime> {
     if let Some(old_runtime) = old_runtime {
         output_manager.shutdown().await;
-        old_runtime.shutdown_detach_consumer().await;
+        old_runtime.shutdown().await;
     }
 
     let runtime = start_runtime(state.config(), state.source().active_addr()).await?;

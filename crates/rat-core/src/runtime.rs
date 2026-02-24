@@ -112,14 +112,6 @@ impl IngestRuntime {
     }
 
     pub async fn shutdown(self) {
-        self.shutdown_inner(true).await;
-    }
-
-    pub async fn shutdown_detach_consumer(self) {
-        self.shutdown_inner(false).await;
-    }
-
-    async fn shutdown_inner(self, join_consumer: bool) {
         let IngestRuntime {
             shutdown,
             hub: _hub,
@@ -135,11 +127,9 @@ impl IngestRuntime {
                 warn!(error = %err, "listener task join failed during runtime shutdown");
             }
         }
-        if join_consumer {
-            if let Err(err) = consume_task.await {
-                if !err.is_cancelled() {
-                    warn!(error = %err, "consumer task join failed during runtime shutdown");
-                }
+        if let Err(err) = consume_task.await {
+            if !err.is_cancelled() {
+                warn!(error = %err, "consumer task join failed during runtime shutdown");
             }
         }
     }
