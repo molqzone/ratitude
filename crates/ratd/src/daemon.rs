@@ -2,10 +2,10 @@ use anyhow::{anyhow, Context, Result};
 use rat_config::RatitudeConfig;
 use rat_core::RuntimeSignal;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::cli::Cli;
-use crate::command_loop::{handle_console_command, CommandAction};
+use crate::command_loop::handle_console_command;
 use crate::config_io::load_config;
 use crate::console::spawn_console_reader;
 use crate::output_manager::OutputManager;
@@ -117,37 +117,30 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
 
     let console_shutdown = CancellationToken::new();
     let mut command_rx = spawn_console_reader(console_shutdown.clone());
+    let mut console_attached = true;
 
     let run_result: Result<()> = loop {
         tokio::select! {
             ctrl = tokio::signal::ctrl_c() => {
-                match ctrl.context("failed to wait ctrl-c") {
-                    Ok(()) => {
-                        info!("received ctrl-c, stopping daemon");
-                        break Ok(());
-                    }
+                match process_ctrl_c(ctrl) {
+                    Ok(LoopControl::Continue) => {}
+                    Ok(LoopControl::Quit) => break Ok(()),
                     Err(err) => break Err(err),
                 }
             }
-            command = command_rx.recv() => {
-                let Some(command) = command else {
-                    break Ok(());
-                };
-                let action = match process_console_event(command, &mut state, &mut output_manager).await {
-                    Ok(action) => action,
-                    Err(err) => break Err(err),
-                };
-                if action.restart_runtime {
-                    if let Err(err) = restart_runtime(&mut runtime, &mut state, &mut output_manager).await {
-                        break Err(err);
+            command = command_rx.recv(), if console_attached => {
+                match process_console_event(command, &mut state, &mut output_manager, &mut runtime).await {
+                    Ok(console_state) => {
+                        console_attached = console_state.keep_attached;
+                        if matches!(console_state.loop_control, LoopControl::Quit) {
+                            break Ok(());
+                        }
                     }
-                }
-                if action.should_quit {
-                    break Ok(());
+                    Err(err) => break Err(err),
                 }
             }
             maybe_signal = runtime.recv_signal() => {
-                if let Err(err) = process_runtime_signal(
+                match process_runtime_signal(
                     maybe_signal,
                     &mut state,
                     &mut output_manager,
@@ -155,12 +148,16 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
                 )
                 .await
                 {
-                    break Err(err);
+                    Ok(LoopControl::Continue) => {}
+                    Ok(LoopControl::Quit) => break Ok(()),
+                    Err(err) => break Err(err),
                 }
             }
             sink_failure = output_failure_rx.recv() => {
-                if let Err(err) = process_output_failure(sink_failure) {
-                    break Err(err);
+                match process_output_failure(sink_failure) {
+                    Ok(LoopControl::Continue) => {}
+                    Ok(LoopControl::Quit) => break Ok(()),
+                    Err(err) => break Err(err),
                 }
             }
         }
@@ -172,12 +169,64 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
     run_result
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoopControl {
+    Continue,
+    Quit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ConsoleLoopState {
+    loop_control: LoopControl,
+    keep_attached: bool,
+}
+
+impl ConsoleLoopState {
+    const fn continue_with(keep_attached: bool) -> Self {
+        Self {
+            loop_control: LoopControl::Continue,
+            keep_attached,
+        }
+    }
+
+    const fn quit() -> Self {
+        Self {
+            loop_control: LoopControl::Quit,
+            keep_attached: true,
+        }
+    }
+}
+
+fn process_ctrl_c(ctrl: std::io::Result<()>) -> Result<LoopControl> {
+    match ctrl.context("failed to wait ctrl-c") {
+        Ok(()) => {
+            info!("received ctrl-c, stopping daemon");
+            Ok(LoopControl::Quit)
+        }
+        Err(err) => Err(err),
+    }
+}
+
 async fn process_console_event(
-    command: crate::console::ConsoleCommand,
+    command: Option<crate::console::ConsoleCommand>,
     state: &mut DaemonState,
     output_manager: &mut OutputManager,
-) -> Result<CommandAction> {
-    handle_console_command(command, state, output_manager).await
+    runtime: &mut rat_core::IngestRuntime,
+) -> Result<ConsoleLoopState> {
+    let Some(command) = command else {
+        warn!("console input stream closed; daemon continues without interactive command channel");
+        return Ok(ConsoleLoopState::continue_with(false));
+    };
+
+    let action = handle_console_command(command, state, output_manager).await?;
+    if action.restart_runtime {
+        restart_runtime(runtime, state, output_manager).await?;
+    }
+    if action.should_quit {
+        return Ok(ConsoleLoopState::quit());
+    }
+
+    Ok(ConsoleLoopState::continue_with(true))
 }
 
 async fn process_runtime_signal(
@@ -185,9 +234,12 @@ async fn process_runtime_signal(
     state: &mut DaemonState,
     output_manager: &mut OutputManager,
     runtime: &rat_core::IngestRuntime,
-) -> Result<()> {
+) -> Result<LoopControl> {
     match signal {
-        Some(RuntimeSignal::SchemaReady { schema_hash, packets }) => {
+        Some(RuntimeSignal::SchemaReady {
+            schema_hash,
+            packets,
+        }) => {
             apply_schema_ready(state, output_manager, runtime, schema_hash, packets).await?;
             println!(
                 "runtime schema ready: packets={}, hash=0x{:016X}",
@@ -198,7 +250,7 @@ async fn process_runtime_signal(
                     .schema_hash()
                     .unwrap_or(schema_hash)
             );
-            Ok(())
+            Ok(LoopControl::Continue)
         }
         Some(RuntimeSignal::Fatal(err)) => Err(anyhow!(err.to_string())),
         None => Err(anyhow!("ingest runtime signal channel closed")),
@@ -207,15 +259,16 @@ async fn process_runtime_signal(
 
 fn process_output_failure(
     sink_failure: std::result::Result<String, tokio::sync::broadcast::error::RecvError>,
-) -> Result<()> {
+) -> Result<LoopControl> {
     match sink_failure {
         Ok(reason) => Err(anyhow!("output sink failure: {reason}")),
         Err(tokio::sync::broadcast::error::RecvError::Closed) => {
             Err(anyhow!("output sink failure channel closed"))
         }
-        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => Err(anyhow!(
-            "output sink failure channel lagged (skipped {skipped} messages)"
-        )),
+        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+            warn!("output sink failure channel lagged (skipped {skipped} messages)");
+            Ok(LoopControl::Continue)
+        }
     }
 }
 
@@ -550,5 +603,12 @@ text_id = 255
             manifest.contains("rat-core"),
             "ratd must depend on rat-core runtime"
         );
+    }
+
+    #[test]
+    fn output_failure_lagged_is_non_fatal() {
+        let result =
+            process_output_failure(Err(tokio::sync::broadcast::error::RecvError::Lagged(3)));
+        assert!(matches!(result, Ok(LoopControl::Continue)));
     }
 }

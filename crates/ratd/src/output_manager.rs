@@ -224,9 +224,7 @@ impl OutputManager {
         let desired = output_state_from_config(cfg);
         let (failure_tx, _failure_rx) = broadcast::channel::<String>(64);
 
-        let mut sinks = Vec::new();
-        register_sink(&mut sinks, Box::new(JsonlSink::new()))?;
-        register_sink(&mut sinks, Box::new(FoxgloveSink::new()))?;
+        let sinks = build_registered_sinks(default_sinks())?;
 
         Ok(Self {
             desired,
@@ -239,10 +237,7 @@ impl OutputManager {
     #[cfg(test)]
     fn with_sinks_for_test(desired: OutputState, sinks: Vec<Box<dyn PacketSink>>) -> Result<Self> {
         let (failure_tx, _failure_rx) = broadcast::channel::<String>(64);
-        let mut registered = Vec::new();
-        for sink in sinks {
-            register_sink(&mut registered, sink)?;
-        }
+        let registered = build_registered_sinks(sinks)?;
         Ok(Self {
             desired,
             context: None,
@@ -273,11 +268,7 @@ impl OutputManager {
         };
 
         if self.context.as_ref().map(|ctx| ctx.key) != Some(key) {
-            self.context = Some(SinkContext {
-                hub,
-                packets,
-                key,
-            });
+            self.context = Some(SinkContext { hub, packets, key });
         }
 
         self.reconcile_all()
@@ -316,6 +307,18 @@ fn output_state_from_config(cfg: &RatitudeConfig) -> OutputState {
         foxglove_enabled: cfg.ratd.outputs.foxglove.enabled,
         foxglove_ws_addr: cfg.ratd.outputs.foxglove.ws_addr.clone(),
     }
+}
+
+fn default_sinks() -> Vec<Box<dyn PacketSink>> {
+    vec![Box::new(JsonlSink::new()), Box::new(FoxgloveSink::new())]
+}
+
+fn build_registered_sinks(sinks: Vec<Box<dyn PacketSink>>) -> Result<Vec<RegisteredSink>> {
+    let mut registered = Vec::new();
+    for sink in sinks {
+        register_sink(&mut registered, sink)?;
+    }
+    Ok(registered)
 }
 
 fn register_sink(sinks: &mut Vec<RegisteredSink>, sink: Box<dyn PacketSink>) -> Result<()> {
