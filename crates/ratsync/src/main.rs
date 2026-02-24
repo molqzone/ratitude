@@ -191,8 +191,24 @@ header_name = "rat_gen.h"
 
         let err = execute(&cli).expect_err("removed key should fail");
         let msg = format!("{err:#}");
-        assert!(msg.contains("generation.toml_name"));
-        assert!(msg.contains("rat_gen.toml is not generated"));
+        assert!(msg.contains("unknown field"));
+        assert!(msg.contains("toml_name"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn execute_fails_when_config_missing() {
+        let dir = unique_temp_dir("ratsync_missing_config");
+        let config_path = dir.join("rat.toml");
+        assert!(!config_path.exists());
+
+        let cli = Cli {
+            config: config_path.to_string_lossy().into_owned(),
+            scan_root: None,
+        };
+        let err = execute(&cli).expect_err("missing config should fail");
+        assert!(format!("{err:#}").contains("config file does not exist"));
 
         let _ = fs::remove_dir_all(&dir);
     }

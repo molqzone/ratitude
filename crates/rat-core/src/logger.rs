@@ -61,10 +61,6 @@ pub fn spawn_jsonl_writer(
                         let _ = failure_tx.send(format!("write jsonl newline failed: {err}"));
                         break;
                     }
-                    if let Err(err) = guard.flush() {
-                        let _ = failure_tx.send(format!("flush jsonl writer failed: {err}"));
-                        break;
-                    }
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,

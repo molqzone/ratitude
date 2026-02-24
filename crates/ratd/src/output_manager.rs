@@ -2,12 +2,11 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use rat_bridge_foxglove::{run_bridge, BridgeConfig};
 use rat_config::{PacketDef, RatitudeConfig};
 use rat_core::{spawn_jsonl_writer, Hub};
 use tokio::sync::broadcast;
-use tokio::sync::broadcast::error::TryRecvError;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -171,13 +170,12 @@ pub struct OutputManager {
     context: Option<SinkContext>,
     sinks: Vec<RegisteredSink>,
     failure_tx: broadcast::Sender<String>,
-    failure_rx: broadcast::Receiver<String>,
 }
 
 impl OutputManager {
     pub fn from_config(cfg: &RatitudeConfig) -> Self {
         let desired = output_state_from_config(cfg);
-        let (failure_tx, failure_rx) = broadcast::channel::<String>(64);
+        let (failure_tx, _failure_rx) = broadcast::channel::<String>(64);
 
         let mut sinks = Vec::new();
         register_sink(&mut sinks, Box::new(JsonlSink::new()));
@@ -188,13 +186,12 @@ impl OutputManager {
             context: None,
             sinks,
             failure_tx,
-            failure_rx,
         }
     }
 
     #[cfg(test)]
     fn with_sinks_for_test(desired: OutputState, sinks: Vec<Box<dyn PacketSink>>) -> Self {
-        let (failure_tx, failure_rx) = broadcast::channel::<String>(64);
+        let (failure_tx, _failure_rx) = broadcast::channel::<String>(64);
         let mut registered = Vec::new();
         for sink in sinks {
             register_sink(&mut registered, sink);
@@ -204,7 +201,6 @@ impl OutputManager {
             context: None,
             sinks: registered,
             failure_tx,
-            failure_rx,
         }
     }
 
@@ -231,17 +227,6 @@ impl OutputManager {
 
     pub fn subscribe_failures(&self) -> broadcast::Receiver<String> {
         self.failure_tx.subscribe()
-    }
-
-    pub fn poll_failure(&mut self) -> Option<anyhow::Error> {
-        match self.failure_rx.try_recv() {
-            Ok(reason) => Some(anyhow!("output sink failure: {reason}")),
-            Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Closed) => Some(anyhow!("output sink failure channel closed")),
-            Err(TryRecvError::Lagged(skipped)) => Some(anyhow!(
-                "output sink failure channel lagged (skipped {skipped} messages)"
-            )),
-        }
     }
 
     fn reconcile_all(&mut self) -> Result<()> {
@@ -277,6 +262,8 @@ fn register_sink(sinks: &mut Vec<RegisteredSink>, sink: Box<dyn PacketSink>) {
 
 #[cfg(test)]
 mod tests {
+    use tokio::sync::broadcast::error::TryRecvError;
+
     use super::*;
 
     struct FailOnceSink {
@@ -305,7 +292,7 @@ mod tests {
     }
 
     #[test]
-    fn poll_failure_returns_sink_error_once() {
+    fn failure_subscription_receives_sink_error_once() {
         let mut manager = OutputManager::with_sinks_for_test(
             OutputState {
                 jsonl_enabled: false,
@@ -315,13 +302,14 @@ mod tests {
             },
             vec![Box::new(FailOnceSink { sent: false })],
         );
+        let mut failures = manager.subscribe_failures();
 
         let cfg = RatitudeConfig::default();
         manager.reload_from_config(&cfg).expect("reload");
 
-        let first = manager.poll_failure().expect("first failure");
-        assert!(first.to_string().contains("sink failed"));
-        assert!(manager.poll_failure().is_none());
+        let first = failures.try_recv().expect("first failure");
+        assert!(first.contains("sink failed"));
+        assert!(matches!(failures.try_recv(), Err(TryRecvError::Empty)));
     }
 
     #[test]

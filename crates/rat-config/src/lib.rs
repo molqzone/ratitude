@@ -1,4 +1,3 @@
-mod compat;
 mod model;
 mod paths;
 mod store;

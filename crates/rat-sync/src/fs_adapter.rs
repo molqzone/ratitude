@@ -14,7 +14,7 @@ pub fn sync_packets_fs(
 ) -> Result<SyncFsResult, SyncError> {
     let config_path = config_path.as_ref();
     let store = ConfigStore::new(config_path);
-    let (cfg, _) = store.load_or_default()?;
+    let cfg = store.load()?;
     let paths = store.paths_for(&cfg);
 
     let discovered_packets = discover_packets(&cfg, &paths, scan_root_override)?;

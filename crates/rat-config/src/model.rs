@@ -21,7 +21,7 @@ pub enum ConfigError {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct RatitudeConfig {
     pub project: ProjectConfig,
     pub artifacts: ArtifactsConfig,
@@ -41,7 +41,7 @@ impl Default for RatitudeConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ProjectConfig {
     pub name: String,
     pub scan_root: String,
@@ -61,7 +61,7 @@ impl Default for ProjectConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ArtifactsConfig {
     pub elf: String,
     pub hex: String,
@@ -79,7 +79,7 @@ impl Default for ArtifactsConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct GenerationConfig {
     pub out_dir: String,
     pub header_name: String,

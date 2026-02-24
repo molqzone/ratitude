@@ -122,16 +122,15 @@ ws_addr = "127.0.0.1:8765"
 
     let err = load_or_default(&path).expect_err("removed sections should fail");
     let msg = err.to_string();
-    assert!(msg.contains("removed config keys are not supported"));
-    assert!(msg.contains("[ratd.server]"));
-    assert!(msg.contains("[ratd.foxglove]"));
+    assert!(msg.contains("unknown field"));
+    assert!(msg.contains("server"));
 
     let _ = fs::remove_file(path);
     let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
-fn preferred_backend_is_rejected_with_removal_hint() {
+fn preferred_backend_is_rejected() {
     let dir = unique_temp_dir("ratitude_cfg_preferred_backend");
     let path = dir.join("rat.toml");
     let raw = r#"
@@ -156,15 +155,15 @@ preferred_backend = "openocd"
 
     let err = load_or_default(&path).expect_err("preferred_backend should fail");
     let msg = err.to_string();
-    assert!(msg.contains("removed config keys are not supported"));
-    assert!(msg.contains("ratd.source.preferred_backend"));
+    assert!(msg.contains("unknown field"));
+    assert!(msg.contains("preferred_backend"));
 
     let _ = fs::remove_file(path);
     let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
-fn ignore_dirs_is_rejected_with_ratignore_hint() {
+fn ignore_dirs_is_rejected() {
     let dir = unique_temp_dir("ratitude_cfg_ignore_dirs");
     let path = dir.join("rat.toml");
     let raw = r#"
@@ -181,16 +180,15 @@ header_name = "rat_gen.h"
 
     let err = load_or_default(&path).expect_err("ignore_dirs should fail");
     let msg = err.to_string();
-    assert!(msg.contains("removed config keys are not supported"));
-    assert!(msg.contains("project.ignore_dirs"));
-    assert!(msg.contains(".ratignore"));
+    assert!(msg.contains("unknown field"));
+    assert!(msg.contains("ignore_dirs"));
 
     let _ = fs::remove_file(path);
     let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
-fn source_backend_section_is_rejected_with_removal_hint() {
+fn source_backend_section_is_rejected() {
     let dir = unique_temp_dir("ratitude_cfg_source_backend");
     let path = dir.join("rat.toml");
     let raw = r#"
@@ -219,15 +217,15 @@ startup_timeout_ms = 5000
 
     let err = load_or_default(&path).expect_err("source backend section should fail");
     let msg = err.to_string();
-    assert!(msg.contains("removed config keys are not supported"));
-    assert!(msg.contains("[ratd.source.backend]"));
+    assert!(msg.contains("unknown field"));
+    assert!(msg.contains("backend"));
 
     let _ = fs::remove_file(path);
     let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
-fn removed_sync_behavior_keys_are_rejected_with_removal_hint() {
+fn removed_sync_behavior_keys_are_rejected() {
     let dir = unique_temp_dir("ratitude_cfg_removed_sync_behavior");
     let path = dir.join("rat.toml");
     let raw = r#"
@@ -255,17 +253,15 @@ reader_buf = 65536
 
     let err = load_or_default(&path).expect_err("removed sync behavior keys should fail");
     let msg = err.to_string();
-    assert!(msg.contains("removed config keys are not supported"));
-    assert!(msg.contains("ratd.behavior.auto_sync_on_start"));
-    assert!(msg.contains("ratd.behavior.auto_sync_on_reset"));
-    assert!(msg.contains("ratd.behavior.sync_debounce_ms"));
+    assert!(msg.contains("unknown field"));
+    assert!(msg.contains("auto_sync_on_start"));
 
     let _ = fs::remove_file(path);
     let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
-fn generation_toml_name_is_rejected_with_removal_hint() {
+fn generation_toml_name_is_rejected() {
     let dir = unique_temp_dir("ratitude_cfg_generation_toml_name");
     let path = dir.join("rat.toml");
     let raw = r#"
@@ -282,9 +278,8 @@ header_name = "rat_gen.h"
 
     let err = load_or_default(&path).expect_err("generation.toml_name should fail");
     let msg = err.to_string();
-    assert!(msg.contains("removed config keys are not supported"));
-    assert!(msg.contains("generation.toml_name"));
-    assert!(msg.contains("rat_gen.toml is not generated"));
+    assert!(msg.contains("unknown field"));
+    assert!(msg.contains("toml_name"));
 
     let _ = fs::remove_file(path);
     let _ = fs::remove_dir_all(dir);
