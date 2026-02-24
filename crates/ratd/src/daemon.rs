@@ -214,8 +214,7 @@ async fn process_console_event(
     runtime: &mut rat_core::IngestRuntime,
 ) -> Result<ConsoleLoopState> {
     let Some(command) = command else {
-        warn!("console input stream closed; daemon continues without interactive command channel");
-        return Ok(ConsoleLoopState::continue_with(false));
+        return Ok(process_console_channel_closed());
     };
 
     let action = handle_console_command(command, state, output_manager).await?;
@@ -227,6 +226,11 @@ async fn process_console_event(
     }
 
     Ok(ConsoleLoopState::continue_with(true))
+}
+
+fn process_console_channel_closed() -> ConsoleLoopState {
+    warn!("console input stream closed; daemon continues without interactive command channel");
+    ConsoleLoopState::continue_with(false)
 }
 
 async fn process_runtime_signal(
@@ -261,9 +265,13 @@ fn process_output_failure(
     sink_failure: std::result::Result<String, tokio::sync::broadcast::error::RecvError>,
 ) -> Result<LoopControl> {
     match sink_failure {
-        Ok(reason) => Err(anyhow!("output sink failure: {reason}")),
+        Ok(reason) => {
+            warn!(reason = %reason, "output sink failed; daemon keeps running");
+            Ok(LoopControl::Continue)
+        }
         Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-            Err(anyhow!("output sink failure channel closed"))
+            warn!("output sink failure channel closed; daemon keeps running");
+            Ok(LoopControl::Continue)
         }
         Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
             warn!("output sink failure channel lagged (skipped {skipped} messages)");
@@ -610,5 +618,24 @@ text_id = 255
         let result =
             process_output_failure(Err(tokio::sync::broadcast::error::RecvError::Lagged(3)));
         assert!(matches!(result, Ok(LoopControl::Continue)));
+    }
+
+    #[test]
+    fn output_failure_reason_is_non_fatal() {
+        let result = process_output_failure(Ok("sink failed".to_string()));
+        assert!(matches!(result, Ok(LoopControl::Continue)));
+    }
+
+    #[test]
+    fn output_failure_channel_closed_is_non_fatal() {
+        let result = process_output_failure(Err(tokio::sync::broadcast::error::RecvError::Closed));
+        assert!(matches!(result, Ok(LoopControl::Continue)));
+    }
+
+    #[test]
+    fn console_channel_closed_keeps_daemon_running_without_console() {
+        let state = process_console_channel_closed();
+        assert!(matches!(state.loop_control, LoopControl::Continue));
+        assert!(!state.keep_attached);
     }
 }
