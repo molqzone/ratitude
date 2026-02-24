@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use rat_config::{RatdSourceConfig, RatitudeConfig};
+use rat_config::RatdSourceConfig;
 
 use crate::source_scan::{discover_sources, SourceCandidate};
 
@@ -38,11 +38,12 @@ impl SourceDomainState {
     }
 }
 
-pub(crate) async fn build_source_domain(cfg: &RatitudeConfig) -> Result<SourceDomainState> {
-    let source_candidates = discover_sources(&cfg.ratd.source).await;
+pub(crate) async fn build_source_domain(
+    source_cfg: &RatdSourceConfig,
+) -> Result<SourceDomainState> {
+    let source_candidates = discover_sources(source_cfg).await;
 
-    let active_source =
-        select_active_source(&source_candidates, &cfg.ratd.source.last_selected_addr)?;
+    let active_source = select_active_source(&source_candidates, &source_cfg.last_selected_addr)?;
 
     Ok(SourceDomainState::new(source_candidates, active_source))
 }

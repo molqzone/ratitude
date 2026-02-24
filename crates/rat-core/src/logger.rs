@@ -5,7 +5,7 @@ use serde::Serialize;
 use serde_json::Value;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 use crate::{PacketEnvelope, PacketPayload};
@@ -24,7 +24,7 @@ struct JsonRecord {
 pub fn spawn_jsonl_writer(
     mut receiver: broadcast::Receiver<PacketEnvelope>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
-    failure_tx: mpsc::UnboundedSender<String>,
+    failure_tx: broadcast::Sender<String>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         loop {

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use rat_protocol::hash_schema_bytes;
 use serde::Deserialize;
 use tokio::time::Instant as TokioInstant;
@@ -81,12 +83,16 @@ fn register_runtime_schema(
     packets: &[RuntimePacketDef],
 ) -> Result<(), RuntimeError> {
     protocol.clear_dynamic_registry();
+    let mut seen_ids = HashSet::with_capacity(packets.len());
 
     debug!(
         packets = packets.len(),
         "registering runtime schema packets"
     );
     for packet in packets {
+        if !seen_ids.insert(packet.id) {
+            return Err(RuntimeError::DuplicatePacketId { id: packet.id });
+        }
         if packet.id > 0xFF {
             return Err(RuntimeError::PacketIdOutOfRange { id: packet.id });
         }
@@ -401,12 +407,14 @@ struct SchemaReadyPayload {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RuntimeSchemaDocument {
     #[serde(default)]
     packets: Vec<RuntimeSchemaPacket>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RuntimeSchemaPacket {
     id: u16,
     struct_name: String,
@@ -420,6 +428,7 @@ struct RuntimeSchemaPacket {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RuntimeSchemaField {
     name: String,
     c_type: String,
@@ -445,25 +454,37 @@ fn parse_runtime_packets_from_schema(
         });
     }
 
-    Ok(doc
-        .packets
+    doc.packets
         .into_iter()
-        .map(|packet| RuntimePacketDef {
-            id: packet.id,
-            struct_name: packet.struct_name,
-            packet_type: packet.packet_type,
-            packed: packet.packed,
-            byte_size: packet.byte_size,
-            fields: packet
-                .fields
-                .into_iter()
-                .map(|field| RuntimeFieldDef {
-                    name: field.name,
-                    c_type: field.c_type,
-                    offset: field.offset,
-                    size: field.size,
-                })
-                .collect(),
+        .map(|packet| {
+            let packet_type = normalize_runtime_packet_type(&packet.packet_type)?;
+            Ok(RuntimePacketDef {
+                id: packet.id,
+                struct_name: packet.struct_name,
+                packet_type,
+                packed: packet.packed,
+                byte_size: packet.byte_size,
+                fields: packet
+                    .fields
+                    .into_iter()
+                    .map(|field| RuntimeFieldDef {
+                        name: field.name,
+                        c_type: field.c_type,
+                        offset: field.offset,
+                        size: field.size,
+                    })
+                    .collect(),
+            })
         })
-        .collect())
+        .collect()
+}
+
+fn normalize_runtime_packet_type(raw: &str) -> Result<String, RuntimeError> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "plot" | "quat" | "image" | "log" => Ok(normalized),
+        other => Err(RuntimeError::SchemaParseFailed {
+            reason: format!("unsupported packet type in runtime schema: {other}"),
+        }),
+    }
 }

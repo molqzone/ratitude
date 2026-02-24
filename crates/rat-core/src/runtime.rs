@@ -59,6 +59,9 @@ pub enum RuntimeSignal {
 
 #[derive(Debug, Error, Clone)]
 pub enum RuntimeError {
+    #[error("duplicate packet id in runtime schema: 0x{id:X}")]
+    DuplicatePacketId { id: u16 },
+
     #[error("packet id out of range: 0x{id:X}")]
     PacketIdOutOfRange { id: u16 },
 

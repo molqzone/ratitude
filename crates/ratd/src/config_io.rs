@@ -4,8 +4,7 @@ use rat_config::{ConfigStore, RatitudeConfig};
 pub(crate) async fn load_config(config_path: &str) -> Result<RatitudeConfig> {
     let path = config_path.to_string();
     tokio::task::spawn_blocking(move || -> Result<RatitudeConfig> {
-        let (cfg, _) = ConfigStore::new(path).load_or_default()?;
-        Ok(cfg)
+        Ok(ConfigStore::new(path).load()?)
     })
     .await
     .context("failed to join config load task")?

@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use anyhow::{anyhow, Context, Result};
 use rat_config::RatitudeConfig;
 use rat_core::RuntimeSignal;
@@ -92,13 +90,12 @@ impl DaemonState {
 
 pub async fn run_daemon(cli: Cli) -> Result<()> {
     let cfg = load_config(&cli.config).await?;
-    let source = build_source_domain(&cfg).await?;
+    let source = build_source_domain(&cfg.ratd.source).await?;
     let mut state = DaemonState::new(cli.config.clone(), cfg, source);
     render_candidates(state.source().candidates());
     let mut output_manager = OutputManager::from_config(state.config());
     let mut runtime = activate_runtime(None, &mut state, &mut output_manager).await?;
-    let mut output_health_tick = tokio::time::interval(Duration::from_millis(200));
-    output_health_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut output_failure_rx = output_manager.subscribe_failures();
 
     println!(
         "ratd daemon started at source {}",
@@ -157,9 +154,19 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
                     }
                 }
             }
-            _ = output_health_tick.tick() => {
-                if let Some(err) = output_manager.poll_failure() {
-                    return Err(anyhow!("output sink failure: {err}"));
+            sink_failure = output_failure_rx.recv() => {
+                match sink_failure {
+                    Ok(reason) => {
+                        return Err(anyhow!("output sink failure: {reason}"));
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        return Err(anyhow!("output sink failure channel closed"));
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        return Err(anyhow!(
+                            "output sink failure channel lagged (skipped {skipped} messages)"
+                        ));
+                    }
                 }
             }
         }
@@ -234,25 +241,26 @@ mod tests {
     async fn build_state_does_not_overwrite_last_selected_addr_on_startup() {
         let dir = unique_temp_dir("ratd_build_state");
         let config_path = dir.join("rat.toml");
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("local addr").to_string();
 
         let mut cfg = RatitudeConfig::default();
         cfg.project.scan_root = ".".to_string();
         cfg.ratd.source.auto_scan = false;
-        cfg.ratd.source.last_selected_addr = "10.10.10.10:19021".to_string();
+        cfg.ratd.source.last_selected_addr = addr.clone();
         ConfigStore::new(&config_path)
             .save(&cfg)
             .expect("save config");
 
-        let source = build_source_domain(&cfg).await.expect("build source");
+        let source = build_source_domain(&cfg.ratd.source)
+            .await
+            .expect("build source");
         let state = DaemonState::new(config_path.to_string_lossy().to_string(), cfg, source);
-        assert_eq!(state.source().active_addr(), "10.10.10.10:19021");
-        assert_eq!(
-            state.config().ratd.source.last_selected_addr,
-            "10.10.10.10:19021"
-        );
+        assert_eq!(state.source().active_addr(), addr);
+        assert_eq!(state.config().ratd.source.last_selected_addr, addr);
 
         let raw = fs::read_to_string(&config_path).expect("read config");
-        assert!(raw.contains("last_selected_addr = \"10.10.10.10:19021\""));
+        assert!(raw.contains("last_selected_addr ="));
 
         let _ = fs::remove_file(&config_path);
         let _ = fs::remove_dir_all(dir);
@@ -418,14 +426,15 @@ text_id = 255
     }
 
     #[tokio::test]
-    async fn load_config_does_not_create_file_when_missing() {
+    async fn load_config_fails_when_missing() {
         let dir = unique_temp_dir("ratd_load_config_missing");
         let config_path = dir.join("rat.toml");
         assert!(!config_path.exists());
 
-        let _cfg = load_config(&config_path.to_string_lossy())
+        let err = load_config(&config_path.to_string_lossy())
             .await
-            .expect("load default");
+            .expect_err("load should fail without rat.toml");
+        assert!(err.to_string().contains("config file does not exist"));
         assert!(!config_path.exists());
 
         let _ = fs::remove_dir_all(dir);

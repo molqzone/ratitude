@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::OnceLock;
 
 use rat_config::FieldDef;
 use regex::Regex;
@@ -17,10 +18,11 @@ pub(crate) fn collect_comment_tags(
     source: &[u8],
     path: &Path,
 ) -> Result<Vec<TagMatch>, SyncError> {
-    let strict_tag_re = Regex::new(
-        r"(?s)^\s*(?://+|/\*)\s*@rat(?:\s*,\s*([A-Za-z_][A-Za-z0-9_]*))?\s*(?:\*/)?\s*$",
-    )
-    .map_err(|err| SyncError::Validation(format!("invalid tag regex: {err}")))?;
+    static STRICT_TAG_RE: OnceLock<Regex> = OnceLock::new();
+    let strict_tag_re = STRICT_TAG_RE.get_or_init(|| {
+        Regex::new(r"(?s)^\s*(?://+|/\*)\s*@rat(?:\s*,\s*([A-Za-z_][A-Za-z0-9_]*))?\s*(?:\*/)?\s*$")
+            .expect("compile @rat tag regex")
+    });
 
     let mut tags = Vec::new();
     walk_nodes(tree.root_node(), &mut |node| {

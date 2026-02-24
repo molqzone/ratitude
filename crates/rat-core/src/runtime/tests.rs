@@ -45,6 +45,56 @@ fn schema_toml() -> String {
     .join("\n")
 }
 
+fn schema_toml_with_duplicate_id() -> String {
+    [
+        "[[packets]]",
+        "id = 33",
+        "struct_name = \"DemoPacketA\"",
+        "type = \"plot\"",
+        "packed = true",
+        "byte_size = 4",
+        "",
+        "[[packets.fields]]",
+        "name = \"value\"",
+        "c_type = \"uint32_t\"",
+        "offset = 0",
+        "size = 4",
+        "",
+        "[[packets]]",
+        "id = 33",
+        "struct_name = \"DemoPacketB\"",
+        "type = \"plot\"",
+        "packed = true",
+        "byte_size = 4",
+        "",
+        "[[packets.fields]]",
+        "name = \"value\"",
+        "c_type = \"uint32_t\"",
+        "offset = 0",
+        "size = 4",
+    ]
+    .join("\n")
+}
+
+fn schema_toml_with_unknown_field() -> String {
+    [
+        "[[packets]]",
+        "id = 33",
+        "struct_name = \"DemoPacket\"",
+        "type = \"plot\"",
+        "packed = true",
+        "byte_size = 4",
+        "extra = \"x\"",
+        "",
+        "[[packets.fields]]",
+        "name = \"value\"",
+        "c_type = \"uint32_t\"",
+        "offset = 0",
+        "size = 4",
+    ]
+    .join("\n")
+}
+
 fn control_frames(schema: &[u8], chunk_size: usize) -> Vec<Vec<u8>> {
     let schema_hash = hash_schema_bytes(schema);
     let mut decoded_frames = Vec::new();
@@ -240,6 +290,77 @@ async fn runtime_emits_fatal_on_schema_hash_mismatch() {
         .expect("signal");
     match signal {
         RuntimeSignal::Fatal(RuntimeError::SchemaHashMismatch { .. }) => {}
+        other => panic!("unexpected signal: {other:?}"),
+    }
+
+    runtime.shutdown(true).await;
+    let _ = send_task.await;
+}
+
+#[tokio::test]
+async fn runtime_emits_fatal_on_duplicate_packet_id() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr").to_string();
+    let schema = schema_toml_with_duplicate_id().into_bytes();
+    let send_task = spawn_frames_once(listener, control_frames(&schema, 32)).await;
+
+    let mut runtime = start_ingest_runtime(IngestRuntimeConfig {
+        addr,
+        listener: listener_opts(),
+        hub_buffer: 8,
+        text_packet_id: 0xFF,
+        schema_timeout: Duration::from_secs(1),
+        unknown_window: Duration::from_secs(5),
+        unknown_threshold: 20,
+    })
+    .await
+    .expect("start runtime");
+
+    let signal = tokio::time::timeout(Duration::from_secs(1), runtime.recv_signal())
+        .await
+        .expect("signal timeout")
+        .expect("signal");
+    match signal {
+        RuntimeSignal::Fatal(RuntimeError::DuplicatePacketId { id }) => {
+            assert_eq!(id, 33);
+        }
+        other => panic!("unexpected signal: {other:?}"),
+    }
+
+    runtime.shutdown(true).await;
+    let _ = send_task.await;
+}
+
+#[tokio::test]
+async fn runtime_emits_fatal_on_unknown_schema_field() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr").to_string();
+    let schema = schema_toml_with_unknown_field().into_bytes();
+    let send_task = spawn_frames_once(listener, control_frames(&schema, 32)).await;
+
+    let mut runtime = start_ingest_runtime(IngestRuntimeConfig {
+        addr,
+        listener: listener_opts(),
+        hub_buffer: 8,
+        text_packet_id: 0xFF,
+        schema_timeout: Duration::from_secs(1),
+        unknown_window: Duration::from_secs(5),
+        unknown_threshold: 20,
+    })
+    .await
+    .expect("start runtime");
+
+    let signal = tokio::time::timeout(Duration::from_secs(1), runtime.recv_signal())
+        .await
+        .expect("signal timeout")
+        .expect("signal");
+    match signal {
+        RuntimeSignal::Fatal(RuntimeError::SchemaParseFailed { reason }) => {
+            assert!(
+                reason.contains("unknown field"),
+                "unexpected reason: {reason}"
+            );
+        }
         other => panic!("unexpected signal: {other:?}"),
     }
 
