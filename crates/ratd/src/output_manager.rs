@@ -28,6 +28,7 @@ pub struct OutputState {
 struct SinkContext {
     hub: Hub,
     packets: Vec<PacketDef>,
+    revision: u64,
 }
 
 trait PacketSink {
@@ -48,11 +49,22 @@ struct RegisteredSink {
 
 struct JsonlSink {
     task: Option<JoinHandle<()>>,
+    last_state: Option<JsonlRuntimeState>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct JsonlRuntimeState {
+    enabled: bool,
+    path: Option<String>,
+    context_revision: Option<u64>,
 }
 
 impl JsonlSink {
     fn new() -> Self {
-        Self { task: None }
+        Self {
+            task: None,
+            last_state: None,
+        }
     }
 }
 
@@ -67,17 +79,28 @@ impl PacketSink for JsonlSink {
         context: Option<&SinkContext>,
         failure_tx: &broadcast::Sender<String>,
     ) -> Result<()> {
+        let next_state = JsonlRuntimeState {
+            enabled: desired.jsonl_enabled,
+            path: desired.jsonl_path.clone(),
+            context_revision: context.map(|ctx| ctx.revision),
+        };
+        if self.last_state.as_ref() == Some(&next_state) {
+            return Ok(());
+        }
+
         self.shutdown();
 
-        if !desired.jsonl_enabled {
+        if !next_state.enabled {
+            self.last_state = Some(next_state);
             return Ok(());
         }
 
         let Some(context) = context else {
+            self.last_state = Some(next_state);
             return Ok(());
         };
 
-        let writer: Box<dyn Write + Send> = if let Some(path) = &desired.jsonl_path {
+        let writer: Box<dyn Write + Send> = if let Some(path) = &next_state.path {
             Box::new(
                 File::create(path).with_context(|| format!("failed to open jsonl file {path}"))?,
             )
@@ -90,6 +113,7 @@ impl PacketSink for JsonlSink {
             writer,
             failure_tx.clone(),
         ));
+        self.last_state = Some(next_state);
 
         Ok(())
     }
@@ -98,12 +122,21 @@ impl PacketSink for JsonlSink {
         if let Some(task) = self.task.take() {
             task.abort();
         }
+        self.last_state = None;
     }
 }
 
 struct FoxgloveSink {
     task: Option<JoinHandle<()>>,
     shutdown: Option<CancellationToken>,
+    last_state: Option<FoxgloveRuntimeState>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FoxgloveRuntimeState {
+    enabled: bool,
+    ws_addr: String,
+    context_revision: Option<u64>,
 }
 
 impl FoxgloveSink {
@@ -111,6 +144,7 @@ impl FoxgloveSink {
         Self {
             task: None,
             shutdown: None,
+            last_state: None,
         }
     }
 }
@@ -126,19 +160,30 @@ impl PacketSink for FoxgloveSink {
         context: Option<&SinkContext>,
         failure_tx: &broadcast::Sender<String>,
     ) -> Result<()> {
+        let next_state = FoxgloveRuntimeState {
+            enabled: desired.foxglove_enabled,
+            ws_addr: desired.foxglove_ws_addr.clone(),
+            context_revision: context.map(|ctx| ctx.revision),
+        };
+        if self.last_state.as_ref() == Some(&next_state) {
+            return Ok(());
+        }
+
         self.shutdown();
 
-        if !desired.foxglove_enabled {
+        if !next_state.enabled {
+            self.last_state = Some(next_state);
             return Ok(());
         }
 
         let Some(context) = context else {
+            self.last_state = Some(next_state);
             return Ok(());
         };
 
         let shutdown = CancellationToken::new();
         let bridge_cfg = BridgeConfig {
-            ws_addr: desired.foxglove_ws_addr.clone(),
+            ws_addr: next_state.ws_addr.clone(),
         };
         let packets = context.packets.clone();
         let hub = context.hub.clone();
@@ -151,6 +196,7 @@ impl PacketSink for FoxgloveSink {
         });
         self.task = Some(task);
         self.shutdown = Some(shutdown);
+        self.last_state = Some(next_state);
 
         Ok(())
     }
@@ -162,12 +208,14 @@ impl PacketSink for FoxgloveSink {
         if let Some(task) = self.task.take() {
             task.abort();
         }
+        self.last_state = None;
     }
 }
 
 pub struct OutputManager {
     desired: OutputState,
     context: Option<SinkContext>,
+    context_revision: u64,
     sinks: Vec<RegisteredSink>,
     failure_tx: broadcast::Sender<String>,
 }
@@ -184,6 +232,7 @@ impl OutputManager {
         Ok(Self {
             desired,
             context: None,
+            context_revision: 0,
             sinks,
             failure_tx,
         })
@@ -199,6 +248,7 @@ impl OutputManager {
         Ok(Self {
             desired,
             context: None,
+            context_revision: 0,
             sinks: registered,
             failure_tx,
         })
@@ -214,7 +264,12 @@ impl OutputManager {
     }
 
     pub async fn apply(&mut self, hub: Hub, packets: Vec<PacketDef>) -> Result<()> {
-        self.context = Some(SinkContext { hub, packets });
+        self.context_revision = self.context_revision.wrapping_add(1);
+        self.context = Some(SinkContext {
+            hub,
+            packets,
+            revision: self.context_revision,
+        });
         self.reconcile_all()
     }
 

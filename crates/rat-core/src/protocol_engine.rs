@@ -1,25 +1,10 @@
-use rat_protocol::{cobs_decode, PacketData, ProtocolContext, ProtocolError, RatPacket};
+use rat_protocol::{
+    cobs_decode, DynamicPacketDef, PacketData, ProtocolContext, ProtocolError, RatPacket,
+};
 use thiserror::Error;
 
 pub type PacketEnvelope = RatPacket;
 pub type PacketPayload = PacketData;
-
-#[derive(Clone, Debug)]
-pub(crate) struct RuntimeDynamicFieldDef {
-    pub name: String,
-    pub c_type: String,
-    pub offset: usize,
-    pub size: usize,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct RuntimeDynamicPacketDef {
-    pub id: u8,
-    pub struct_name: String,
-    pub packed: bool,
-    pub byte_size: usize,
-    pub fields: Vec<RuntimeDynamicFieldDef>,
-}
 
 #[derive(Debug, Error, Clone)]
 pub(crate) enum ProtocolEngineError {
@@ -45,32 +30,6 @@ impl RatProtocolEngine {
         }
     }
 
-    fn register_dynamic_impl(
-        &mut self,
-        def: RuntimeDynamicPacketDef,
-    ) -> Result<(), ProtocolEngineError> {
-        let packet_def = rat_protocol::DynamicPacketDef {
-            id: def.id,
-            struct_name: def.struct_name,
-            packed: def.packed,
-            byte_size: def.byte_size,
-            fields: def
-                .fields
-                .into_iter()
-                .map(|field| rat_protocol::DynamicFieldDef {
-                    name: field.name,
-                    c_type: field.c_type,
-                    offset: field.offset,
-                    size: field.size,
-                })
-                .collect(),
-        };
-
-        self.context
-            .register_dynamic(packet_def.id, packet_def)
-            .map_err(|err| ProtocolEngineError::Register(err.to_string()))
-    }
-
     pub(crate) fn set_text_packet_id(&mut self, id: u8) {
         self.context.set_text_packet_id(id);
     }
@@ -81,9 +40,11 @@ impl RatProtocolEngine {
 
     pub(crate) fn register_dynamic(
         &mut self,
-        def: RuntimeDynamicPacketDef,
+        def: DynamicPacketDef,
     ) -> Result<(), ProtocolEngineError> {
-        self.register_dynamic_impl(def)
+        self.context
+            .register_dynamic(def.id, def)
+            .map_err(|err| ProtocolEngineError::Register(err.to_string()))
     }
 
     pub(crate) fn parse_packet(

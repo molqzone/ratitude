@@ -1,12 +1,11 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
+use rat_protocol::{DynamicFieldDef, DynamicPacketDef};
 use tokio::time::Instant as TokioInstant;
 use tracing::{debug, info};
 
-use crate::protocol_engine::{
-    ProtocolEngineError, RatProtocolEngine, RuntimeDynamicFieldDef, RuntimeDynamicPacketDef,
-};
+use crate::protocol_engine::{ProtocolEngineError, RatProtocolEngine};
 
 use super::control_message::{parse_control_message, ControlMessage};
 #[cfg(test)]
@@ -101,16 +100,16 @@ fn register_runtime_schema(
         let fields = packet
             .fields
             .iter()
-            .map(|field| RuntimeDynamicFieldDef {
+            .map(|field| DynamicFieldDef {
                 name: field.name.clone(),
                 c_type: field.c_type.clone(),
                 offset: field.offset,
                 size: field.size,
             })
-            .collect::<Vec<RuntimeDynamicFieldDef>>();
+            .collect::<Vec<DynamicFieldDef>>();
 
         protocol
-            .register_dynamic(RuntimeDynamicPacketDef {
+            .register_dynamic(DynamicPacketDef {
                 id: packet.id as u8,
                 struct_name: packet.struct_name.clone(),
                 packed: packet.packed,

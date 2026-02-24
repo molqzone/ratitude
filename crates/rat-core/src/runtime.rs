@@ -15,10 +15,10 @@ use tracing::{debug, error, warn};
 use crate::protocol_engine::{
     decode_frame, PacketEnvelope, ProtocolEngineError, RatProtocolEngine,
 };
-use crate::{spawn_listener, Hub, ListenerOptions};
+use crate::{spawn_listener, Hub, ListenerOptions, PacketPayload};
 
 use self::control::{handle_control_payload, ControlOutcome, SchemaState, CONTROL_PACKET_ID};
-use self::unknown_monitor::UnknownPacketMonitor;
+use self::unknown_monitor::{UnknownPacketMonitor, UnknownPacketObservation};
 
 const SIGNAL_BUFFER: usize = 8;
 
@@ -230,45 +230,21 @@ async fn run_frame_consumer(
                 let Some(frame) = maybe_frame else {
                     return Err(RuntimeError::FrameConsumerStopped);
                 };
-                let decoded = match decode_frame(&frame) {
-                    Ok(decoded) => decoded,
-                    Err(err) => {
-                        debug!(error = %err, frame_len = frame.len(), "dropping invalid COBS frame");
-                        continue;
-                    }
-                };
-                if decoded.is_empty() {
+                let Some((id, payload)) = decode_transport_frame(&frame) else {
                     continue;
-                }
-
-                let id = decoded[0];
-                let payload = decoded[1..].to_vec();
+                };
 
                 if id == CONTROL_PACKET_ID {
-                    let control_outcome =
-                        handle_control_payload(&payload, &mut schema_state, protocol)?;
-                    match control_outcome {
-                        ControlOutcome::SchemaReset => {
-                            unknown_monitor = UnknownPacketMonitor::new(unknown_window, unknown_threshold);
-                        }
-                        ControlOutcome::SchemaReady {
-                            schema_hash,
-                            packets,
-                        } => {
-                            unknown_monitor = UnknownPacketMonitor::new(unknown_window, unknown_threshold);
-                            if signals
-                                .send(RuntimeSignal::SchemaReady {
-                                    schema_hash,
-                                    packets,
-                                })
-                                .await
-                                .is_err()
-                            {
-                                return Err(RuntimeError::FrameConsumerStopped);
-                            }
-                        }
-                        ControlOutcome::Noop => {}
-                    }
+                    handle_control_frame(
+                        &payload,
+                        &mut schema_state,
+                        protocol,
+                        &mut unknown_monitor,
+                        unknown_window,
+                        unknown_threshold,
+                        &signals,
+                    )
+                    .await?;
                     continue;
                 }
 
@@ -277,62 +253,159 @@ async fn run_frame_consumer(
                     continue;
                 }
 
-                let data = match protocol.parse_packet(id, &payload) {
-                    Ok(data) => data,
-                    Err(ProtocolEngineError::UnknownPacketId(unknown_id)) => {
-                        let observation = unknown_monitor.record(unknown_id);
-                        if let Some(report) = observation.rolled_over {
-                            warn!(
-                                window_secs = unknown_monitor.window.as_secs(),
-                                dropped = report.count,
-                                unique_ids = report.unique_ids,
-                                "unknown packets dropped in previous window"
-                            );
-                        }
-                        if observation.threshold_crossed {
-                            error!(
-                                packet_id = format!("0x{:02X}", unknown_id),
-                                window_secs = unknown_monitor.window.as_secs(),
-                                threshold = unknown_monitor.threshold,
-                                window_count = observation.window_count,
-                                total_unknown = observation.total_count,
-                                "unknown packet flood detected (not declared in runtime schema)"
-                            );
-                        } else {
-                            warn!(
-                                packet_id = format!("0x{:02X}", unknown_id),
-                                window_count = observation.window_count,
-                                total_unknown = observation.total_count,
-                                "dropping unknown packet id (not declared in runtime schema)"
-                            );
-                        }
-                        continue;
-                    }
-                    Err(err) => {
-                        warn!(packet_id = format!("0x{:02X}", id), error = %err, payload_len = payload.len(), "dropping undecodable packet");
-                        continue;
-                    }
+                let Some(data) = parse_data_packet(
+                    protocol,
+                    id,
+                    &payload,
+                    &mut unknown_monitor,
+                ) else {
+                    continue;
                 };
 
-                if hub
-                    .publish(PacketEnvelope {
-                        id,
-                        timestamp: SystemTime::now(),
-                        payload,
-                        data,
-                    })
-                    .is_err()
-                {
-                    debug!(
-                        packet_id = format!("0x{:02X}", id),
-                        "dropping packet because no hub subscribers are active"
-                    );
-                }
+                publish_runtime_packet(&hub, id, payload, data);
             }
         }
     }
 
     Ok(())
+}
+
+fn decode_transport_frame(frame: &[u8]) -> Option<(u8, Vec<u8>)> {
+    let decoded = match decode_frame(frame) {
+        Ok(decoded) => decoded,
+        Err(err) => {
+            debug!(
+                error = %err,
+                frame_len = frame.len(),
+                "dropping invalid COBS frame"
+            );
+            return None;
+        }
+    };
+    if decoded.is_empty() {
+        return None;
+    }
+
+    let id = decoded[0];
+    let payload = decoded[1..].to_vec();
+    Some((id, payload))
+}
+
+async fn handle_control_frame(
+    payload: &[u8],
+    schema_state: &mut SchemaState,
+    protocol: &mut RatProtocolEngine,
+    unknown_monitor: &mut UnknownPacketMonitor,
+    unknown_window: Duration,
+    unknown_threshold: u32,
+    signals: &mpsc::Sender<RuntimeSignal>,
+) -> Result<(), RuntimeError> {
+    let control_outcome = handle_control_payload(payload, schema_state, protocol)?;
+    match control_outcome {
+        ControlOutcome::SchemaReset => {
+            reset_unknown_monitor(unknown_monitor, unknown_window, unknown_threshold);
+        }
+        ControlOutcome::SchemaReady {
+            schema_hash,
+            packets,
+        } => {
+            reset_unknown_monitor(unknown_monitor, unknown_window, unknown_threshold);
+            if signals
+                .send(RuntimeSignal::SchemaReady {
+                    schema_hash,
+                    packets,
+                })
+                .await
+                .is_err()
+            {
+                return Err(RuntimeError::FrameConsumerStopped);
+            }
+        }
+        ControlOutcome::Noop => {}
+    }
+    Ok(())
+}
+
+fn parse_data_packet(
+    protocol: &RatProtocolEngine,
+    id: u8,
+    payload: &[u8],
+    unknown_monitor: &mut UnknownPacketMonitor,
+) -> Option<PacketPayload> {
+    match protocol.parse_packet(id, payload) {
+        Ok(data) => Some(data),
+        Err(ProtocolEngineError::UnknownPacketId(unknown_id)) => {
+            let observation = unknown_monitor.record(unknown_id);
+            report_unknown_packet(unknown_id, unknown_monitor, observation);
+            None
+        }
+        Err(err) => {
+            warn!(
+                packet_id = format!("0x{:02X}", id),
+                error = %err,
+                payload_len = payload.len(),
+                "dropping undecodable packet"
+            );
+            None
+        }
+    }
+}
+
+fn report_unknown_packet(
+    unknown_id: u8,
+    unknown_monitor: &UnknownPacketMonitor,
+    observation: UnknownPacketObservation,
+) {
+    if let Some(report) = observation.rolled_over {
+        warn!(
+            window_secs = unknown_monitor.window.as_secs(),
+            dropped = report.count,
+            unique_ids = report.unique_ids,
+            "unknown packets dropped in previous window"
+        );
+    }
+    if observation.threshold_crossed {
+        error!(
+            packet_id = format!("0x{:02X}", unknown_id),
+            window_secs = unknown_monitor.window.as_secs(),
+            threshold = unknown_monitor.threshold,
+            window_count = observation.window_count,
+            total_unknown = observation.total_count,
+            "unknown packet flood detected (not declared in runtime schema)"
+        );
+    } else {
+        warn!(
+            packet_id = format!("0x{:02X}", unknown_id),
+            window_count = observation.window_count,
+            total_unknown = observation.total_count,
+            "dropping unknown packet id (not declared in runtime schema)"
+        );
+    }
+}
+
+fn publish_runtime_packet(hub: &Hub, id: u8, payload: Vec<u8>, data: PacketPayload) {
+    if hub
+        .publish(PacketEnvelope {
+            id,
+            timestamp: SystemTime::now(),
+            payload,
+            data,
+        })
+        .is_err()
+    {
+        debug!(
+            packet_id = format!("0x{:02X}", id),
+            "dropping packet because no hub subscribers are active"
+        );
+    }
+}
+
+fn reset_unknown_monitor(
+    unknown_monitor: &mut UnknownPacketMonitor,
+    unknown_window: Duration,
+    unknown_threshold: u32,
+) {
+    *unknown_monitor = UnknownPacketMonitor::new(unknown_window, unknown_threshold);
 }
 
 #[cfg(test)]
