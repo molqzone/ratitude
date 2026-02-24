@@ -217,7 +217,7 @@ async fn runtime_decodes_and_publishes_valid_packet_after_schema_ready() {
         .collect::<BTreeMap<String, serde_json::Value>>();
     assert_eq!(actual, expected);
 
-    runtime.shutdown(true).await;
+    runtime.shutdown().await;
     let _ = send_task.await;
 }
 
@@ -258,7 +258,7 @@ async fn runtime_emits_schema_ready_signal() {
         other => panic!("unexpected signal: {other:?}"),
     }
 
-    runtime.shutdown(true).await;
+    runtime.shutdown().await;
     let _ = send_task.await;
 }
 
@@ -288,7 +288,7 @@ async fn runtime_schema_timeout_renews_while_chunks_keep_arriving() {
         .expect("signal");
     assert!(matches!(signal, RuntimeSignal::SchemaReady { .. }));
 
-    runtime.shutdown(true).await;
+    runtime.shutdown().await;
     let _ = send_task.await;
 }
 
@@ -340,7 +340,7 @@ async fn runtime_emits_fatal_on_schema_hash_mismatch() {
         other => panic!("unexpected signal: {other:?}"),
     }
 
-    runtime.shutdown(true).await;
+    runtime.shutdown().await;
     let _ = send_task.await;
 }
 
@@ -374,7 +374,7 @@ async fn runtime_emits_fatal_on_duplicate_packet_id() {
         other => panic!("unexpected signal: {other:?}"),
     }
 
-    runtime.shutdown(true).await;
+    runtime.shutdown().await;
     let _ = send_task.await;
 }
 
@@ -411,6 +411,6 @@ async fn runtime_emits_fatal_on_unknown_schema_field() {
         other => panic!("unexpected signal: {other:?}"),
     }
 
-    runtime.shutdown(true).await;
+    runtime.shutdown().await;
     let _ = send_task.await;
 }

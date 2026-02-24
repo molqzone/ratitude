@@ -36,6 +36,7 @@ text_id = 255
 auto_scan = true
 scan_timeout_ms = 300
 last_selected_addr = "127.0.0.1:19021"
+seed_addrs = ["127.0.0.1:19021", "127.0.0.1:2331", "127.0.0.1:9090"]
 
 [ratd.behavior]
 reconnect = "1s"
@@ -56,6 +57,7 @@ ws_addr = "127.0.0.1:8765"
 
 - `ratd` 不托管 backend 进程，只连接既有 RTT 端口。
 - `last_selected_addr` 的端口号是 J-Link RTT Telnet 端口的唯一来源（`rtt_telnet_port` 已移除）。
+- `seed_addrs` 定义 `auto_scan=true` 时的候选地址集合；默认值为 `19021/2331/9090`。
 - `ratd.source.auto_scan = false` 时，只会探测 `last_selected_addr`，不再注入默认端口候选；`reachable` 始终来自实时探测结果。
 - 命令台是主配置入口之一：`$source use`、`$foxglove on|off`、`$jsonl on|off [path]` 会写回该文件。
 - 设计约束：runtime 每次重启都会重新创建 JSONL writer；当 `ratd.outputs.jsonl.enabled = true` 且配置了 `path` 时，目标文件会被清空重写（非追加）。

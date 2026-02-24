@@ -5,7 +5,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use crate::cli::Cli;
-use crate::command_loop::handle_console_command;
+use crate::command_loop::{handle_console_command, CommandAction};
 use crate::config_io::load_config;
 use crate::console::spawn_console_reader;
 use crate::output_manager::OutputManager;
@@ -106,7 +106,7 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
     let mut state = DaemonState::new(cli.config.clone(), cfg, source);
     render_candidates(state.source().candidates());
     let mut output_manager = OutputManager::from_config(state.config())?;
-    let mut runtime = activate_runtime(None, &mut state, &mut output_manager).await?;
+    let mut runtime = Some(activate_runtime(None, &mut state, &mut output_manager).await?);
     let mut output_failure_rx = output_manager.subscribe_failures();
 
     println!(
@@ -118,59 +118,82 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
     let console_shutdown = CancellationToken::new();
     let mut command_rx = spawn_console_reader(console_shutdown.clone());
 
-    loop {
+    let run_result: Result<()> = loop {
         tokio::select! {
             ctrl = tokio::signal::ctrl_c() => {
-                ctrl.context("failed to wait ctrl-c")?;
-                info!("received ctrl-c, stopping daemon");
-                break;
+                match ctrl.context("failed to wait ctrl-c") {
+                    Ok(()) => {
+                        info!("received ctrl-c, stopping daemon");
+                        break Ok(());
+                    }
+                    Err(err) => break Err(err),
+                }
             }
             command = command_rx.recv() => {
                 let Some(command) = command else {
-                    break;
+                    break Ok(());
                 };
-                let command_outcome =
-                    process_console_event(command, runtime, &mut state, &mut output_manager).await?;
-                runtime = command_outcome.runtime;
-                if command_outcome.should_quit {
-                    break;
+                let action = match process_console_event(command, &mut state, &mut output_manager).await {
+                    Ok(action) => action,
+                    Err(err) => break Err(err),
+                };
+                if action.restart_runtime {
+                    let Some(old_runtime) = runtime.take() else {
+                        break Err(anyhow!("ingest runtime missing before restart"));
+                    };
+                    match activate_runtime(Some(old_runtime), &mut state, &mut output_manager).await {
+                        Ok(new_runtime) => {
+                            runtime = Some(new_runtime);
+                        }
+                        Err(err) => break Err(err),
+                    }
+                }
+                if action.should_quit {
+                    break Ok(());
                 }
             }
-            maybe_signal = runtime.recv_signal() => {
-                process_runtime_signal(maybe_signal, &mut state, &mut output_manager, &runtime).await?;
+            maybe_signal = async {
+                let Some(runtime_ref) = runtime.as_mut() else {
+                    return None;
+                };
+                runtime_ref.recv_signal().await
+            } => {
+                let Some(runtime_ref) = runtime.as_ref() else {
+                    break Err(anyhow!("ingest runtime missing while processing signal"));
+                };
+                if let Err(err) = process_runtime_signal(
+                    maybe_signal,
+                    &mut state,
+                    &mut output_manager,
+                    runtime_ref,
+                )
+                .await
+                {
+                    break Err(err);
+                }
             }
             sink_failure = output_failure_rx.recv() => {
-                process_output_failure(sink_failure)?;
+                if let Err(err) = process_output_failure(sink_failure) {
+                    break Err(err);
+                }
             }
         }
-    }
+    };
 
     console_shutdown.cancel();
     output_manager.shutdown().await;
-    runtime.shutdown(true).await;
-    Ok(())
-}
-
-struct ConsoleEventOutcome {
-    runtime: rat_core::IngestRuntime,
-    should_quit: bool,
+    if let Some(runtime) = runtime {
+        runtime.shutdown().await;
+    }
+    run_result
 }
 
 async fn process_console_event(
     command: crate::console::ConsoleCommand,
-    runtime: rat_core::IngestRuntime,
     state: &mut DaemonState,
     output_manager: &mut OutputManager,
-) -> Result<ConsoleEventOutcome> {
-    let mut runtime = runtime;
-    let action = handle_console_command(command, state, output_manager).await?;
-    if action.restart_runtime {
-        runtime = activate_runtime(Some(runtime), state, output_manager).await?;
-    }
-    Ok(ConsoleEventOutcome {
-        runtime,
-        should_quit: action.should_quit,
-    })
+) -> Result<CommandAction> {
+    handle_console_command(command, state, output_manager).await
 }
 
 async fn process_runtime_signal(

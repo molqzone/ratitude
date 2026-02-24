@@ -40,7 +40,7 @@ impl ProtocolContext {
         self.dynamic_registry.clear();
     }
 
-    pub fn register_dynamic(&mut self, id: u8, def: DynamicPacketDef) -> Result<(), ProtocolError> {
+    pub fn register_dynamic(&mut self, def: DynamicPacketDef) -> Result<(), ProtocolError> {
         if def.byte_size == 0 {
             return Err(ProtocolError::InvalidDynamicByteSize(def.byte_size));
         }
@@ -48,8 +48,10 @@ impl ProtocolContext {
             return Err(ProtocolError::MissingDynamicFields);
         }
 
+        let packet_id = def.id;
+
         let mut normalized = DynamicPacketDef {
-            id,
+            id: packet_id,
             struct_name: def.struct_name,
             packed: def.packed,
             byte_size: def.byte_size,
@@ -84,7 +86,7 @@ impl ProtocolContext {
             });
         }
 
-        self.dynamic_registry.insert(id, normalized);
+        self.dynamic_registry.insert(packet_id, normalized);
 
         Ok(())
     }

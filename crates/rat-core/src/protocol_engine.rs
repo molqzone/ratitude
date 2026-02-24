@@ -43,7 +43,7 @@ impl RatProtocolEngine {
         def: DynamicPacketDef,
     ) -> Result<(), ProtocolEngineError> {
         self.context
-            .register_dynamic(def.id, def)
+            .register_dynamic(def)
             .map_err(|err| ProtocolEngineError::Register(err.to_string()))
     }
 

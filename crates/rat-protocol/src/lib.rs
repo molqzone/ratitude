@@ -53,20 +53,18 @@ mod tests {
         let mut ctx_a = ProtocolContext::new();
         let ctx_b = ProtocolContext::new();
         ctx_a
-            .register_dynamic(
-                0x20,
-                DynamicPacketDef {
-                    id: 0x20,
-                    struct_name: "Demo".to_string(),
-                    packed: true,
-                    byte_size: 4,
-                    fields: vec![DynamicFieldDef {
-                        name: "value".to_string(),
-                        c_type: "int32_t".to_string(),
-                        offset: 0,
-                        size: 4,
-                    }],
-                },
+            .register_dynamic(DynamicPacketDef {
+                id: 0x20,
+                struct_name: "Demo".to_string(),
+                packed: true,
+                byte_size: 4,
+                fields: vec![DynamicFieldDef {
+                    name: "value".to_string(),
+                    c_type: "int32_t".to_string(),
+                    offset: 0,
+                    size: 4,
+                }],
+            },
             )
             .expect("register dynamic");
 

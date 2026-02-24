@@ -111,7 +111,15 @@ impl IngestRuntime {
         self.signals_rx.recv().await
     }
 
-    pub async fn shutdown(self, join_consumer: bool) {
+    pub async fn shutdown(self) {
+        self.shutdown_inner(true).await;
+    }
+
+    pub async fn shutdown_detach_consumer(self) {
+        self.shutdown_inner(false).await;
+    }
+
+    async fn shutdown_inner(self, join_consumer: bool) {
         let IngestRuntime {
             shutdown,
             hub: _hub,

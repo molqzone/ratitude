@@ -96,6 +96,25 @@ fn validate_rejects_zero_scan_timeout() {
 }
 
 #[test]
+fn validate_rejects_empty_seed_addrs_when_auto_scan_enabled() {
+    let mut cfg = RatitudeConfig::default();
+    cfg.ratd.source.auto_scan = true;
+    cfg.ratd.source.seed_addrs.clear();
+    let err = cfg.validate().expect_err("validation should fail");
+    assert!(err
+        .to_string()
+        .contains("ratd.source.seed_addrs must not be empty"));
+}
+
+#[test]
+fn normalize_restores_seed_addrs_when_empty() {
+    let mut cfg = RatitudeConfig::default();
+    cfg.ratd.source.seed_addrs.clear();
+    cfg.normalize();
+    assert!(!cfg.ratd.source.seed_addrs.is_empty());
+}
+
+#[test]
 fn removed_ratd_sections_are_rejected() {
     let dir = unique_temp_dir("ratitude_cfg_removed_sections");
     let path = dir.join("rat.toml");
