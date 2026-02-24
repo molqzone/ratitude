@@ -7,28 +7,31 @@ use crate::model::ParsedTaggedFile;
 use crate::parser::{collect_comment_tags, collect_type_definitions};
 use crate::SyncError;
 
-pub(crate) fn parse_tagged_file(path: &Path) -> Result<Option<ParsedTaggedFile>, SyncError> {
+pub(crate) fn parse_tagged_file_with_parser(
+    path: &Path,
+    parser: &mut Parser,
+) -> Result<Option<ParsedTaggedFile>, SyncError> {
     let source = fs::read(path).map_err(|source_err| SyncError::ReadSource {
         path: path.to_path_buf(),
         source: source_err,
     })?;
-    parse_tagged_source(path, &source)
+    parse_tagged_source_with_parser(path, &source, parser)
 }
 
+#[cfg(test)]
 pub(crate) fn parse_tagged_source(
     path: &Path,
     source: &[u8],
 ) -> Result<Option<ParsedTaggedFile>, SyncError> {
-    let mut parser = Parser::new();
-    parser
-        .set_language(&tree_sitter_c::LANGUAGE.into())
-        .map_err(|err| {
-            SyncError::Validation(format!(
-                "tree-sitter init failed for {}: {err}",
-                path.display()
-            ))
-        })?;
+    let mut parser = new_c_parser()?;
+    parse_tagged_source_with_parser(path, source, &mut parser)
+}
 
+pub(crate) fn parse_tagged_source_with_parser(
+    path: &Path,
+    source: &[u8],
+    parser: &mut Parser,
+) -> Result<Option<ParsedTaggedFile>, SyncError> {
     let tree = parser
         .parse(source, None)
         .ok_or_else(|| SyncError::ParseSource {
@@ -50,6 +53,14 @@ pub(crate) fn parse_tagged_source(
     structs.sort_by_key(|value| value.start_byte);
 
     Ok(Some(ParsedTaggedFile { tags, structs }))
+}
+
+pub(crate) fn new_c_parser() -> Result<Parser, SyncError> {
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_c::LANGUAGE.into())
+        .map_err(|err| SyncError::Validation(format!("tree-sitter init failed: {err}")))?;
+    Ok(parser)
 }
 
 #[cfg(test)]

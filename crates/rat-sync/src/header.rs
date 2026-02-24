@@ -122,15 +122,14 @@ fn parse_schema_hash(raw: &str) -> Result<u64, SyncError> {
 mod tests {
     use std::fs;
 
-    use rat_config::{FieldDef, PacketType};
+    use rat_config::{FieldDef, PacketDef, PacketType};
 
     use super::*;
-    use crate::generated::{GeneratedMeta, GeneratedPacketDef};
+    use crate::generated::GeneratedMeta;
 
     fn sample_generated() -> GeneratedConfig {
-        let packets = vec![GeneratedPacketDef {
+        let packets = vec![PacketDef {
             id: 0x21,
-            signature_hash: "0x2".to_string(),
             struct_name: "DemoPacket".to_string(),
             packet_type: PacketType::Plot,
             packed: true,

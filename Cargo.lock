@@ -985,6 +985,7 @@ dependencies = [
 name = "rat-config"
 version = "0.1.0"
 dependencies = [
+ "humantime",
  "rat-protocol",
  "serde",
  "thiserror 2.0.18",
@@ -1000,6 +1001,7 @@ dependencies = [
  "cobs",
  "futures-util",
  "hex",
+ "rat-config",
  "rat-protocol",
  "serde",
  "serde_json",

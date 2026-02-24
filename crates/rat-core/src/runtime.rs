@@ -1,9 +1,11 @@
 mod control;
+mod control_message;
+mod schema_assembly;
 mod unknown_monitor;
 
 use std::time::{Duration, SystemTime};
 
-use rat_protocol::PacketType;
+use rat_config::{FieldDef, PacketDef};
 use thiserror::Error;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -20,23 +22,8 @@ use self::unknown_monitor::UnknownPacketMonitor;
 
 const SIGNAL_BUFFER: usize = 8;
 
-#[derive(Clone, Debug)]
-pub struct RuntimeFieldDef {
-    pub name: String,
-    pub c_type: String,
-    pub offset: usize,
-    pub size: usize,
-}
-
-#[derive(Clone, Debug)]
-pub struct RuntimePacketDef {
-    pub id: u16,
-    pub struct_name: String,
-    pub packet_type: PacketType,
-    pub packed: bool,
-    pub byte_size: usize,
-    pub fields: Vec<RuntimeFieldDef>,
-}
+pub type RuntimeFieldDef = FieldDef;
+pub type RuntimePacketDef = PacketDef;
 
 #[derive(Clone, Debug)]
 pub struct IngestRuntimeConfig {

@@ -1,12 +1,13 @@
+use rat_config::PacketDef;
 use rat_protocol::hash_schema_bytes;
 
-use crate::generated::{GeneratedConfig, GeneratedPacketDef};
+use crate::generated::GeneratedConfig;
 
 pub(crate) fn build_runtime_schema_toml(generated: &GeneratedConfig) -> String {
     build_runtime_schema_toml_from_packets(&generated.packets)
 }
 
-pub(crate) fn build_runtime_schema_toml_from_packets(packets: &[GeneratedPacketDef]) -> String {
+pub(crate) fn build_runtime_schema_toml_from_packets(packets: &[PacketDef]) -> String {
     let mut out = String::new();
     for packet in packets {
         out.push_str("[[packets]]\n");
@@ -38,7 +39,7 @@ pub(crate) fn build_runtime_schema_toml_from_packets(packets: &[GeneratedPacketD
     out
 }
 
-pub(crate) fn compute_runtime_schema_hash_from_packets(packets: &[GeneratedPacketDef]) -> u64 {
+pub(crate) fn compute_runtime_schema_hash_from_packets(packets: &[PacketDef]) -> u64 {
     let schema_toml = build_runtime_schema_toml_from_packets(packets);
     hash_schema_bytes(schema_toml.as_bytes())
 }

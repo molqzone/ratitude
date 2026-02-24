@@ -6,7 +6,7 @@ use rat_config::{ConfigPaths, RatitudeConfig};
 use crate::assembler::assemble_discovered_packets;
 use crate::ast::resolve_scan_root;
 use crate::model::DiscoveredPacket;
-use crate::parser_runner::parse_tagged_file;
+use crate::parser_runner::{new_c_parser, parse_tagged_file_with_parser};
 use crate::scanner::scan_source_files;
 use crate::SyncError;
 
@@ -36,8 +36,9 @@ pub(crate) fn discover_packets(
     )?;
 
     let mut discovered = Vec::new();
+    let mut parser = new_c_parser()?;
     for file in files {
-        let Some(parsed) = parse_tagged_file(&file)? else {
+        let Some(parsed) = parse_tagged_file_with_parser(&file, &mut parser)? else {
             continue;
         };
         let packets = assemble_discovered_packets(&file, &scan_root, parsed)?;

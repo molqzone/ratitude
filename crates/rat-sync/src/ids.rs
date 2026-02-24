@@ -24,7 +24,6 @@ pub(crate) fn allocate_packet_ids(
 
         assigned.push(GeneratedPacketDef {
             id,
-            signature_hash: format!("0x{:016X}", packet.signature_hash),
             struct_name: packet.struct_name.clone(),
             packet_type: packet.packet_type,
             packed: packet.packed,

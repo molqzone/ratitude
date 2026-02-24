@@ -1,6 +1,6 @@
-use rat_config::{FieldDef, PacketType, RatitudeConfig};
+use rat_config::{FieldDef, PacketDef, PacketType, RatitudeConfig};
 
-use crate::generated::{GeneratedConfig, GeneratedPacketDef};
+use crate::generated::GeneratedConfig;
 
 #[derive(Debug, Clone)]
 pub struct DiscoveredPacket {
@@ -58,6 +58,6 @@ pub struct SyncPipelineOutput {
 pub struct SyncFsResult {
     pub config: RatitudeConfig,
     pub generated: GeneratedConfig,
-    pub packet_defs: Vec<GeneratedPacketDef>,
+    pub packet_defs: Vec<PacketDef>,
     pub layout_warnings: Vec<String>,
 }

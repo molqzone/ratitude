@@ -8,6 +8,7 @@ bytes.workspace = true
 cobs.workspace = true
 futures-util.workspace = true
 hex.workspace = true
+rat-config = { path = "../rat-config" }
 rat-protocol = { path = "../rat-protocol" }
 serde.workspace = true
 serde_json.workspace = true

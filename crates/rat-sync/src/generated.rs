@@ -1,4 +1,4 @@
-use rat_config::{FieldDef, PacketDef, PacketType};
+use rat_config::PacketDef;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -17,34 +17,7 @@ impl Default for GeneratedMeta {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct GeneratedPacketDef {
-    pub id: u16,
-    pub signature_hash: String,
-    pub struct_name: String,
-    #[serde(rename = "type")]
-    pub packet_type: PacketType,
-    pub packed: bool,
-    pub byte_size: usize,
-    #[serde(default)]
-    pub source: String,
-    #[serde(default)]
-    pub fields: Vec<FieldDef>,
-}
-
-impl GeneratedPacketDef {
-    pub fn to_packet_def(&self) -> PacketDef {
-        PacketDef {
-            id: self.id,
-            struct_name: self.struct_name.clone(),
-            packet_type: self.packet_type,
-            packed: self.packed,
-            byte_size: self.byte_size,
-            source: self.source.clone(),
-            fields: self.fields.clone(),
-        }
-    }
-}
+pub type GeneratedPacketDef = PacketDef;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
@@ -55,9 +28,6 @@ pub struct GeneratedConfig {
 
 impl GeneratedConfig {
     pub fn to_packet_defs(&self) -> Vec<PacketDef> {
-        self.packets
-            .iter()
-            .map(GeneratedPacketDef::to_packet_def)
-            .collect()
+        self.packets.clone()
     }
 }

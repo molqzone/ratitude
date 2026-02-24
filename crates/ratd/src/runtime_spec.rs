@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use rat_config::RatitudeConfig;
 use rat_core::{IngestRuntimeConfig, ListenerOptions};
 
@@ -16,8 +16,8 @@ pub(crate) fn build_runtime_spec(
     unknown_threshold: u32,
 ) -> Result<RuntimeSpec> {
     let text_id = parse_text_id(cfg.ratd.text_id)?;
-    let reconnect = parse_duration(&cfg.ratd.behavior.reconnect)?;
-    let schema_timeout = parse_duration(&cfg.ratd.behavior.schema_timeout)?;
+    let reconnect = cfg.ratd.behavior.reconnect_duration()?;
+    let schema_timeout = cfg.ratd.behavior.schema_timeout_duration()?;
 
     Ok(RuntimeSpec {
         ingest_config: IngestRuntimeConfig {
@@ -44,10 +44,6 @@ fn parse_text_id(value: u16) -> Result<u8> {
     Ok(value as u8)
 }
 
-fn parse_duration(raw: &str) -> Result<Duration> {
-    humantime::parse_duration(raw).with_context(|| format!("invalid duration: {}", raw))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,6 +66,8 @@ mod tests {
 
         let err = build_runtime_spec(&cfg, "127.0.0.1:19021", Duration::from_secs(5), 20)
             .expect_err("invalid timeout should fail");
-        assert!(err.to_string().contains("invalid duration"));
+        assert!(err
+            .to_string()
+            .contains("ratd.behavior.schema_timeout must be a valid duration string"));
     }
 }

@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
-use rat_config::{FieldDef, PacketDef, RatitudeConfig};
-use rat_core::{start_ingest_runtime, IngestRuntime, RuntimePacketDef};
+use rat_config::{PacketDef, RatitudeConfig};
+use rat_core::{start_ingest_runtime, IngestRuntime};
 use tracing::info;
 
 use crate::daemon::DaemonState;
@@ -37,40 +37,15 @@ pub(crate) async fn apply_schema_ready(
     output_manager: &mut OutputManager,
     runtime: &IngestRuntime,
     schema_hash: u64,
-    packets: Vec<RuntimePacketDef>,
+    packets: Vec<PacketDef>,
 ) -> Result<()> {
-    let packet_defs = runtime_packets_to_packet_defs(packets);
     state
         .runtime_mut()
         .schema_mut()
-        .replace(schema_hash, packet_defs);
+        .replace(schema_hash, packets);
     output_manager
         .apply(runtime.hub(), state.runtime().schema().packets().to_vec())
         .await
-}
-
-fn runtime_packets_to_packet_defs(runtime_packets: Vec<RuntimePacketDef>) -> Vec<PacketDef> {
-    runtime_packets
-        .into_iter()
-        .map(|packet| PacketDef {
-            id: packet.id,
-            struct_name: packet.struct_name,
-            packet_type: packet.packet_type,
-            packed: packet.packed,
-            byte_size: packet.byte_size,
-            source: "runtime-schema".to_string(),
-            fields: packet
-                .fields
-                .into_iter()
-                .map(|field| FieldDef {
-                    name: field.name,
-                    c_type: field.c_type,
-                    offset: field.offset,
-                    size: field.size,
-                })
-                .collect(),
-        })
-        .collect()
 }
 
 async fn start_runtime(cfg: &RatitudeConfig, addr: &str) -> Result<IngestRuntime> {

@@ -11,7 +11,7 @@ use crate::console::spawn_console_reader;
 use crate::output_manager::OutputManager;
 use crate::runtime_lifecycle::{activate_runtime, apply_schema_ready};
 use crate::runtime_schema::RuntimeSchemaState;
-use crate::source_scan::{render_candidates, SourceCandidate};
+use crate::source_scan::render_candidates;
 use crate::source_state::{build_source_domain, SourceDomainState};
 
 #[derive(Debug, Clone)]
@@ -192,6 +192,7 @@ mod tests {
     use crate::command_loop::handle_console_command;
     use crate::config_io::load_config;
     use crate::console::ConsoleCommand;
+    use crate::source_scan::SourceCandidate;
     use crate::source_state::{build_source_domain, select_active_source, SourceDomainState};
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {

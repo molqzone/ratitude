@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::{
     ConfigError, FoxgloveOutputConfig, GenerationConfig, ProjectConfig, RatdBehaviorConfig,
     RatdSourceConfig, RatitudeConfig,
@@ -48,6 +50,8 @@ impl RatitudeConfig {
                 "ratd.behavior.reader_buf must be > 0".to_string(),
             ));
         }
+        self.ratd.behavior.reconnect_duration()?;
+        self.ratd.behavior.schema_timeout_duration()?;
 
         if self.ratd.outputs.foxglove.ws_addr.trim().is_empty() {
             return Err(ConfigError::Validation(
@@ -103,4 +107,20 @@ impl RatitudeConfig {
             })
             .collect();
     }
+}
+
+impl RatdBehaviorConfig {
+    pub fn reconnect_duration(&self) -> Result<Duration, ConfigError> {
+        parse_duration_value("ratd.behavior.reconnect", &self.reconnect)
+    }
+
+    pub fn schema_timeout_duration(&self) -> Result<Duration, ConfigError> {
+        parse_duration_value("ratd.behavior.schema_timeout", &self.schema_timeout)
+    }
+}
+
+fn parse_duration_value(field: &str, raw: &str) -> Result<Duration, ConfigError> {
+    humantime::parse_duration(raw).map_err(|err| {
+        ConfigError::Validation(format!("{field} must be a valid duration string ({err})"))
+    })
 }
