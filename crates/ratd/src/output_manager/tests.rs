@@ -1,3 +1,6 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
 use tokio::sync::broadcast::error::TryRecvError;
 
 use super::*;
@@ -7,6 +10,10 @@ struct FailOnceSink {
 }
 
 struct NoopSink;
+struct RecoverProbeSink {
+    sync_calls: Arc<AtomicUsize>,
+    shutdown_calls: Arc<AtomicUsize>,
+}
 
 impl PacketSink for FailOnceSink {
     fn key(&self) -> &'static str {
@@ -44,6 +51,26 @@ impl PacketSink for NoopSink {
     }
 
     fn shutdown(&mut self) {}
+}
+
+impl PacketSink for RecoverProbeSink {
+    fn key(&self) -> &'static str {
+        "probe"
+    }
+
+    fn sync(
+        &mut self,
+        _desired: &OutputState,
+        _context: Option<&SinkContext>,
+        _failure_tx: &broadcast::Sender<String>,
+    ) -> Result<()> {
+        self.sync_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn shutdown(&mut self) {
+        self.shutdown_calls.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 #[test]
@@ -166,4 +193,31 @@ async fn apply_updates_context_key_when_runtime_generation_changes() {
         .await
         .expect("second apply");
     assert_ne!(manager.context.as_ref().map(|ctx| ctx.key), first_key);
+}
+
+#[test]
+fn recover_after_sink_failure_forces_shutdown_then_reconcile() {
+    let sync_calls = Arc::new(AtomicUsize::new(0));
+    let shutdown_calls = Arc::new(AtomicUsize::new(0));
+    let sink = RecoverProbeSink {
+        sync_calls: Arc::clone(&sync_calls),
+        shutdown_calls: Arc::clone(&shutdown_calls),
+    };
+    let mut manager = OutputManager::with_sinks_for_test(
+        OutputState {
+            jsonl_enabled: false,
+            jsonl_path: None,
+            foxglove_enabled: false,
+            foxglove_ws_addr: "127.0.0.1:8765".to_string(),
+        },
+        vec![Box::new(sink)],
+    )
+    .expect("build output manager");
+
+    manager
+        .recover_after_sink_failure()
+        .expect("recover sinks after failure");
+
+    assert_eq!(shutdown_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(sync_calls.load(Ordering::SeqCst), 1);
 }

@@ -40,6 +40,9 @@ trait PacketSink {
         failure_tx: &broadcast::Sender<String>,
     ) -> Result<()>;
     fn shutdown(&mut self);
+    fn force_reconcile(&mut self) {
+        self.shutdown();
+    }
 }
 
 struct RegisteredSink {
@@ -283,6 +286,13 @@ impl OutputManager {
 
     pub fn subscribe_failures(&self) -> broadcast::Receiver<String> {
         self.failure_tx.subscribe()
+    }
+
+    pub fn recover_after_sink_failure(&mut self) -> Result<()> {
+        for entry in &mut self.sinks {
+            entry.sink.force_reconcile();
+        }
+        self.reconcile_all()
     }
 
     fn reconcile_all(&mut self) -> Result<()> {

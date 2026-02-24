@@ -331,25 +331,37 @@ fn ratd_manifest_keeps_protocol_dependency_indirect() {
 
 #[test]
 fn output_failure_lagged_is_non_fatal() {
-    let result = process_output_failure(Err(tokio::sync::broadcast::error::RecvError::Lagged(3)));
-    assert!(matches!(result, Ok(LoopControl::Continue)));
+    let mut output_manager =
+        OutputManager::from_config(&RatitudeConfig::default()).expect("build output manager");
+    let result = process_output_failure(
+        Err(tokio::sync::broadcast::error::RecvError::Lagged(3)),
+        &mut output_manager,
+    );
+    assert!(result.is_ok());
 }
 
 #[test]
 fn output_failure_reason_is_non_fatal() {
-    let result = process_output_failure(Ok("sink failed".to_string()));
-    assert!(matches!(result, Ok(LoopControl::Continue)));
+    let mut output_manager =
+        OutputManager::from_config(&RatitudeConfig::default()).expect("build output manager");
+    let result = process_output_failure(Ok("sink failed".to_string()), &mut output_manager);
+    assert!(result.is_ok());
 }
 
 #[test]
 fn output_failure_channel_closed_is_non_fatal() {
-    let result = process_output_failure(Err(tokio::sync::broadcast::error::RecvError::Closed));
-    assert!(matches!(result, Ok(LoopControl::Continue)));
+    let mut output_manager =
+        OutputManager::from_config(&RatitudeConfig::default()).expect("build output manager");
+    let result = process_output_failure(
+        Err(tokio::sync::broadcast::error::RecvError::Closed),
+        &mut output_manager,
+    );
+    assert!(result.is_ok());
 }
 
 #[test]
 fn console_channel_closed_keeps_daemon_running_without_console() {
     let state = process_console_channel_closed();
-    assert!(matches!(state.loop_control, LoopControl::Continue));
     assert!(!state.keep_attached);
+    assert!(!state.should_quit);
 }

@@ -123,16 +123,15 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
         tokio::select! {
             ctrl = tokio::signal::ctrl_c() => {
                 match process_ctrl_c(ctrl) {
-                    Ok(LoopControl::Continue) => {}
-                    Ok(LoopControl::Quit) => break Ok(()),
+                    Ok(()) => break Ok(()),
                     Err(err) => break Err(err),
                 }
             }
             command = command_rx.recv(), if console_attached => {
                 match process_console_event(command, &mut state, &mut output_manager, &mut runtime).await {
-                    Ok(console_state) => {
-                        console_attached = console_state.keep_attached;
-                        if matches!(console_state.loop_control, LoopControl::Quit) {
+                    Ok(console_event) => {
+                        console_attached = console_event.keep_attached;
+                        if console_event.should_quit {
                             break Ok(());
                         }
                     }
@@ -140,7 +139,7 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
                 }
             }
             maybe_signal = runtime.recv_signal() => {
-                match process_runtime_signal(
+                if let Err(err) = process_runtime_signal(
                     maybe_signal,
                     &mut state,
                     &mut output_manager,
@@ -148,16 +147,12 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
                 )
                 .await
                 {
-                    Ok(LoopControl::Continue) => {}
-                    Ok(LoopControl::Quit) => break Ok(()),
-                    Err(err) => break Err(err),
+                    break Err(err);
                 }
             }
             sink_failure = output_failure_rx.recv() => {
-                match process_output_failure(sink_failure) {
-                    Ok(LoopControl::Continue) => {}
-                    Ok(LoopControl::Quit) => break Ok(()),
-                    Err(err) => break Err(err),
+                if let Err(err) = process_output_failure(sink_failure, &mut output_manager) {
+                    break Err(err);
                 }
             }
         }
@@ -170,38 +165,32 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LoopControl {
-    Continue,
-    Quit,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ConsoleLoopState {
-    loop_control: LoopControl,
+struct ConsoleEvent {
     keep_attached: bool,
+    should_quit: bool,
 }
 
-impl ConsoleLoopState {
+impl ConsoleEvent {
     const fn continue_with(keep_attached: bool) -> Self {
         Self {
-            loop_control: LoopControl::Continue,
             keep_attached,
+            should_quit: false,
         }
     }
 
     const fn quit() -> Self {
         Self {
-            loop_control: LoopControl::Quit,
             keep_attached: true,
+            should_quit: true,
         }
     }
 }
 
-fn process_ctrl_c(ctrl: std::io::Result<()>) -> Result<LoopControl> {
+fn process_ctrl_c(ctrl: std::io::Result<()>) -> Result<()> {
     match ctrl.context("failed to wait ctrl-c") {
         Ok(()) => {
             info!("received ctrl-c, stopping daemon");
-            Ok(LoopControl::Quit)
+            Ok(())
         }
         Err(err) => Err(err),
     }
@@ -212,7 +201,7 @@ async fn process_console_event(
     state: &mut DaemonState,
     output_manager: &mut OutputManager,
     runtime: &mut rat_core::IngestRuntime,
-) -> Result<ConsoleLoopState> {
+) -> Result<ConsoleEvent> {
     let Some(command) = command else {
         return Ok(process_console_channel_closed());
     };
@@ -222,15 +211,15 @@ async fn process_console_event(
         restart_runtime(runtime, state, output_manager).await?;
     }
     if action.should_quit {
-        return Ok(ConsoleLoopState::quit());
+        return Ok(ConsoleEvent::quit());
     }
 
-    Ok(ConsoleLoopState::continue_with(true))
+    Ok(ConsoleEvent::continue_with(true))
 }
 
-fn process_console_channel_closed() -> ConsoleLoopState {
+fn process_console_channel_closed() -> ConsoleEvent {
     warn!("console input stream closed; daemon continues without interactive command channel");
-    ConsoleLoopState::continue_with(false)
+    ConsoleEvent::continue_with(false)
 }
 
 async fn process_runtime_signal(
@@ -238,7 +227,7 @@ async fn process_runtime_signal(
     state: &mut DaemonState,
     output_manager: &mut OutputManager,
     runtime: &rat_core::IngestRuntime,
-) -> Result<LoopControl> {
+) -> Result<()> {
     match signal {
         Some(RuntimeSignal::SchemaReady {
             schema_hash,
@@ -254,7 +243,7 @@ async fn process_runtime_signal(
                     .schema_hash()
                     .unwrap_or(schema_hash)
             );
-            Ok(LoopControl::Continue)
+            Ok(())
         }
         Some(RuntimeSignal::Fatal(err)) => Err(anyhow!(err.to_string())),
         None => Err(anyhow!("ingest runtime signal channel closed")),
@@ -263,19 +252,23 @@ async fn process_runtime_signal(
 
 fn process_output_failure(
     sink_failure: std::result::Result<String, tokio::sync::broadcast::error::RecvError>,
-) -> Result<LoopControl> {
+    output_manager: &mut OutputManager,
+) -> Result<()> {
     match sink_failure {
         Ok(reason) => {
             warn!(reason = %reason, "output sink failed; daemon keeps running");
-            Ok(LoopControl::Continue)
+            if let Err(err) = output_manager.recover_after_sink_failure() {
+                warn!(error = %err, "failed to recover output sinks after failure");
+            }
+            Ok(())
         }
         Err(tokio::sync::broadcast::error::RecvError::Closed) => {
             warn!("output sink failure channel closed; daemon keeps running");
-            Ok(LoopControl::Continue)
+            Ok(())
         }
         Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
             warn!("output sink failure channel lagged (skipped {skipped} messages)");
-            Ok(LoopControl::Continue)
+            Ok(())
         }
     }
 }
