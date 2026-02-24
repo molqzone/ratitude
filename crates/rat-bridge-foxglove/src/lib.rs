@@ -83,7 +83,7 @@ fn split_host_port(raw: &str) -> Result<(String, u16)> {
 mod tests {
     use std::time::SystemTime;
 
-    use rat_config::FieldDef;
+    use rat_config::{FieldDef, PacketType};
     use rat_protocol::{PacketData, RatPacket};
     use serde_json::{json, Value};
 
@@ -122,7 +122,7 @@ mod tests {
             PacketDef {
                 id: 0x10,
                 struct_name: "Attitude".to_string(),
-                packet_type: "quat".to_string(),
+                packet_type: PacketType::Quat,
                 packed: true,
                 byte_size: 16,
                 source: String::new(),
@@ -131,7 +131,7 @@ mod tests {
             PacketDef {
                 id: 0x11,
                 struct_name: "Attitude".to_string(),
-                packet_type: "plot".to_string(),
+                packet_type: PacketType::Plot,
                 packed: true,
                 byte_size: 8,
                 source: String::new(),
@@ -167,7 +167,7 @@ mod tests {
         let packets = vec![PacketDef {
             id: 0x20,
             struct_name: "CameraStats".to_string(),
-            packet_type: "image".to_string(),
+            packet_type: PacketType::Image,
             packed: true,
             byte_size: 8,
             source: String::new(),

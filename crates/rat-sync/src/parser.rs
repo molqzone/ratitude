@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::OnceLock;
 
-use rat_config::FieldDef;
+use rat_config::{FieldDef, PacketType};
 use regex::Regex;
 use tree_sitter::{Node, Tree};
 
@@ -68,19 +68,11 @@ pub(crate) fn collect_comment_tags(
     Ok(tags)
 }
 
-pub(crate) fn normalize_packet_type(raw: &str) -> Result<String, &'static str> {
-    let normalized = raw.trim().to_ascii_lowercase();
-    if normalized.is_empty() {
-        return Ok("plot".to_string());
+pub(crate) fn normalize_packet_type(raw: &str) -> Result<PacketType, &'static str> {
+    if raw.trim().is_empty() {
+        return Ok(PacketType::Plot);
     }
-
-    match normalized.as_str() {
-        "plot" => Ok("plot".to_string()),
-        "quat" => Ok("quat".to_string()),
-        "image" => Ok("image".to_string()),
-        "log" => Ok("log".to_string()),
-        _ => Err("supported types: plot|quat|image|log"),
-    }
+    PacketType::parse(raw).ok_or("supported types: plot|quat|image|log")
 }
 
 pub(crate) fn collect_type_definitions(

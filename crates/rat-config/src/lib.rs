@@ -10,7 +10,8 @@ pub use model::{
     DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_HEADER_NAME,
 };
 pub use paths::{resolve_config_paths, ConfigPaths};
-pub use store::{load, load_or_default, ConfigStore};
+pub use rat_protocol::PacketType;
+pub use store::{load, ConfigStore};
 
 #[cfg(test)]
 mod tests;

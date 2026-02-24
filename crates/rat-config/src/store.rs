@@ -20,33 +20,23 @@ impl ConfigStore {
         &self.config_path
     }
 
-    pub fn load_or_default(&self) -> Result<(RatitudeConfig, bool), ConfigError> {
+    fn read_and_validate(&self) -> Result<RatitudeConfig, ConfigError> {
         match fs::read_to_string(&self.config_path) {
             Ok(raw) => {
                 let mut cfg: RatitudeConfig = toml::from_str(&raw).map_err(ConfigError::Parse)?;
                 cfg.normalize();
                 cfg.validate()?;
-                Ok((cfg, true))
+                Ok(cfg)
             }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                let mut cfg = RatitudeConfig::default();
-                cfg.normalize();
-                cfg.validate()?;
-                Ok((cfg, false))
-            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Err(ConfigError::Validation(
+                "config file does not exist".to_string(),
+            )),
             Err(err) => Err(ConfigError::Read(err)),
         }
     }
 
     pub fn load(&self) -> Result<RatitudeConfig, ConfigError> {
-        let (cfg, exists) = self.load_or_default()?;
-        if exists {
-            Ok(cfg)
-        } else {
-            Err(ConfigError::Validation(
-                "config file does not exist".to_string(),
-            ))
-        }
+        self.read_and_validate()
     }
 
     pub fn save(&self, cfg: &RatitudeConfig) -> Result<(), ConfigError> {
@@ -65,10 +55,6 @@ impl ConfigStore {
     pub fn paths_for(&self, cfg: &RatitudeConfig) -> ConfigPaths {
         resolve_config_paths(cfg, &self.config_path)
     }
-}
-
-pub fn load_or_default(path: impl AsRef<Path>) -> Result<(RatitudeConfig, bool), ConfigError> {
-    ConfigStore::new(path).load_or_default()
 }
 
 pub fn load(path: impl AsRef<Path>) -> Result<RatitudeConfig, ConfigError> {

@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use rat_config::{FieldDef, GeneratedPacketDef};
+use rat_config::{FieldDef, GeneratedPacketDef, PacketType};
 
 use crate::model::DiscoveredPacket;
 use crate::{SyncError, RAT_ID_MAX, RAT_ID_MIN};
@@ -25,7 +25,7 @@ pub(crate) fn allocate_packet_ids(
             id,
             signature_hash: format!("0x{:016X}", packet.signature_hash),
             struct_name: packet.struct_name.clone(),
-            packet_type: packet.packet_type.clone(),
+            packet_type: packet.packet_type,
             packed: packet.packed,
             byte_size: packet.byte_size,
             source: packet.source.clone(),
@@ -60,12 +60,15 @@ pub(crate) fn compute_signature_hash(packet: &DiscoveredPacket) -> u64 {
 
 fn compute_signature_hash_parts(
     struct_name: &str,
-    packet_type: &str,
+    packet_type: &PacketType,
     packed: bool,
     byte_size: usize,
     fields: &[FieldDef],
 ) -> u64 {
-    let mut signature = format!("{struct_name}|{packet_type}|{packed}|{byte_size}");
+    let mut signature = format!(
+        "{struct_name}|{}|{packed}|{byte_size}",
+        packet_type.as_str()
+    );
     for field in fields {
         signature.push('|');
         signature.push_str(&field.name);

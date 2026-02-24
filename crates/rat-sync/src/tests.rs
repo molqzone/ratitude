@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-use rat_config::FieldDef;
+use rat_config::{FieldDef, PacketType};
 
 use crate::ast::align_up;
 use crate::ids::{compute_signature_hash, fnv1a64, select_fresh_packet_id};
@@ -14,10 +14,19 @@ use crate::{sync_packets_fs, RAT_ID_MAX, RAT_ID_MIN};
 
 #[test]
 fn packet_type_normalization_supports_default_only() {
-    assert_eq!(normalize_packet_type("plot").expect("plot"), "plot");
-    assert_eq!(normalize_packet_type("quat").expect("quat"), "quat");
+    assert_eq!(
+        normalize_packet_type("plot").expect("plot"),
+        PacketType::Plot
+    );
+    assert_eq!(
+        normalize_packet_type("quat").expect("quat"),
+        PacketType::Quat
+    );
     assert!(normalize_packet_type("pose").is_err());
-    assert_eq!(normalize_packet_type("").expect("default"), "plot");
+    assert_eq!(
+        normalize_packet_type("").expect("default"),
+        PacketType::Plot
+    );
     assert!(normalize_packet_type("json").is_err());
 }
 
@@ -63,7 +72,7 @@ fn signature_hash_ignores_source_path() {
     let base = DiscoveredPacket {
         signature_hash: 0,
         struct_name: "RatSample".to_string(),
-        packet_type: "plot".to_string(),
+        packet_type: PacketType::Plot,
         packed: false,
         byte_size: 8,
         source: "src/a.c".to_string(),
@@ -86,7 +95,7 @@ fn run_sync_pipeline_is_deterministic_for_identical_input() {
     let mut discovered = DiscoveredPacket {
         signature_hash: 0,
         struct_name: "RatSample".to_string(),
-        packet_type: "plot".to_string(),
+        packet_type: PacketType::Plot,
         packed: false,
         byte_size: 8,
         source: "src/main.c".to_string(),
@@ -116,7 +125,7 @@ fn run_sync_pipeline_blocks_non_packed_padding_layout_without_filesystem() {
     let discovered = DiscoveredPacket {
         signature_hash: 0,
         struct_name: "RatPadded".to_string(),
-        packet_type: "plot".to_string(),
+        packet_type: PacketType::Plot,
         packed: false,
         byte_size: 8,
         source: "src/main.c".to_string(),
@@ -187,7 +196,7 @@ typedef struct {
 
     let result = sync_packets_fs(&config_path, None).expect("sync should pass");
     assert_eq!(result.packet_defs.len(), 1);
-    assert_eq!(result.packet_defs[0].packet_type, "plot");
+    assert_eq!(result.packet_defs[0].packet_type, PacketType::Plot);
     assert!((RAT_ID_MIN..=RAT_ID_MAX).contains(&result.packet_defs[0].id));
 
     assert!(temp.join("rat_gen.h").exists());

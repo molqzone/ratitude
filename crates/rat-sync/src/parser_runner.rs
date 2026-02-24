@@ -56,6 +56,8 @@ pub(crate) fn parse_tagged_source(
 mod tests {
     use std::path::Path;
 
+    use rat_config::PacketType;
+
     use super::*;
 
     #[test]
@@ -115,6 +117,6 @@ typedef struct {
             .expect("parse")
             .expect("tagged file");
         assert_eq!(parsed.tags.len(), 1);
-        assert_eq!(parsed.tags[0].packet_type, "quat");
+        assert_eq!(parsed.tags[0].packet_type, PacketType::Quat);
     }
 }

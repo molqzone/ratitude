@@ -61,7 +61,7 @@ pub(crate) fn assemble_discovered_packets(
 mod tests {
     use std::path::Path;
 
-    use rat_config::FieldDef;
+    use rat_config::{FieldDef, PacketType};
 
     use crate::model::{ParsedTaggedFile, StructDef, TagMatch};
 
@@ -72,7 +72,7 @@ mod tests {
         let parsed = ParsedTaggedFile {
             tags: vec![TagMatch {
                 end_byte: 100,
-                packet_type: "plot".to_string(),
+                packet_type: PacketType::Plot,
                 line: 10,
             }],
             structs: vec![StructDef {

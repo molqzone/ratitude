@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{anyhow, Result};
-use rat_config::{FieldDef, PacketDef};
+use rat_config::{FieldDef, PacketDef, PacketType};
 use serde_json::json;
 use tracing::info;
 
@@ -124,7 +124,7 @@ pub(crate) const DEFAULT_TRANSFORM_SCHEMA: &str = r#"{
 pub(crate) struct PacketBinding {
     pub(crate) id: u8,
     pub(crate) struct_name: String,
-    pub(crate) packet_type: String,
+    pub(crate) packet_type: PacketType,
     pub(crate) topic: String,
     pub(crate) schema_name: String,
     pub(crate) schema_json: String,
@@ -174,13 +174,13 @@ pub(crate) fn build_packet_bindings(packets: &[PacketDef]) -> Result<Vec<PacketB
         *counter += 1;
 
         let schema_name = format!("ratitude.{}", base);
-        let is_quat = packet.packet_type.eq_ignore_ascii_case("quat");
-        let is_image = packet.packet_type.eq_ignore_ascii_case("image");
+        let is_quat = packet.packet_type == PacketType::Quat;
+        let is_image = packet.packet_type == PacketType::Image;
 
         out.push(PacketBinding {
             id: packet.id as u8,
             struct_name: packet.struct_name.clone(),
-            packet_type: packet.packet_type.clone(),
+            packet_type: packet.packet_type,
             topic: topic.clone(),
             schema_name,
             schema_json: packet_schema_json(&packet.fields)?,

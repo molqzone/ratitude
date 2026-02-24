@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use rat_protocol::hash_schema_bytes;
+use rat_protocol::PacketType;
 use serde::Deserialize;
 use tokio::time::Instant as TokioInstant;
 use tracing::{debug, info};
@@ -487,12 +488,8 @@ fn parse_runtime_packets_from_schema(
         .collect()
 }
 
-fn normalize_runtime_packet_type(raw: &str) -> Result<String, RuntimeError> {
-    let normalized = raw.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "plot" | "quat" | "image" | "log" => Ok(normalized),
-        other => Err(RuntimeError::SchemaParseFailed {
-            reason: format!("unsupported packet type in runtime schema: {other}"),
-        }),
-    }
+fn normalize_runtime_packet_type(raw: &str) -> Result<PacketType, RuntimeError> {
+    PacketType::parse(raw).ok_or_else(|| RuntimeError::SchemaParseFailed {
+        reason: format!("unsupported packet type in runtime schema: {raw}"),
+    })
 }

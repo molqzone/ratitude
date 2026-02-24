@@ -16,7 +16,7 @@ pub(crate) fn build_runtime_schema_toml_from_packets(packets: &[GeneratedPacketD
         ));
         out.push_str(&format!(
             "type = \"{}\"\n",
-            escape_toml_string(&packet.packet_type)
+            escape_toml_string(packet.packet_type.as_str())
         ));
         out.push_str(&format!("packed = {}\n", packet.packed));
         out.push_str(&format!("byte_size = {}\n", packet.byte_size));

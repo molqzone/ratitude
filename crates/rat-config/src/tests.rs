@@ -61,8 +61,7 @@ fn save_and_load_round_trip() {
     cfg.ratd.outputs.foxglove.enabled = true;
     ConfigStore::new(&path).save(&cfg).expect("save config");
 
-    let (loaded, exists) = load_or_default(&path).expect("load config");
-    assert!(exists);
+    let loaded = load(&path).expect("load config");
     assert_eq!(loaded.project.name, "demo");
     assert_eq!(loaded.artifacts.elf, "build/app.elf");
     let paths = resolve_config_paths(&loaded, &path);
@@ -120,7 +119,7 @@ ws_addr = "127.0.0.1:8765"
 "#;
     fs::write(&path, raw).expect("write config");
 
-    let err = load_or_default(&path).expect_err("removed sections should fail");
+    let err = load(&path).expect_err("removed sections should fail");
     let msg = err.to_string();
     assert!(msg.contains("unknown field"));
     assert!(msg.contains("server"));
@@ -153,7 +152,7 @@ preferred_backend = "openocd"
 "#;
     fs::write(&path, raw).expect("write config");
 
-    let err = load_or_default(&path).expect_err("preferred_backend should fail");
+    let err = load(&path).expect_err("preferred_backend should fail");
     let msg = err.to_string();
     assert!(msg.contains("unknown field"));
     assert!(msg.contains("preferred_backend"));
@@ -178,7 +177,7 @@ header_name = "rat_gen.h"
 "#;
     fs::write(&path, raw).expect("write config");
 
-    let err = load_or_default(&path).expect_err("ignore_dirs should fail");
+    let err = load(&path).expect_err("ignore_dirs should fail");
     let msg = err.to_string();
     assert!(msg.contains("unknown field"));
     assert!(msg.contains("ignore_dirs"));
@@ -215,7 +214,7 @@ startup_timeout_ms = 5000
 "#;
     fs::write(&path, raw).expect("write config");
 
-    let err = load_or_default(&path).expect_err("source backend section should fail");
+    let err = load(&path).expect_err("source backend section should fail");
     let msg = err.to_string();
     assert!(msg.contains("unknown field"));
     assert!(msg.contains("backend"));
@@ -251,7 +250,7 @@ reader_buf = 65536
 "#;
     fs::write(&path, raw).expect("write config");
 
-    let err = load_or_default(&path).expect_err("removed sync behavior keys should fail");
+    let err = load(&path).expect_err("removed sync behavior keys should fail");
     let msg = err.to_string();
     assert!(msg.contains("unknown field"));
     assert!(msg.contains("auto_sync_on_start"));
@@ -276,7 +275,7 @@ header_name = "rat_gen.h"
 "#;
     fs::write(&path, raw).expect("write config");
 
-    let err = load_or_default(&path).expect_err("generation.toml_name should fail");
+    let err = load(&path).expect_err("generation.toml_name should fail");
     let msg = err.to_string();
     assert!(msg.contains("unknown field"));
     assert!(msg.contains("toml_name"));

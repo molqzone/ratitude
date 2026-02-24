@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::time::SystemTime;
 
 use nom::number::complete::{
     le_f32, le_f64, le_i16, le_i32, le_i64, le_i8, le_u16, le_u32, le_u64, le_u8,
 };
 use nom::IResult;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use thiserror::Error;
 
@@ -40,6 +42,42 @@ pub enum ProtocolError {
 pub enum PacketData {
     Text(String),
     Dynamic(Map<String, Value>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PacketType {
+    Plot,
+    Quat,
+    Image,
+    Log,
+}
+
+impl PacketType {
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "plot" => Some(Self::Plot),
+            "quat" => Some(Self::Quat),
+            "image" => Some(Self::Image),
+            "log" => Some(Self::Log),
+            _ => None,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Plot => "plot",
+            Self::Quat => "quat",
+            Self::Image => "image",
+            Self::Log => "log",
+        }
+    }
+}
+
+impl fmt::Display for PacketType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -306,6 +344,13 @@ mod tests {
     #[test]
     fn parse_text_stops_at_null() {
         assert_eq!(parse_text(b"abc\0def"), "abc");
+    }
+
+    #[test]
+    fn packet_type_parse_is_case_insensitive() {
+        assert_eq!(PacketType::parse("plot"), Some(PacketType::Plot));
+        assert_eq!(PacketType::parse(" QuAt "), Some(PacketType::Quat));
+        assert_eq!(PacketType::parse("unknown"), None);
     }
 
     #[test]

@@ -4,6 +4,7 @@ use std::time::{Duration, SystemTime};
 
 use foxglove::schemas::{RawImage, Timestamp};
 use foxglove::{PartialMetadata, RawChannel};
+use rat_config::PacketType;
 use rat_protocol::{PacketData, RatPacket};
 use serde_json::{json, Value};
 use tokio::task::JoinHandle;
@@ -50,7 +51,7 @@ fn publish_packet(channels: &HashMap<u8, PacketChannels>, packet: &RatPacket) {
         publish_json(&channels.data, packet.timestamp, &value);
     }
 
-    if channels.binding.packet_type.eq_ignore_ascii_case("quat") {
+    if channels.binding.packet_type == PacketType::Quat {
         if let Some(quat) = extract_quaternion(packet) {
             if let Some(marker_channel) = &channels.marker {
                 let marker = json!({
@@ -97,7 +98,7 @@ fn publish_packet(channels: &HashMap<u8, PacketChannels>, packet: &RatPacket) {
         }
     }
 
-    if channels.binding.packet_type.eq_ignore_ascii_case("image") {
+    if channels.binding.packet_type == PacketType::Image {
         if let Some(image_channel) = &channels.image {
             if let Some(image_msg) = build_image_message(packet, &channels.binding.struct_name) {
                 image_channel.log(&image_msg);

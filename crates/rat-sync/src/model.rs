@@ -1,10 +1,10 @@
-use rat_config::{FieldDef, GeneratedConfig, GeneratedPacketDef, RatitudeConfig};
+use rat_config::{FieldDef, GeneratedConfig, GeneratedPacketDef, PacketType, RatitudeConfig};
 
 #[derive(Debug, Clone)]
 pub struct DiscoveredPacket {
     pub signature_hash: u64,
     pub struct_name: String,
-    pub packet_type: String,
+    pub packet_type: PacketType,
     pub packed: bool,
     pub byte_size: usize,
     pub source: String,
@@ -14,7 +14,7 @@ pub struct DiscoveredPacket {
 #[derive(Debug, Clone)]
 pub(crate) struct TagMatch {
     pub(crate) end_byte: usize,
-    pub(crate) packet_type: String,
+    pub(crate) packet_type: PacketType,
     pub(crate) line: usize,
 }
 

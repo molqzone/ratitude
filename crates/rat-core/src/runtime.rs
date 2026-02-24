@@ -3,6 +3,7 @@ mod unknown_monitor;
 
 use std::time::{Duration, SystemTime};
 
+use rat_protocol::PacketType;
 use thiserror::Error;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -31,7 +32,7 @@ pub struct RuntimeFieldDef {
 pub struct RuntimePacketDef {
     pub id: u16,
     pub struct_name: String,
-    pub packet_type: String,
+    pub packet_type: PacketType,
     pub packed: bool,
     pub byte_size: usize,
     pub fields: Vec<RuntimeFieldDef>,

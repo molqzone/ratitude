@@ -123,7 +123,7 @@ fn parse_schema_hash(raw: &str) -> Result<u64, SyncError> {
 mod tests {
     use std::fs;
 
-    use rat_config::{FieldDef, GeneratedMeta, GeneratedPacketDef};
+    use rat_config::{FieldDef, GeneratedMeta, GeneratedPacketDef, PacketType};
 
     use super::*;
 
@@ -132,7 +132,7 @@ mod tests {
             id: 0x21,
             signature_hash: "0x2".to_string(),
             struct_name: "DemoPacket".to_string(),
-            packet_type: "plot".to_string(),
+            packet_type: PacketType::Plot,
             packed: true,
             byte_size: 4,
             source: "src/main.c".to_string(),

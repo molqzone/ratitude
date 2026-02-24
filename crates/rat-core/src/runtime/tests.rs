@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use rat_protocol::hash_schema_bytes;
+use rat_protocol::PacketType;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
@@ -252,7 +253,7 @@ async fn runtime_emits_schema_ready_signal() {
             assert_eq!(schema_hash, hash_schema_bytes(&schema));
             assert_eq!(packets.len(), 1);
             assert_eq!(packets[0].id, 0x21);
-            assert_eq!(packets[0].packet_type, "plot");
+            assert_eq!(packets[0].packet_type, PacketType::Plot);
         }
         other => panic!("unexpected signal: {other:?}"),
     }

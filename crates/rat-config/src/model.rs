@@ -1,3 +1,4 @@
+use rat_protocol::PacketType;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -205,7 +206,7 @@ pub struct PacketDef {
     pub id: u16,
     pub struct_name: String,
     #[serde(rename = "type")]
-    pub packet_type: String,
+    pub packet_type: PacketType,
     pub packed: bool,
     pub byte_size: usize,
     #[serde(default)]
@@ -244,7 +245,7 @@ pub struct GeneratedPacketDef {
     pub signature_hash: String,
     pub struct_name: String,
     #[serde(rename = "type")]
-    pub packet_type: String,
+    pub packet_type: PacketType,
     pub packed: bool,
     pub byte_size: usize,
     #[serde(default)]
@@ -258,7 +259,7 @@ impl GeneratedPacketDef {
         PacketDef {
             id: self.id,
             struct_name: self.struct_name.clone(),
-            packet_type: self.packet_type.clone(),
+            packet_type: self.packet_type,
             packed: self.packed,
             byte_size: self.byte_size,
             source: self.source.clone(),
