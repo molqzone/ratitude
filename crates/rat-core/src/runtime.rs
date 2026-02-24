@@ -97,8 +97,8 @@ pub enum RuntimeError {
 pub struct IngestRuntime {
     shutdown: CancellationToken,
     hub: Hub,
-    listener_task: JoinHandle<()>,
-    consume_task: JoinHandle<()>,
+    listener_task: Option<JoinHandle<()>>,
+    consume_task: Option<JoinHandle<()>>,
     signals_rx: mpsc::Receiver<RuntimeSignal>,
 }
 
@@ -111,25 +111,23 @@ impl IngestRuntime {
         self.signals_rx.recv().await
     }
 
-    pub async fn shutdown(self) {
-        let IngestRuntime {
-            shutdown,
-            hub: _hub,
-            listener_task,
-            consume_task,
-            signals_rx: _signals_rx,
-        } = self;
+    pub async fn shutdown(&mut self) {
+        self.shutdown.cancel();
 
-        shutdown.cancel();
-        listener_task.abort();
-        if let Err(err) = listener_task.await {
-            if !err.is_cancelled() {
-                warn!(error = %err, "listener task join failed during runtime shutdown");
+        if let Some(listener_task) = self.listener_task.take() {
+            listener_task.abort();
+            if let Err(err) = listener_task.await {
+                if !err.is_cancelled() {
+                    warn!(error = %err, "listener task join failed during runtime shutdown");
+                }
             }
         }
-        if let Err(err) = consume_task.await {
-            if !err.is_cancelled() {
-                warn!(error = %err, "consumer task join failed during runtime shutdown");
+
+        if let Some(consume_task) = self.consume_task.take() {
+            if let Err(err) = consume_task.await {
+                if !err.is_cancelled() {
+                    warn!(error = %err, "consumer task join failed during runtime shutdown");
+                }
             }
         }
     }
@@ -161,8 +159,8 @@ pub async fn start_ingest_runtime(cfg: IngestRuntimeConfig) -> Result<IngestRunt
     Ok(IngestRuntime {
         shutdown,
         hub,
-        listener_task,
-        consume_task,
+        listener_task: Some(listener_task),
+        consume_task: Some(consume_task),
         signals_rx,
     })
 }

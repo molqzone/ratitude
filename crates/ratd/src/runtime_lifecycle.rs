@@ -12,25 +12,22 @@ use crate::runtime_spec::build_runtime_spec;
 const UNKNOWN_PACKET_WINDOW: Duration = Duration::from_secs(5);
 const UNKNOWN_PACKET_THRESHOLD: u32 = 20;
 
-pub(crate) async fn activate_runtime(
-    old_runtime: Option<IngestRuntime>,
+pub(crate) async fn start_runtime(state: &mut DaemonState) -> Result<IngestRuntime> {
+    let runtime = start_runtime_from_config(state.config(), state.source().active_addr()).await?;
+    mark_runtime_started(state);
+    Ok(runtime)
+}
+
+pub(crate) async fn restart_runtime(
+    runtime: &mut IngestRuntime,
     state: &mut DaemonState,
     output_manager: &mut OutputManager,
-) -> Result<IngestRuntime> {
-    if let Some(old_runtime) = old_runtime {
-        output_manager.shutdown().await;
-        old_runtime.shutdown().await;
-    }
-
-    let runtime = start_runtime(state.config(), state.source().active_addr()).await?;
-    state.runtime_mut().advance_generation();
-    state.runtime_mut().clear_schema();
-    info!(
-        source = %state.source().active_addr(),
-        packets = state.runtime().schema().packet_count(),
-        "ingest runtime started"
-    );
-    Ok(runtime)
+) -> Result<()> {
+    output_manager.shutdown().await;
+    runtime.shutdown().await;
+    *runtime = start_runtime_from_config(state.config(), state.source().active_addr()).await?;
+    mark_runtime_started(state);
+    Ok(())
 }
 
 pub(crate) async fn apply_schema_ready(
@@ -54,9 +51,19 @@ pub(crate) async fn apply_schema_ready(
         .await
 }
 
-async fn start_runtime(cfg: &RatitudeConfig, addr: &str) -> Result<IngestRuntime> {
+async fn start_runtime_from_config(cfg: &RatitudeConfig, addr: &str) -> Result<IngestRuntime> {
     let spec = build_runtime_spec(cfg, addr, UNKNOWN_PACKET_WINDOW, UNKNOWN_PACKET_THRESHOLD)?;
     start_ingest_runtime(spec.ingest_config)
         .await
         .map_err(|err| anyhow!(err.to_string()))
+}
+
+fn mark_runtime_started(state: &mut DaemonState) {
+    state.runtime_mut().advance_generation();
+    state.runtime_mut().clear_schema();
+    info!(
+        source = %state.source().active_addr(),
+        packets = state.runtime().schema().packet_count(),
+        "ingest runtime started"
+    );
 }

@@ -9,7 +9,7 @@ use crate::command_loop::{handle_console_command, CommandAction};
 use crate::config_io::load_config;
 use crate::console::spawn_console_reader;
 use crate::output_manager::OutputManager;
-use crate::runtime_lifecycle::{activate_runtime, apply_schema_ready};
+use crate::runtime_lifecycle::{apply_schema_ready, restart_runtime, start_runtime};
 use crate::runtime_schema::RuntimeSchemaState;
 use crate::source_scan::render_candidates;
 use crate::source_state::{build_source_domain, SourceDomainState};
@@ -106,7 +106,7 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
     let mut state = DaemonState::new(cli.config.clone(), cfg, source);
     render_candidates(state.source().candidates());
     let mut output_manager = OutputManager::from_config(state.config())?;
-    let mut runtime = activate_runtime(None, &mut state, &mut output_manager).await?;
+    let mut runtime = start_runtime(&mut state).await?;
     let mut output_failure_rx = output_manager.subscribe_failures();
 
     println!(
@@ -138,15 +138,8 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
                     Err(err) => break Err(err),
                 };
                 if action.restart_runtime {
-                    match activate_runtime(Some(runtime), &mut state, &mut output_manager).await {
-                        Ok(new_runtime) => {
-                            runtime = new_runtime;
-                        }
-                        Err(err) => {
-                            console_shutdown.cancel();
-                            output_manager.shutdown().await;
-                            return Err(err);
-                        }
+                    if let Err(err) = restart_runtime(&mut runtime, &mut state, &mut output_manager).await {
+                        break Err(err);
                     }
                 }
                 if action.should_quit {

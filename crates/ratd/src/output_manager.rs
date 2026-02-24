@@ -10,12 +10,6 @@ use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SinkKey {
-    Jsonl,
-    Foxglove,
-}
-
 #[derive(Clone, Debug)]
 pub struct OutputState {
     pub jsonl_enabled: bool,
@@ -38,7 +32,7 @@ struct SinkContextKey {
 }
 
 trait PacketSink {
-    fn key(&self) -> SinkKey;
+    fn key(&self) -> &'static str;
     fn sync(
         &mut self,
         desired: &OutputState,
@@ -49,7 +43,7 @@ trait PacketSink {
 }
 
 struct RegisteredSink {
-    key: SinkKey,
+    key: &'static str,
     sink: Box<dyn PacketSink>,
 }
 
@@ -75,8 +69,8 @@ impl JsonlSink {
 }
 
 impl PacketSink for JsonlSink {
-    fn key(&self) -> SinkKey {
-        SinkKey::Jsonl
+    fn key(&self) -> &'static str {
+        "jsonl"
     }
 
     fn sync(
@@ -156,8 +150,8 @@ impl FoxgloveSink {
 }
 
 impl PacketSink for FoxgloveSink {
-    fn key(&self) -> SinkKey {
-        SinkKey::Foxglove
+    fn key(&self) -> &'static str {
+        "foxglove"
     }
 
     fn sync(
@@ -328,7 +322,7 @@ fn register_sink(sinks: &mut Vec<RegisteredSink>, sink: Box<dyn PacketSink>) -> 
     let key = sink.key();
     let duplicate = sinks.iter().any(|entry| entry.key == key);
     if duplicate {
-        return Err(anyhow!("duplicate sink key in OutputManager: {:?}", key));
+        return Err(anyhow!("duplicate sink key in OutputManager: {}", key));
     }
     sinks.push(RegisteredSink { key, sink });
     Ok(())
@@ -347,8 +341,8 @@ mod tests {
     struct NoopSink;
 
     impl PacketSink for FailOnceSink {
-        fn key(&self) -> SinkKey {
-            SinkKey::Jsonl
+        fn key(&self) -> &'static str {
+            "jsonl"
         }
 
         fn sync(
@@ -368,8 +362,8 @@ mod tests {
     }
 
     impl PacketSink for NoopSink {
-        fn key(&self) -> SinkKey {
-            SinkKey::Jsonl
+        fn key(&self) -> &'static str {
+            "jsonl"
         }
 
         fn sync(
