@@ -40,11 +40,13 @@ pub(crate) async fn handle_console_command(
             );
         }
         ConsoleCommand::SourceList => {
-            refresh_source_candidates(state).await;
+            let source_cfg = state.config().ratd.source.clone();
+            refresh_source_candidates(state.source_mut(), &source_cfg).await;
             render_candidates(state.source().candidates());
         }
         ConsoleCommand::SourceUse(index) => {
-            refresh_source_candidates(state).await;
+            let source_cfg = state.config().ratd.source.clone();
+            refresh_source_candidates(state.source_mut(), &source_cfg).await;
             let Some(candidate) = state.source().candidate(index).cloned() else {
                 println!("invalid source index: {}", index);
                 render_candidates(state.source().candidates());
@@ -55,7 +57,7 @@ pub(crate) async fn handle_console_command(
             next.ratd.source.last_selected_addr = candidate.addr.clone();
             save_config(state.config_path(), &next).await?;
             state.replace_config(next);
-            state.select_active_source(candidate.addr.clone());
+            state.source_mut().set_active_addr(candidate.addr.clone());
             println!("selected source: {}", state.source().active_addr());
             action.restart_runtime = true;
         }

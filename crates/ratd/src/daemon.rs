@@ -14,42 +14,7 @@ use crate::output_manager::OutputManager;
 use crate::runtime_lifecycle::{activate_runtime, apply_schema_ready};
 use crate::runtime_schema::RuntimeSchemaState;
 use crate::source_scan::{render_candidates, SourceCandidate};
-use crate::source_state::build_source_domain;
-
-#[derive(Debug, Clone)]
-pub(crate) struct SourceDomainState {
-    candidates: Vec<SourceCandidate>,
-    active_addr: String,
-}
-
-impl SourceDomainState {
-    fn new(candidates: Vec<SourceCandidate>, active_addr: String) -> Self {
-        Self {
-            candidates,
-            active_addr,
-        }
-    }
-
-    pub(crate) fn candidates(&self) -> &[SourceCandidate] {
-        &self.candidates
-    }
-
-    pub(crate) fn candidate(&self, index: usize) -> Option<&SourceCandidate> {
-        self.candidates.get(index)
-    }
-
-    pub(crate) fn set_candidates(&mut self, candidates: Vec<SourceCandidate>) {
-        self.candidates = candidates;
-    }
-
-    pub(crate) fn active_addr(&self) -> &str {
-        &self.active_addr
-    }
-
-    pub(crate) fn set_active_addr(&mut self, addr: String) {
-        self.active_addr = addr;
-    }
-}
+use crate::source_state::{build_source_domain, SourceDomainState};
 
 #[derive(Debug, Clone)]
 pub(crate) struct RuntimeDomainState {
@@ -86,13 +51,12 @@ impl DaemonState {
     pub(crate) fn new(
         config_path: String,
         config: RatitudeConfig,
-        source_candidates: Vec<SourceCandidate>,
-        active_source: String,
+        source: SourceDomainState,
     ) -> Self {
         Self {
             config_path,
             config,
-            source: SourceDomainState::new(source_candidates, active_source),
+            source,
             runtime: RuntimeDomainState::new(RuntimeSchemaState::default()),
         }
     }
@@ -124,22 +88,12 @@ impl DaemonState {
     pub(crate) fn runtime_mut(&mut self) -> &mut RuntimeDomainState {
         &mut self.runtime
     }
-
-    pub(crate) fn select_active_source(&mut self, addr: String) {
-        self.source.set_active_addr(addr.clone());
-        self.config.ratd.source.last_selected_addr = addr;
-    }
 }
 
 pub async fn run_daemon(cli: Cli) -> Result<()> {
     let cfg = load_config(&cli.config).await?;
     let source = build_source_domain(&cfg).await?;
-    let mut state = DaemonState::new(
-        cli.config.clone(),
-        cfg,
-        source.candidates,
-        source.active_addr,
-    );
+    let mut state = DaemonState::new(cli.config.clone(), cfg, source);
     render_candidates(state.source().candidates());
     let mut output_manager = OutputManager::from_config(state.config());
     let mut runtime = activate_runtime(None, &mut state, &mut output_manager).await?;
@@ -230,7 +184,7 @@ mod tests {
     use crate::command_loop::handle_console_command;
     use crate::config_io::load_config;
     use crate::console::ConsoleCommand;
-    use crate::source_state::{build_source_domain, select_active_source};
+    use crate::source_state::{build_source_domain, select_active_source, SourceDomainState};
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -290,12 +244,7 @@ mod tests {
             .expect("save config");
 
         let source = build_source_domain(&cfg).await.expect("build source");
-        let state = DaemonState::new(
-            config_path.to_string_lossy().to_string(),
-            cfg,
-            source.candidates,
-            source.active_addr,
-        );
+        let state = DaemonState::new(config_path.to_string_lossy().to_string(), cfg, source);
         assert_eq!(state.source().active_addr(), "10.10.10.10:19021");
         assert_eq!(
             state.config().ratd.source.last_selected_addr,
@@ -322,17 +271,19 @@ mod tests {
         let mut state = DaemonState::new(
             String::new(),
             cfg.clone(),
-            vec![
-                SourceCandidate {
-                    addr: "127.0.0.1:19021".to_string(),
-                    reachable: false,
-                },
-                SourceCandidate {
-                    addr: "127.0.0.1:2331".to_string(),
-                    reachable: false,
-                },
-            ],
-            addr.clone(),
+            SourceDomainState::new(
+                vec![
+                    SourceCandidate {
+                        addr: "127.0.0.1:19021".to_string(),
+                        reachable: false,
+                    },
+                    SourceCandidate {
+                        addr: "127.0.0.1:2331".to_string(),
+                        reachable: false,
+                    },
+                ],
+                addr.clone(),
+            ),
         );
         let mut output_manager = OutputManager::from_config(&cfg);
         let action =
@@ -360,17 +311,19 @@ mod tests {
         let mut state = DaemonState::new(
             String::new(),
             cfg.clone(),
-            vec![
-                SourceCandidate {
-                    addr: addr.clone(),
-                    reachable: true,
-                },
-                SourceCandidate {
-                    addr: "127.0.0.1:65535".to_string(),
-                    reachable: true,
-                },
-            ],
-            original_active.clone(),
+            SourceDomainState::new(
+                vec![
+                    SourceCandidate {
+                        addr: addr.clone(),
+                        reachable: true,
+                    },
+                    SourceCandidate {
+                        addr: "127.0.0.1:65535".to_string(),
+                        reachable: true,
+                    },
+                ],
+                original_active.clone(),
+            ),
         );
         let mut output_manager = OutputManager::from_config(&cfg);
         let action = handle_console_command(
@@ -405,8 +358,7 @@ mod tests {
         let mut state = DaemonState::new(
             config_path_str.clone(),
             cfg.clone(),
-            Vec::new(),
-            "127.0.0.1:19021".to_string(),
+            SourceDomainState::new(Vec::new(), "127.0.0.1:19021".to_string()),
         );
         let mut output_manager = OutputManager::from_config(&cfg);
         let foxglove_action = handle_console_command(
@@ -480,14 +432,15 @@ text_id = 255
     }
 
     #[test]
-    fn daemon_module_no_longer_contains_protocol_runtime_details() {
-        let source = include_str!("daemon.rs");
-        let production = source
-            .split("#[cfg(test)]")
-            .next()
-            .expect("split production source");
-        assert!(!production.contains("cobs_decode"));
-        assert!(!production.contains("ProtocolContext"));
-        assert!(!production.contains("ProtocolError"));
+    fn ratd_manifest_keeps_protocol_dependency_indirect() {
+        let manifest = include_str!("../Cargo.toml");
+        assert!(
+            !manifest.contains("rat-protocol"),
+            "ratd must consume protocol via rat-core runtime only"
+        );
+        assert!(
+            manifest.contains("rat-core"),
+            "ratd must depend on rat-core runtime"
+        );
     }
 }

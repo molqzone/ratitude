@@ -5,7 +5,6 @@ use rat_config::{FieldDef, PacketDef, RatitudeConfig};
 use rat_core::{start_ingest_runtime, IngestRuntime, RuntimePacketDef};
 use tracing::info;
 
-use crate::config_io::load_config;
 use crate::daemon::DaemonState;
 use crate::output_manager::OutputManager;
 use crate::runtime_spec::build_runtime_spec;
@@ -23,8 +22,6 @@ pub(crate) async fn activate_runtime(
         old_runtime.shutdown(false).await;
     }
 
-    state.replace_config(load_config(state.config_path()).await?);
-    output_manager.reload_from_config(state.config())?;
     let runtime = start_runtime(state.config(), state.source().active_addr()).await?;
     state.runtime_mut().clear_schema();
     info!(

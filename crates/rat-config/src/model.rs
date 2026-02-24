@@ -223,10 +223,9 @@ pub struct FieldDef {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct GeneratedMeta {
     pub project: String,
-    #[serde(alias = "fingerprint")]
     pub schema_hash: String,
 }
 

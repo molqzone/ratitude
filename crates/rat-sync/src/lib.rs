@@ -21,46 +21,6 @@ pub use fs_adapter::sync_packets_fs;
 pub use model::{DiscoveredPacket, SyncFsResult, SyncPipelineInput, SyncPipelineOutput};
 pub use pipeline::run_sync_pipeline;
 
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use assembler::*;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use ast::*;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use discover::*;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use fs_adapter::*;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use header::*;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use ids::*;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use layout::*;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use model::*;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use parser::*;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use parser_runner::*;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use pipeline::*;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use scanner::*;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use schema::*;
-
 pub(crate) const RAT_ID_MIN: u16 = 1;
 pub(crate) const RAT_ID_MAX: u16 = 0xFE;
 

@@ -4,7 +4,13 @@ use std::path::Path;
 
 use rat_config::FieldDef;
 
-use super::*;
+use crate::ast::align_up;
+use crate::ids::{compute_signature_hash, fnv1a64, select_fresh_packet_id};
+use crate::layout::detect_packed_layout;
+use crate::model::{DiscoveredPacket, SyncPipelineInput};
+use crate::parser::normalize_packet_type;
+use crate::pipeline::run_sync_pipeline;
+use crate::{sync_packets_fs, RAT_ID_MAX, RAT_ID_MIN};
 
 #[test]
 fn packet_type_normalization_supports_default_only() {

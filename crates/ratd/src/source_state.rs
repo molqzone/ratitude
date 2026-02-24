@@ -1,30 +1,58 @@
 use anyhow::{anyhow, Result};
-use rat_config::RatitudeConfig;
+use rat_config::{RatdSourceConfig, RatitudeConfig};
 
-use crate::daemon::DaemonState;
 use crate::source_scan::{discover_sources, SourceCandidate};
 
 #[derive(Debug, Clone)]
-pub(crate) struct SourceDomainBootstrap {
-    pub(crate) candidates: Vec<SourceCandidate>,
-    pub(crate) active_addr: String,
+pub(crate) struct SourceDomainState {
+    candidates: Vec<SourceCandidate>,
+    active_addr: String,
 }
 
-pub(crate) async fn build_source_domain(cfg: &RatitudeConfig) -> Result<SourceDomainBootstrap> {
+impl SourceDomainState {
+    pub(crate) fn new(candidates: Vec<SourceCandidate>, active_addr: String) -> Self {
+        Self {
+            candidates,
+            active_addr,
+        }
+    }
+
+    pub(crate) fn candidates(&self) -> &[SourceCandidate] {
+        &self.candidates
+    }
+
+    pub(crate) fn candidate(&self, index: usize) -> Option<&SourceCandidate> {
+        self.candidates.get(index)
+    }
+
+    pub(crate) fn set_candidates(&mut self, candidates: Vec<SourceCandidate>) {
+        self.candidates = candidates;
+    }
+
+    pub(crate) fn active_addr(&self) -> &str {
+        &self.active_addr
+    }
+
+    pub(crate) fn set_active_addr(&mut self, addr: String) {
+        self.active_addr = addr;
+    }
+}
+
+pub(crate) async fn build_source_domain(cfg: &RatitudeConfig) -> Result<SourceDomainState> {
     let source_candidates = discover_sources(&cfg.ratd.source).await;
 
     let active_source =
         select_active_source(&source_candidates, &cfg.ratd.source.last_selected_addr)?;
 
-    Ok(SourceDomainBootstrap {
-        candidates: source_candidates,
-        active_addr: active_source,
-    })
+    Ok(SourceDomainState::new(source_candidates, active_source))
 }
 
-pub(crate) async fn refresh_source_candidates(state: &mut DaemonState) {
-    let candidates = discover_sources(&state.config().ratd.source).await;
-    state.source_mut().set_candidates(candidates);
+pub(crate) async fn refresh_source_candidates(
+    source: &mut SourceDomainState,
+    source_cfg: &RatdSourceConfig,
+) {
+    let candidates = discover_sources(source_cfg).await;
+    source.set_candidates(candidates);
 }
 
 pub(crate) fn select_active_source(

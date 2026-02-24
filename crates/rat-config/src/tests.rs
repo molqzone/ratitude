@@ -289,3 +289,15 @@ header_name = "rat_gen.h"
     let _ = fs::remove_file(path);
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn generated_meta_rejects_removed_fingerprint_key() {
+    let raw = r#"
+project = "demo"
+fingerprint = "0x1122334455667788"
+"#;
+    let err = toml::from_str::<GeneratedMeta>(raw).expect_err("fingerprint key should fail");
+    let msg = err.to_string();
+    assert!(msg.contains("unknown field"));
+    assert!(msg.contains("fingerprint"));
+}
