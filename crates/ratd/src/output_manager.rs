@@ -28,7 +28,14 @@ pub struct OutputState {
 struct SinkContext {
     hub: Hub,
     packets: Vec<PacketDef>,
+    key: SinkContextKey,
     revision: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SinkContextKey {
+    runtime_generation: u64,
+    schema_hash: u64,
 }
 
 trait PacketSink {
@@ -263,13 +270,28 @@ impl OutputManager {
         self.reconcile_all()
     }
 
-    pub async fn apply(&mut self, hub: Hub, packets: Vec<PacketDef>) -> Result<()> {
-        self.context_revision = self.context_revision.wrapping_add(1);
-        self.context = Some(SinkContext {
-            hub,
-            packets,
-            revision: self.context_revision,
-        });
+    pub async fn apply(
+        &mut self,
+        hub: Hub,
+        runtime_generation: u64,
+        schema_hash: u64,
+        packets: Vec<PacketDef>,
+    ) -> Result<()> {
+        let key = SinkContextKey {
+            runtime_generation,
+            schema_hash,
+        };
+
+        if self.context.as_ref().map(|ctx| ctx.key) != Some(key) {
+            self.context_revision = self.context_revision.wrapping_add(1);
+            self.context = Some(SinkContext {
+                hub,
+                packets,
+                key,
+                revision: self.context_revision,
+            });
+        }
+
         self.reconcile_all()
     }
 
@@ -328,6 +350,8 @@ mod tests {
         sent: bool,
     }
 
+    struct NoopSink;
+
     impl PacketSink for FailOnceSink {
         fn key(&self) -> SinkKey {
             SinkKey::Jsonl
@@ -343,6 +367,23 @@ mod tests {
                 self.sent = true;
                 let _ = failure_tx.send("sink failed".to_string());
             }
+            Ok(())
+        }
+
+        fn shutdown(&mut self) {}
+    }
+
+    impl PacketSink for NoopSink {
+        fn key(&self) -> SinkKey {
+            SinkKey::Jsonl
+        }
+
+        fn sync(
+            &mut self,
+            _desired: &OutputState,
+            _context: Option<&SinkContext>,
+            _failure_tx: &broadcast::Sender<String>,
+        ) -> Result<()> {
             Ok(())
         }
 
@@ -415,5 +456,59 @@ mod tests {
             Ok(_) => panic!("duplicate sink keys should fail"),
             Err(err) => assert!(err.to_string().contains("duplicate sink key")),
         }
+    }
+
+    #[tokio::test]
+    async fn apply_does_not_bump_context_revision_for_same_runtime_generation_and_hash() {
+        let mut manager = OutputManager::with_sinks_for_test(
+            OutputState {
+                jsonl_enabled: false,
+                jsonl_path: None,
+                foxglove_enabled: false,
+                foxglove_ws_addr: "127.0.0.1:8765".to_string(),
+            },
+            vec![Box::new(NoopSink)],
+        )
+        .expect("build output manager");
+        let hub = Hub::new(8);
+
+        manager
+            .apply(hub.clone(), 1, 0xABCD_EF01_u64, Vec::new())
+            .await
+            .expect("first apply");
+        let first_revision = manager.context_revision;
+
+        manager
+            .apply(hub, 1, 0xABCD_EF01_u64, Vec::new())
+            .await
+            .expect("second apply");
+        assert_eq!(manager.context_revision, first_revision);
+    }
+
+    #[tokio::test]
+    async fn apply_bumps_context_revision_when_runtime_generation_changes() {
+        let mut manager = OutputManager::with_sinks_for_test(
+            OutputState {
+                jsonl_enabled: false,
+                jsonl_path: None,
+                foxglove_enabled: false,
+                foxglove_ws_addr: "127.0.0.1:8765".to_string(),
+            },
+            vec![Box::new(NoopSink)],
+        )
+        .expect("build output manager");
+        let hub = Hub::new(8);
+
+        manager
+            .apply(hub.clone(), 1, 0x1111_u64, Vec::new())
+            .await
+            .expect("first apply");
+        let first_revision = manager.context_revision;
+
+        manager
+            .apply(hub, 2, 0x1111_u64, Vec::new())
+            .await
+            .expect("second apply");
+        assert!(manager.context_revision > first_revision);
     }
 }

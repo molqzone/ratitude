@@ -23,6 +23,7 @@ pub(crate) async fn activate_runtime(
     }
 
     let runtime = start_runtime(state.config(), state.source().active_addr()).await?;
+    state.runtime_mut().advance_generation();
     state.runtime_mut().clear_schema();
     info!(
         source = %state.source().active_addr(),
@@ -44,7 +45,12 @@ pub(crate) async fn apply_schema_ready(
         .schema_mut()
         .replace(schema_hash, packets);
     output_manager
-        .apply(runtime.hub(), state.runtime().schema().packets().to_vec())
+        .apply(
+            runtime.hub(),
+            state.runtime().generation(),
+            schema_hash,
+            state.runtime().schema().packets().to_vec(),
+        )
         .await
 }
 

@@ -39,6 +39,11 @@ impl RatitudeConfig {
                 "ratd.source.last_selected_addr must not be empty".to_string(),
             ));
         }
+        if self.ratd.source.auto_scan && self.ratd.source.seed_addrs.is_empty() {
+            return Err(ConfigError::Validation(
+                "ratd.source.seed_addrs must not be empty when auto_scan=true".to_string(),
+            ));
+        }
 
         if self.ratd.behavior.buf == 0 {
             return Err(ConfigError::Validation(
@@ -81,6 +86,9 @@ impl RatitudeConfig {
         if self.ratd.source.last_selected_addr.trim().is_empty() {
             self.ratd.source.last_selected_addr = RatdSourceConfig::default().last_selected_addr;
         }
+        if self.ratd.source.seed_addrs.is_empty() {
+            self.ratd.source.seed_addrs = RatdSourceConfig::default().seed_addrs;
+        }
         if self.ratd.behavior.reconnect.trim().is_empty() {
             self.ratd.behavior.reconnect = RatdBehaviorConfig::default().reconnect;
         }
@@ -105,6 +113,16 @@ impl RatitudeConfig {
                     Some(format!(".{}", trimmed.to_ascii_lowercase()))
                 }
             })
+            .collect();
+
+        self.ratd.source.seed_addrs = self
+            .ratd
+            .source
+            .seed_addrs
+            .iter()
+            .map(|addr| addr.trim())
+            .filter(|addr| !addr.is_empty())
+            .map(ToString::to_string)
             .collect();
     }
 }

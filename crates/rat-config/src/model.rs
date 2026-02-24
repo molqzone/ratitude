@@ -125,6 +125,7 @@ pub struct RatdSourceConfig {
     pub auto_scan: bool,
     pub scan_timeout_ms: u64,
     pub last_selected_addr: String,
+    pub seed_addrs: Vec<String>,
 }
 
 impl Default for RatdSourceConfig {
@@ -133,6 +134,11 @@ impl Default for RatdSourceConfig {
             auto_scan: true,
             scan_timeout_ms: 300,
             last_selected_addr: "127.0.0.1:19021".to_string(),
+            seed_addrs: vec![
+                "127.0.0.1:19021".to_string(),
+                "127.0.0.1:2331".to_string(),
+                "127.0.0.1:9090".to_string(),
+            ],
         }
     }
 }

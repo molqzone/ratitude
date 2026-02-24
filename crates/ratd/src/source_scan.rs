@@ -19,9 +19,12 @@ pub async fn discover_sources(config: &RatdSourceConfig) -> Vec<SourceCandidate>
     }
 
     if config.auto_scan {
-        addresses.insert("127.0.0.1:19021".to_string());
-        addresses.insert("127.0.0.1:2331".to_string());
-        addresses.insert("127.0.0.1:9090".to_string());
+        for addr in &config.seed_addrs {
+            let trimmed = addr.trim();
+            if !trimmed.is_empty() {
+                addresses.insert(trimmed.to_string());
+            }
+        }
     }
 
     let timeout = Duration::from_millis(config.scan_timeout_ms.max(1));
@@ -125,6 +128,7 @@ mod tests {
             auto_scan: false,
             scan_timeout_ms: 100,
             last_selected_addr: addr.clone(),
+            seed_addrs: RatdSourceConfig::default().seed_addrs,
         };
         let candidates = discover_sources(&config).await;
 
@@ -143,6 +147,7 @@ mod tests {
             auto_scan: false,
             scan_timeout_ms: 100,
             last_selected_addr: addr.clone(),
+            seed_addrs: RatdSourceConfig::default().seed_addrs,
         };
         let candidates = discover_sources(&config).await;
 
@@ -157,6 +162,7 @@ mod tests {
             auto_scan: true,
             scan_timeout_ms: 1,
             last_selected_addr: String::new(),
+            seed_addrs: RatdSourceConfig::default().seed_addrs,
         };
         let candidates = discover_sources(&config).await;
         let addresses = candidates
@@ -167,5 +173,24 @@ mod tests {
         assert!(addresses.contains(&"127.0.0.1:19021".to_string()));
         assert!(addresses.contains(&"127.0.0.1:2331".to_string()));
         assert!(addresses.contains(&"127.0.0.1:9090".to_string()));
+    }
+
+    #[tokio::test]
+    async fn auto_scan_true_uses_configured_seed_addresses() {
+        let config = RatdSourceConfig {
+            auto_scan: true,
+            scan_timeout_ms: 1,
+            last_selected_addr: String::new(),
+            seed_addrs: vec!["127.0.0.1:20001".to_string(), "127.0.0.1:20002".to_string()],
+        };
+        let candidates = discover_sources(&config).await;
+        let addresses = candidates
+            .into_iter()
+            .map(|item| item.addr)
+            .collect::<Vec<_>>();
+
+        assert!(addresses.contains(&"127.0.0.1:20001".to_string()));
+        assert!(addresses.contains(&"127.0.0.1:20002".to_string()));
+        assert!(!addresses.contains(&"127.0.0.1:19021".to_string()));
     }
 }

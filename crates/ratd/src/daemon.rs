@@ -17,11 +17,15 @@ use crate::source_state::{build_source_domain, SourceDomainState};
 #[derive(Debug, Clone)]
 pub(crate) struct RuntimeDomainState {
     schema: RuntimeSchemaState,
+    generation: u64,
 }
 
 impl RuntimeDomainState {
     fn new(schema: RuntimeSchemaState) -> Self {
-        Self { schema }
+        Self {
+            schema,
+            generation: 0,
+        }
     }
 
     pub(crate) fn schema(&self) -> &RuntimeSchemaState {
@@ -34,6 +38,14 @@ impl RuntimeDomainState {
 
     pub(crate) fn clear_schema(&mut self) {
         self.schema.clear();
+    }
+
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub(crate) fn advance_generation(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
     }
 }
 
@@ -117,57 +129,18 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
                 let Some(command) = command else {
                     break;
                 };
-                let action = handle_console_command(command, &mut state, &mut output_manager).await?;
-                if action.should_quit {
+                let command_outcome =
+                    process_console_event(command, runtime, &mut state, &mut output_manager).await?;
+                runtime = command_outcome.runtime;
+                if command_outcome.should_quit {
                     break;
-                }
-                if action.restart_runtime {
-                    runtime = activate_runtime(Some(runtime), &mut state, &mut output_manager).await?;
                 }
             }
             maybe_signal = runtime.recv_signal() => {
-                match maybe_signal {
-                    Some(RuntimeSignal::SchemaReady { schema_hash, packets }) => {
-                        apply_schema_ready(
-                            &mut state,
-                            &mut output_manager,
-                            &runtime,
-                            schema_hash,
-                            packets,
-                        )
-                        .await?;
-                        println!(
-                            "runtime schema ready: packets={}, hash=0x{:016X}",
-                            state.runtime().schema().packet_count(),
-                            state
-                                .runtime()
-                                .schema()
-                                .schema_hash()
-                                .unwrap_or(schema_hash)
-                        );
-                    }
-                    Some(RuntimeSignal::Fatal(err)) => {
-                        return Err(anyhow!(err.to_string()));
-                    }
-                    None => {
-                        return Err(anyhow!("ingest runtime signal channel closed"));
-                    }
-                }
+                process_runtime_signal(maybe_signal, &mut state, &mut output_manager, &runtime).await?;
             }
             sink_failure = output_failure_rx.recv() => {
-                match sink_failure {
-                    Ok(reason) => {
-                        return Err(anyhow!("output sink failure: {reason}"));
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        return Err(anyhow!("output sink failure channel closed"));
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                        return Err(anyhow!(
-                            "output sink failure channel lagged (skipped {skipped} messages)"
-                        ));
-                    }
-                }
+                process_output_failure(sink_failure)?;
             }
         }
     }
@@ -176,6 +149,67 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
     output_manager.shutdown().await;
     runtime.shutdown(true).await;
     Ok(())
+}
+
+struct ConsoleEventOutcome {
+    runtime: rat_core::IngestRuntime,
+    should_quit: bool,
+}
+
+async fn process_console_event(
+    command: crate::console::ConsoleCommand,
+    runtime: rat_core::IngestRuntime,
+    state: &mut DaemonState,
+    output_manager: &mut OutputManager,
+) -> Result<ConsoleEventOutcome> {
+    let mut runtime = runtime;
+    let action = handle_console_command(command, state, output_manager).await?;
+    if action.restart_runtime {
+        runtime = activate_runtime(Some(runtime), state, output_manager).await?;
+    }
+    Ok(ConsoleEventOutcome {
+        runtime,
+        should_quit: action.should_quit,
+    })
+}
+
+async fn process_runtime_signal(
+    signal: Option<RuntimeSignal>,
+    state: &mut DaemonState,
+    output_manager: &mut OutputManager,
+    runtime: &rat_core::IngestRuntime,
+) -> Result<()> {
+    match signal {
+        Some(RuntimeSignal::SchemaReady { schema_hash, packets }) => {
+            apply_schema_ready(state, output_manager, runtime, schema_hash, packets).await?;
+            println!(
+                "runtime schema ready: packets={}, hash=0x{:016X}",
+                state.runtime().schema().packet_count(),
+                state
+                    .runtime()
+                    .schema()
+                    .schema_hash()
+                    .unwrap_or(schema_hash)
+            );
+            Ok(())
+        }
+        Some(RuntimeSignal::Fatal(err)) => Err(anyhow!(err.to_string())),
+        None => Err(anyhow!("ingest runtime signal channel closed")),
+    }
+}
+
+fn process_output_failure(
+    sink_failure: std::result::Result<String, tokio::sync::broadcast::error::RecvError>,
+) -> Result<()> {
+    match sink_failure {
+        Ok(reason) => Err(anyhow!("output sink failure: {reason}")),
+        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+            Err(anyhow!("output sink failure channel closed"))
+        }
+        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => Err(anyhow!(
+            "output sink failure channel lagged (skipped {skipped} messages)"
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -414,7 +448,7 @@ mod tests {
         );
         let mut output_manager = OutputManager::from_config(&cfg).expect("build output manager");
         output_manager
-            .apply(Hub::new(8), Vec::new())
+            .apply(Hub::new(8), 1, 0x1, Vec::new())
             .await
             .expect("attach runtime context");
 
