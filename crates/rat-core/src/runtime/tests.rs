@@ -138,6 +138,22 @@ async fn spawn_frames_once(listener: TcpListener, frames: Vec<Vec<u8>>) -> JoinH
     })
 }
 
+async fn spawn_frames_with_interval(
+    listener: TcpListener,
+    frames: Vec<Vec<u8>>,
+    interval: Duration,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.expect("accept");
+        for (idx, frame) in frames.into_iter().enumerate() {
+            if idx > 0 {
+                tokio::time::sleep(interval).await;
+            }
+            socket.write_all(&frame).await.expect("write frame");
+        }
+    })
+}
+
 #[test]
 fn unknown_packet_monitor_threshold_once_per_window() {
     let mut monitor = UnknownPacketMonitor::new(Duration::from_secs(10), 3);
@@ -240,6 +256,36 @@ async fn runtime_emits_schema_ready_signal() {
         }
         other => panic!("unexpected signal: {other:?}"),
     }
+
+    runtime.shutdown(true).await;
+    let _ = send_task.await;
+}
+
+#[tokio::test]
+async fn runtime_schema_timeout_renews_while_chunks_keep_arriving() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr").to_string();
+    let schema = schema_toml().into_bytes();
+    let frames = control_frames(&schema, 8);
+    let send_task = spawn_frames_with_interval(listener, frames, Duration::from_millis(40)).await;
+
+    let mut runtime = start_ingest_runtime(IngestRuntimeConfig {
+        addr,
+        listener: listener_opts(),
+        hub_buffer: 8,
+        text_packet_id: 0xFF,
+        schema_timeout: Duration::from_millis(90),
+        unknown_window: Duration::from_secs(5),
+        unknown_threshold: 20,
+    })
+    .await
+    .expect("start runtime");
+
+    let signal = tokio::time::timeout(Duration::from_secs(3), runtime.recv_signal())
+        .await
+        .expect("signal timeout")
+        .expect("signal");
+    assert!(matches!(signal, RuntimeSignal::SchemaReady { .. }));
 
     runtime.shutdown(true).await;
     let _ = send_task.await;

@@ -93,7 +93,7 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
     let source = build_source_domain(&cfg.ratd.source).await?;
     let mut state = DaemonState::new(cli.config.clone(), cfg, source);
     render_candidates(state.source().candidates());
-    let mut output_manager = OutputManager::from_config(state.config());
+    let mut output_manager = OutputManager::from_config(state.config())?;
     let mut runtime = activate_runtime(None, &mut state, &mut output_manager).await?;
     let mut output_failure_rx = output_manager.subscribe_failures();
 
@@ -293,7 +293,7 @@ mod tests {
                 addr.clone(),
             ),
         );
-        let mut output_manager = OutputManager::from_config(&cfg);
+        let mut output_manager = OutputManager::from_config(&cfg).expect("build output manager");
         let action =
             handle_console_command(ConsoleCommand::SourceList, &mut state, &mut output_manager)
                 .await
@@ -333,7 +333,7 @@ mod tests {
                 original_active.clone(),
             ),
         );
-        let mut output_manager = OutputManager::from_config(&cfg);
+        let mut output_manager = OutputManager::from_config(&cfg).expect("build output manager");
         let action = handle_console_command(
             ConsoleCommand::SourceUse(1),
             &mut state,
@@ -368,7 +368,7 @@ mod tests {
             cfg.clone(),
             SourceDomainState::new(Vec::new(), "127.0.0.1:19021".to_string()),
         );
-        let mut output_manager = OutputManager::from_config(&cfg);
+        let mut output_manager = OutputManager::from_config(&cfg).expect("build output manager");
         let foxglove_action = handle_console_command(
             ConsoleCommand::Foxglove(true),
             &mut state,

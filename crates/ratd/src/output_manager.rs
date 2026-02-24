@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use rat_bridge_foxglove::{run_bridge, BridgeConfig};
 use rat_config::{PacketDef, RatitudeConfig};
 use rat_core::{spawn_jsonl_writer, Hub};
@@ -173,35 +173,35 @@ pub struct OutputManager {
 }
 
 impl OutputManager {
-    pub fn from_config(cfg: &RatitudeConfig) -> Self {
+    pub fn from_config(cfg: &RatitudeConfig) -> Result<Self> {
         let desired = output_state_from_config(cfg);
         let (failure_tx, _failure_rx) = broadcast::channel::<String>(64);
 
         let mut sinks = Vec::new();
-        register_sink(&mut sinks, Box::new(JsonlSink::new()));
-        register_sink(&mut sinks, Box::new(FoxgloveSink::new()));
+        register_sink(&mut sinks, Box::new(JsonlSink::new()))?;
+        register_sink(&mut sinks, Box::new(FoxgloveSink::new()))?;
 
-        Self {
+        Ok(Self {
             desired,
             context: None,
             sinks,
             failure_tx,
-        }
+        })
     }
 
     #[cfg(test)]
-    fn with_sinks_for_test(desired: OutputState, sinks: Vec<Box<dyn PacketSink>>) -> Self {
+    fn with_sinks_for_test(desired: OutputState, sinks: Vec<Box<dyn PacketSink>>) -> Result<Self> {
         let (failure_tx, _failure_rx) = broadcast::channel::<String>(64);
         let mut registered = Vec::new();
         for sink in sinks {
-            register_sink(&mut registered, sink);
+            register_sink(&mut registered, sink)?;
         }
-        Self {
+        Ok(Self {
             desired,
             context: None,
             sinks: registered,
             failure_tx,
-        }
+        })
     }
 
     pub fn snapshot(&self) -> OutputState {
@@ -253,11 +253,14 @@ fn output_state_from_config(cfg: &RatitudeConfig) -> OutputState {
     }
 }
 
-fn register_sink(sinks: &mut Vec<RegisteredSink>, sink: Box<dyn PacketSink>) {
+fn register_sink(sinks: &mut Vec<RegisteredSink>, sink: Box<dyn PacketSink>) -> Result<()> {
     let key = sink.key();
     let duplicate = sinks.iter().any(|entry| entry.key == key);
-    assert!(!duplicate, "duplicate sink key in OutputManager: {:?}", key);
+    if duplicate {
+        return Err(anyhow!("duplicate sink key in OutputManager: {:?}", key));
+    }
     sinks.push(RegisteredSink { key, sink });
+    Ok(())
 }
 
 #[cfg(test)]
@@ -301,7 +304,8 @@ mod tests {
                 foxglove_ws_addr: "127.0.0.1:8765".to_string(),
             },
             vec![Box::new(FailOnceSink { sent: false })],
-        );
+        )
+        .expect("build output manager");
         let mut failures = manager.subscribe_failures();
 
         let cfg = RatitudeConfig::default();
@@ -322,7 +326,8 @@ mod tests {
                 foxglove_ws_addr: "127.0.0.1:8765".to_string(),
             },
             vec![Box::new(FailOnceSink { sent: true })],
-        );
+        )
+        .expect("build output manager");
         let mut cfg = RatitudeConfig::default();
         cfg.ratd.outputs.jsonl.enabled = true;
         cfg.ratd.outputs.jsonl.path = "out.jsonl".to_string();
@@ -335,5 +340,25 @@ mod tests {
         assert_eq!(snapshot.jsonl_path.as_deref(), Some("out.jsonl"));
         assert!(snapshot.foxglove_enabled);
         assert_eq!(snapshot.foxglove_ws_addr, "127.0.0.1:9000");
+    }
+
+    #[test]
+    fn with_sinks_for_test_rejects_duplicate_sink_keys() {
+        let result = OutputManager::with_sinks_for_test(
+            OutputState {
+                jsonl_enabled: false,
+                jsonl_path: None,
+                foxglove_enabled: false,
+                foxglove_ws_addr: "127.0.0.1:8765".to_string(),
+            },
+            vec![
+                Box::new(FailOnceSink { sent: true }),
+                Box::new(FailOnceSink { sent: true }),
+            ],
+        );
+        match result {
+            Ok(_) => panic!("duplicate sink keys should fail"),
+            Err(err) => assert!(err.to_string().contains("duplicate sink key")),
+        }
     }
 }

@@ -51,11 +51,15 @@ pub(crate) fn handle_control_payload(
             Ok(ControlOutcome::SchemaReset)
         }
         ControlMessage::SchemaChunk { offset, chunk } => {
-            let assembly = schema_state.assembly_mut()?;
-            assembly.append(offset, &chunk)?;
+            let (received, total) = {
+                let assembly = schema_state.assembly_mut()?;
+                assembly.append(offset, &chunk)?;
+                (assembly.bytes_len(), assembly.total_len())
+            };
+            schema_state.refresh_wait_deadline();
             debug!(
-                received = assembly.bytes_len(),
-                total = assembly.total_len(),
+                received = received,
+                total = total,
                 "runtime schema chunk accepted"
             );
             Ok(ControlOutcome::Noop)
@@ -154,7 +158,7 @@ impl SchemaState {
     fn begin_assembly(&mut self, assembly: SchemaAssembly) {
         self.ready = false;
         self.assembly = Some(assembly);
-        self.wait_deadline = TokioInstant::now() + self.timeout;
+        self.refresh_wait_deadline();
     }
 
     fn mark_ready(&mut self) {
@@ -168,6 +172,10 @@ impl SchemaState {
 
     pub(crate) fn wait_deadline(&self) -> TokioInstant {
         self.wait_deadline
+    }
+
+    pub(crate) fn refresh_wait_deadline(&mut self) {
+        self.wait_deadline = TokioInstant::now() + self.timeout;
     }
 
     fn assembly_mut(&mut self) -> Result<&mut SchemaAssembly, RuntimeError> {
