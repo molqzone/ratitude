@@ -232,28 +232,6 @@ impl OutputManager {
         self.reconcile_all()
     }
 
-    pub fn set_jsonl(&mut self, enabled: bool, path: Option<String>) -> Result<()> {
-        self.desired.jsonl_enabled = enabled;
-        if let Some(path) = path {
-            self.desired.jsonl_path = if path.trim().is_empty() {
-                None
-            } else {
-                Some(path)
-            };
-        }
-        self.reconcile_sink(SinkKey::Jsonl)
-    }
-
-    pub fn set_foxglove(&mut self, enabled: bool, ws_addr: Option<String>) -> Result<()> {
-        self.desired.foxglove_enabled = enabled;
-        if let Some(ws_addr) = ws_addr {
-            if !ws_addr.trim().is_empty() {
-                self.desired.foxglove_ws_addr = ws_addr;
-            }
-        }
-        self.reconcile_sink(SinkKey::Foxglove)
-    }
-
     pub async fn apply(&mut self, hub: Hub, packets: Vec<PacketDef>) -> Result<()> {
         self.context = Some(SinkContext { hub, packets });
         self.reconcile_all()
@@ -277,13 +255,6 @@ impl OutputManager {
 
     fn reconcile_all(&mut self) -> Result<()> {
         for entry in &mut self.sinks {
-            entry.sink.sync(&self.desired, self.context.as_ref())?;
-        }
-        Ok(())
-    }
-
-    fn reconcile_sink(&mut self, key: SinkKey) -> Result<()> {
-        if let Some(entry) = self.sinks.iter_mut().find(|entry| entry.key == key) {
             entry.sink.sync(&self.desired, self.context.as_ref())?;
         }
         Ok(())

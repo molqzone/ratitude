@@ -4,7 +4,7 @@ use tokio::time::Instant as TokioInstant;
 use tracing::{debug, info};
 
 use crate::protocol_engine::{
-    ProtocolEngine, ProtocolEngineError, RuntimeDynamicFieldDef, RuntimeDynamicPacketDef,
+    ProtocolEngineError, RatProtocolEngine, RuntimeDynamicFieldDef, RuntimeDynamicPacketDef,
 };
 
 use super::{RuntimeError, RuntimeFieldDef, RuntimePacketDef};
@@ -31,7 +31,7 @@ pub(crate) enum ControlOutcome {
 pub(crate) fn handle_control_payload(
     payload: &[u8],
     schema_state: &mut SchemaState,
-    protocol: &mut dyn ProtocolEngine,
+    protocol: &mut RatProtocolEngine,
 ) -> Result<ControlOutcome, RuntimeError> {
     match parse_control_message(payload)? {
         ControlMessage::Hello {
@@ -77,7 +77,7 @@ pub(crate) fn handle_control_payload(
 }
 
 fn register_runtime_schema(
-    protocol: &mut dyn ProtocolEngine,
+    protocol: &mut RatProtocolEngine,
     packets: &[RuntimePacketDef],
 ) -> Result<(), RuntimeError> {
     protocol.clear_dynamic_registry();

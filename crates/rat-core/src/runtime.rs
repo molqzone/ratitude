@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
 use crate::protocol_engine::{
-    decode_frame, PacketEnvelope, ProtocolEngine, ProtocolEngineError, RatProtocolEngine,
+    decode_frame, PacketEnvelope, ProtocolEngineError, RatProtocolEngine,
 };
 use crate::{spawn_listener, Hub, ListenerOptions};
 
@@ -101,9 +101,6 @@ pub enum RuntimeError {
 
     #[error("frame consumer stopped before shutdown")]
     FrameConsumerStopped,
-
-    #[error("frame consumer task failed: {reason}")]
-    TaskJoinFailed { reason: String },
 }
 
 pub struct IngestRuntime {
@@ -150,13 +147,7 @@ impl IngestRuntime {
 }
 
 pub async fn start_ingest_runtime(cfg: IngestRuntimeConfig) -> Result<IngestRuntime, RuntimeError> {
-    start_ingest_runtime_with_protocol(cfg, Box::new(RatProtocolEngine::new())).await
-}
-
-async fn start_ingest_runtime_with_protocol(
-    cfg: IngestRuntimeConfig,
-    mut protocol: Box<dyn ProtocolEngine>,
-) -> Result<IngestRuntime, RuntimeError> {
+    let mut protocol = RatProtocolEngine::new();
     protocol.set_text_packet_id(cfg.text_packet_id);
     protocol.clear_dynamic_registry();
 
@@ -190,7 +181,7 @@ async fn start_ingest_runtime_with_protocol(
 fn spawn_frame_consumer_monitor(
     receiver: mpsc::Receiver<Vec<u8>>,
     hub: Hub,
-    protocol: Box<dyn ProtocolEngine>,
+    mut protocol: RatProtocolEngine,
     shutdown: CancellationToken,
     schema_timeout: Duration,
     unknown_window: Duration,
@@ -198,26 +189,19 @@ fn spawn_frame_consumer_monitor(
     signals: mpsc::Sender<RuntimeSignal>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let consume = tokio::spawn(run_frame_consumer(
+        let consume = run_frame_consumer(
             receiver,
             hub,
-            protocol,
+            &mut protocol,
             shutdown.clone(),
             schema_timeout,
             unknown_window,
             unknown_threshold,
             signals.clone(),
-        ));
+        )
+        .await;
 
-        let fatal = match consume.await {
-            Ok(Ok(())) => None,
-            Ok(Err(err)) => Some(err),
-            Err(err) => Some(RuntimeError::TaskJoinFailed {
-                reason: err.to_string(),
-            }),
-        };
-
-        if let Some(err) = fatal {
+        if let Err(err) = consume {
             if signals
                 .send(RuntimeSignal::Fatal(err.clone()))
                 .await
@@ -233,7 +217,7 @@ fn spawn_frame_consumer_monitor(
 async fn run_frame_consumer(
     mut receiver: mpsc::Receiver<Vec<u8>>,
     hub: Hub,
-    mut protocol: Box<dyn ProtocolEngine>,
+    protocol: &mut RatProtocolEngine,
     shutdown: CancellationToken,
     schema_timeout: Duration,
     unknown_window: Duration,
@@ -271,7 +255,7 @@ async fn run_frame_consumer(
 
                 if id == CONTROL_PACKET_ID {
                     let control_outcome =
-                        handle_control_payload(&payload, &mut schema_state, protocol.as_mut())?;
+                        handle_control_payload(&payload, &mut schema_state, protocol)?;
                     match control_outcome {
                         ControlOutcome::SchemaReset => {
                             unknown_monitor = UnknownPacketMonitor::new(unknown_window, unknown_threshold);

@@ -50,24 +50,32 @@ pub(crate) async fn handle_console_command(
                 render_candidates(state.source().candidates());
                 return Ok(action);
             };
+
+            let mut next = state.config().clone();
+            next.ratd.source.last_selected_addr = candidate.addr.clone();
+            save_config(state.config_path(), &next).await?;
+            state.replace_config(next);
             state.select_active_source(candidate.addr.clone());
-            save_config(state.config_path(), state.config()).await?;
             println!("selected source: {}", state.source().active_addr());
             action.restart_runtime = true;
         }
         ConsoleCommand::Foxglove(enabled) => {
-            output_manager.set_foxglove(enabled, None)?;
-            state.set_foxglove_enabled(enabled);
-            save_config(state.config_path(), state.config()).await?;
+            let mut next = state.config().clone();
+            next.ratd.outputs.foxglove.enabled = enabled;
+            save_config(state.config_path(), &next).await?;
+            state.replace_config(next);
+            output_manager.reload_from_config(state.config())?;
             println!("foxglove output: {}", if enabled { "on" } else { "off" });
         }
         ConsoleCommand::Jsonl { enabled, path } => {
-            output_manager.set_jsonl(enabled, path.clone())?;
-            state.set_jsonl_enabled(enabled);
+            let mut next = state.config().clone();
+            next.ratd.outputs.jsonl.enabled = enabled;
             if let Some(path) = path {
-                state.set_jsonl_path(path);
+                next.ratd.outputs.jsonl.path = path;
             }
-            save_config(state.config_path(), state.config()).await?;
+            save_config(state.config_path(), &next).await?;
+            state.replace_config(next);
+            output_manager.reload_from_config(state.config())?;
             println!("jsonl output: {}", if enabled { "on" } else { "off" });
         }
         ConsoleCommand::PacketLookup {

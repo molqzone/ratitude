@@ -33,14 +33,6 @@ pub(crate) enum ProtocolEngineError {
     Decode(String),
 }
 
-pub(crate) trait ProtocolEngine: Send + Sync {
-    fn set_text_packet_id(&mut self, id: u8);
-    fn clear_dynamic_registry(&mut self);
-    fn register_dynamic(&mut self, def: RuntimeDynamicPacketDef)
-        -> Result<(), ProtocolEngineError>;
-    fn parse_packet(&self, id: u8, payload: &[u8]) -> Result<PacketPayload, ProtocolEngineError>;
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct RatProtocolEngine {
     context: ProtocolContext,
@@ -78,25 +70,27 @@ impl RatProtocolEngine {
             .register_dynamic(packet_def.id, packet_def)
             .map_err(|err| ProtocolEngineError::Register(err.to_string()))
     }
-}
 
-impl ProtocolEngine for RatProtocolEngine {
-    fn set_text_packet_id(&mut self, id: u8) {
+    pub(crate) fn set_text_packet_id(&mut self, id: u8) {
         self.context.set_text_packet_id(id);
     }
 
-    fn clear_dynamic_registry(&mut self) {
+    pub(crate) fn clear_dynamic_registry(&mut self) {
         self.context.clear_dynamic_registry();
     }
 
-    fn register_dynamic(
+    pub(crate) fn register_dynamic(
         &mut self,
         def: RuntimeDynamicPacketDef,
     ) -> Result<(), ProtocolEngineError> {
         self.register_dynamic_impl(def)
     }
 
-    fn parse_packet(&self, id: u8, payload: &[u8]) -> Result<PacketPayload, ProtocolEngineError> {
+    pub(crate) fn parse_packet(
+        &self,
+        id: u8,
+        payload: &[u8],
+    ) -> Result<PacketPayload, ProtocolEngineError> {
         self.context
             .parse_packet(id, payload)
             .map_err(|err| match err {

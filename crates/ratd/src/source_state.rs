@@ -4,18 +4,22 @@ use rat_config::RatitudeConfig;
 use crate::daemon::DaemonState;
 use crate::source_scan::{discover_sources, SourceCandidate};
 
-pub(crate) async fn build_state(config_path: String, cfg: RatitudeConfig) -> Result<DaemonState> {
+#[derive(Debug, Clone)]
+pub(crate) struct SourceDomainBootstrap {
+    pub(crate) candidates: Vec<SourceCandidate>,
+    pub(crate) active_addr: String,
+}
+
+pub(crate) async fn build_source_domain(cfg: &RatitudeConfig) -> Result<SourceDomainBootstrap> {
     let source_candidates = discover_sources(&cfg.ratd.source).await;
 
     let active_source =
         select_active_source(&source_candidates, &cfg.ratd.source.last_selected_addr)?;
 
-    Ok(DaemonState::new(
-        config_path,
-        cfg,
-        source_candidates,
-        active_source,
-    ))
+    Ok(SourceDomainBootstrap {
+        candidates: source_candidates,
+        active_addr: active_source,
+    })
 }
 
 pub(crate) async fn refresh_source_candidates(state: &mut DaemonState) {

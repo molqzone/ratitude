@@ -14,7 +14,7 @@ use crate::output_manager::OutputManager;
 use crate::runtime_lifecycle::{activate_runtime, apply_schema_ready};
 use crate::runtime_schema::RuntimeSchemaState;
 use crate::source_scan::{render_candidates, SourceCandidate};
-use crate::source_state::build_state;
+use crate::source_state::build_source_domain;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SourceDomainState {
@@ -75,47 +75,11 @@ impl RuntimeDomainState {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct OutputDomainState {
-    jsonl_enabled: bool,
-    jsonl_path: String,
-    foxglove_enabled: bool,
-}
-
-impl OutputDomainState {
-    fn from_config(cfg: &RatitudeConfig) -> Self {
-        Self {
-            jsonl_enabled: cfg.ratd.outputs.jsonl.enabled,
-            jsonl_path: cfg.ratd.outputs.jsonl.path.clone(),
-            foxglove_enabled: cfg.ratd.outputs.foxglove.enabled,
-        }
-    }
-
-    fn apply_to_config(&self, cfg: &mut RatitudeConfig) {
-        cfg.ratd.outputs.jsonl.enabled = self.jsonl_enabled;
-        cfg.ratd.outputs.jsonl.path = self.jsonl_path.clone();
-        cfg.ratd.outputs.foxglove.enabled = self.foxglove_enabled;
-    }
-
-    pub(crate) fn set_foxglove_enabled(&mut self, enabled: bool) {
-        self.foxglove_enabled = enabled;
-    }
-
-    pub(crate) fn set_jsonl_enabled(&mut self, enabled: bool) {
-        self.jsonl_enabled = enabled;
-    }
-
-    pub(crate) fn set_jsonl_path(&mut self, path: String) {
-        self.jsonl_path = path;
-    }
-}
-
-#[derive(Debug, Clone)]
 pub struct DaemonState {
     config_path: String,
     config: RatitudeConfig,
     source: SourceDomainState,
     runtime: RuntimeDomainState,
-    output: OutputDomainState,
 }
 
 impl DaemonState {
@@ -125,13 +89,11 @@ impl DaemonState {
         source_candidates: Vec<SourceCandidate>,
         active_source: String,
     ) -> Self {
-        let output = OutputDomainState::from_config(&config);
         Self {
             config_path,
             config,
             source: SourceDomainState::new(source_candidates, active_source),
             runtime: RuntimeDomainState::new(RuntimeSchemaState::default()),
-            output,
         }
     }
 
@@ -145,7 +107,6 @@ impl DaemonState {
 
     pub(crate) fn replace_config(&mut self, config: RatitudeConfig) {
         self.config = config;
-        self.output = OutputDomainState::from_config(&self.config);
     }
 
     pub(crate) fn source(&self) -> &SourceDomainState {
@@ -168,26 +129,17 @@ impl DaemonState {
         self.source.set_active_addr(addr.clone());
         self.config.ratd.source.last_selected_addr = addr;
     }
-
-    pub(crate) fn set_foxglove_enabled(&mut self, enabled: bool) {
-        self.output.set_foxglove_enabled(enabled);
-        self.output.apply_to_config(&mut self.config);
-    }
-
-    pub(crate) fn set_jsonl_enabled(&mut self, enabled: bool) {
-        self.output.set_jsonl_enabled(enabled);
-        self.output.apply_to_config(&mut self.config);
-    }
-
-    pub(crate) fn set_jsonl_path(&mut self, path: String) {
-        self.output.set_jsonl_path(path);
-        self.output.apply_to_config(&mut self.config);
-    }
 }
 
 pub async fn run_daemon(cli: Cli) -> Result<()> {
     let cfg = load_config(&cli.config).await?;
-    let mut state = build_state(cli.config.clone(), cfg).await?;
+    let source = build_source_domain(&cfg).await?;
+    let mut state = DaemonState::new(
+        cli.config.clone(),
+        cfg,
+        source.candidates,
+        source.active_addr,
+    );
     render_candidates(state.source().candidates());
     let mut output_manager = OutputManager::from_config(state.config());
     let mut runtime = activate_runtime(None, &mut state, &mut output_manager).await?;
@@ -278,7 +230,7 @@ mod tests {
     use crate::command_loop::handle_console_command;
     use crate::config_io::load_config;
     use crate::console::ConsoleCommand;
-    use crate::source_state::{build_state, select_active_source};
+    use crate::source_state::{build_source_domain, select_active_source};
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -337,9 +289,13 @@ mod tests {
             .save(&cfg)
             .expect("save config");
 
-        let state = build_state(config_path.to_string_lossy().to_string(), cfg)
-            .await
-            .expect("build state");
+        let source = build_source_domain(&cfg).await.expect("build source");
+        let state = DaemonState::new(
+            config_path.to_string_lossy().to_string(),
+            cfg,
+            source.candidates,
+            source.active_addr,
+        );
         assert_eq!(state.source().active_addr(), "10.10.10.10:19021");
         assert_eq!(
             state.config().ratd.source.last_selected_addr,
