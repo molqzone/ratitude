@@ -40,7 +40,7 @@ fn select_active_source_prefers_reachable_last_selected() {
 }
 
 #[test]
-fn select_active_source_fast_fails_without_reachable_candidate() {
+fn select_active_source_falls_back_when_no_reachable_candidate() {
     let candidates = vec![
         SourceCandidate {
             addr: "127.0.0.1:19021".to_string(),
@@ -51,10 +51,8 @@ fn select_active_source_fast_fails_without_reachable_candidate() {
             reachable: false,
         },
     ];
-    let err = select_active_source(&candidates, "127.0.0.1:19021").expect_err("must fail");
-    assert!(err
-        .to_string()
-        .contains("no reachable RTT source detected; start RTT endpoint first"));
+    let selected = select_active_source(&candidates, "127.0.0.1:19021").expect("select source");
+    assert_eq!(selected, "127.0.0.1:19021");
 }
 
 #[tokio::test]

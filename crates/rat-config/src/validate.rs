@@ -139,7 +139,14 @@ impl RatdBehaviorConfig {
     }
 
     pub fn schema_timeout_duration(&self) -> Result<Duration, ConfigError> {
-        parse_duration_value("ratd.behavior.schema_timeout", &self.schema_timeout)
+        let schema_timeout =
+            parse_duration_value("ratd.behavior.schema_timeout", &self.schema_timeout)?;
+        if schema_timeout.is_zero() {
+            return Err(ConfigError::Validation(
+                "ratd.behavior.schema_timeout must be > 0".to_string(),
+            ));
+        }
+        Ok(schema_timeout)
     }
 }
 

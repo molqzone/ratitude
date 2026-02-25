@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
@@ -105,7 +105,11 @@ impl PacketSink for JsonlSink {
 
         let writer: Box<dyn Write + Send> = if let Some(path) = &next_state.path {
             Box::new(
-                File::create(path).with_context(|| format!("failed to open jsonl file {path}"))?,
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .with_context(|| format!("failed to open jsonl file {path}"))?,
             )
         } else {
             Box::new(io::stdout())

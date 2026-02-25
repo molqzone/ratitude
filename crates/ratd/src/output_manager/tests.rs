@@ -1,9 +1,21 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use rat_core::{PacketEnvelope, PacketPayload};
 use tokio::sync::broadcast::error::TryRecvError;
 
 use super::*;
+
+fn unique_temp_dir(prefix: &str) -> std::path::PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("{prefix}_{unique}"));
+    std::fs::create_dir_all(&dir).expect("mkdir temp dir");
+    dir
+}
 
 struct FailOnceSink {
     sent: bool,
@@ -220,4 +232,66 @@ fn recover_after_sink_failure_forces_shutdown_then_reconcile() {
 
     assert_eq!(shutdown_calls.load(Ordering::SeqCst), 1);
     assert_eq!(sync_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn jsonl_apply_across_runtime_generations_keeps_existing_file_content() {
+    let dir = unique_temp_dir("ratd_jsonl_append");
+    let jsonl_path = dir.join("packets.jsonl");
+    let jsonl_path_str = jsonl_path.to_string_lossy().to_string();
+
+    let mut cfg = RatitudeConfig::default();
+    cfg.ratd.outputs.foxglove.enabled = false;
+    cfg.ratd.outputs.jsonl.enabled = true;
+    cfg.ratd.outputs.jsonl.path = jsonl_path_str;
+    let mut manager = OutputManager::from_config(&cfg).expect("build output manager");
+
+    let first_hub = Hub::new(8);
+    manager
+        .apply(first_hub.clone(), 1, 0x1111_u64, Vec::new())
+        .await
+        .expect("first apply");
+    tokio::time::sleep(Duration::from_millis(40)).await;
+
+    for _ in 0..3 {
+        let _ = first_hub.publish(PacketEnvelope {
+            id: 0x10,
+            timestamp: SystemTime::UNIX_EPOCH,
+            payload: vec![0x01],
+            data: PacketPayload::Text("first".to_string()),
+        });
+    }
+    tokio::time::sleep(Duration::from_millis(40)).await;
+
+    let second_hub = Hub::new(8);
+    manager
+        .apply(second_hub.clone(), 2, 0x1111_u64, Vec::new())
+        .await
+        .expect("second apply");
+    tokio::time::sleep(Duration::from_millis(40)).await;
+
+    for _ in 0..3 {
+        let _ = second_hub.publish(PacketEnvelope {
+            id: 0x11,
+            timestamp: SystemTime::UNIX_EPOCH,
+            payload: vec![0x02],
+            data: PacketPayload::Text("second".to_string()),
+        });
+    }
+    tokio::time::sleep(Duration::from_millis(40)).await;
+    manager.shutdown().await;
+
+    let content = std::fs::read_to_string(&jsonl_path).expect("read jsonl");
+    let lines = content.lines().collect::<Vec<_>>();
+    assert!(
+        lines.len() >= 2,
+        "jsonl should keep lines across runtime restart"
+    );
+    assert!(lines.iter().any(|line| line.contains("\"text\":\"first\"")));
+    assert!(lines
+        .iter()
+        .any(|line| line.contains("\"text\":\"second\"")));
+
+    let _ = std::fs::remove_file(&jsonl_path);
+    let _ = std::fs::remove_dir_all(dir);
 }

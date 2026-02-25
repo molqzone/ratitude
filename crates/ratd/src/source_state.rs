@@ -60,16 +60,90 @@ pub(crate) fn select_active_source(
     candidates: &[SourceCandidate],
     last_selected_addr: &str,
 ) -> Result<String> {
+    let last_selected = last_selected_addr.trim();
     if let Some(candidate) = candidates
         .iter()
-        .find(|candidate| candidate.reachable && candidate.addr == last_selected_addr)
+        .find(|candidate| candidate.reachable && candidate.addr == last_selected)
     {
         return Ok(candidate.addr.clone());
     }
     if let Some(candidate) = candidates.iter().find(|candidate| candidate.reachable) {
         return Ok(candidate.addr.clone());
     }
+    if let Some(candidate) = candidates
+        .iter()
+        .find(|candidate| candidate.addr == last_selected)
+    {
+        return Ok(candidate.addr.clone());
+    }
+    if let Some(candidate) = candidates.first() {
+        return Ok(candidate.addr.clone());
+    }
     Err(anyhow!(
-        "no reachable RTT source detected; start RTT endpoint first"
+        "no RTT source candidate configured; set ratd.source.last_selected_addr or ratd.source.seed_addrs"
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn candidate(addr: &str, reachable: bool) -> SourceCandidate {
+        SourceCandidate {
+            addr: addr.to_string(),
+            reachable,
+        }
+    }
+
+    #[test]
+    fn select_active_source_prefers_reachable_last_selected() {
+        let candidates = vec![
+            candidate("127.0.0.1:2331", true),
+            candidate("127.0.0.1:19021", true),
+        ];
+        let selected =
+            select_active_source(&candidates, "127.0.0.1:19021").expect("selected source");
+        assert_eq!(selected, "127.0.0.1:19021");
+    }
+
+    #[test]
+    fn select_active_source_falls_back_to_other_reachable_when_last_unreachable() {
+        let candidates = vec![
+            candidate("127.0.0.1:19021", false),
+            candidate("127.0.0.1:2331", true),
+        ];
+        let selected =
+            select_active_source(&candidates, "127.0.0.1:19021").expect("selected source");
+        assert_eq!(selected, "127.0.0.1:2331");
+    }
+
+    #[test]
+    fn select_active_source_falls_back_to_last_selected_when_all_unreachable() {
+        let candidates = vec![
+            candidate("127.0.0.1:19021", false),
+            candidate("127.0.0.1:2331", false),
+        ];
+        let selected =
+            select_active_source(&candidates, "127.0.0.1:19021").expect("selected source");
+        assert_eq!(selected, "127.0.0.1:19021");
+    }
+
+    #[test]
+    fn select_active_source_uses_first_candidate_when_last_missing_and_all_unreachable() {
+        let candidates = vec![
+            candidate("127.0.0.1:2331", false),
+            candidate("127.0.0.1:19021", false),
+        ];
+        let selected =
+            select_active_source(&candidates, "127.0.0.1:9090").expect("selected source");
+        assert_eq!(selected, "127.0.0.1:2331");
+    }
+
+    #[test]
+    fn select_active_source_errors_when_no_candidates_and_no_last_selected() {
+        let err = select_active_source(&[], "").expect_err("missing source should fail");
+        assert!(err
+            .to_string()
+            .contains("no RTT source candidate configured"));
+    }
 }

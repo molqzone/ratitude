@@ -106,6 +106,16 @@ fn validate_rejects_zero_reconnect_duration() {
 }
 
 #[test]
+fn validate_rejects_zero_schema_timeout_duration() {
+    let mut cfg = RatitudeConfig::default();
+    cfg.ratd.behavior.schema_timeout = "0s".to_string();
+    let err = cfg.validate().expect_err("validation should fail");
+    assert!(err
+        .to_string()
+        .contains("ratd.behavior.schema_timeout must be > 0"));
+}
+
+#[test]
 fn validate_rejects_empty_seed_addrs_when_auto_scan_enabled() {
     let mut cfg = RatitudeConfig::default();
     cfg.ratd.source.auto_scan = true;
