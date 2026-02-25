@@ -53,13 +53,15 @@ struct RegisteredSink {
 struct JsonlSink {
     task: Option<JoinHandle<()>>,
     last_state: Option<JsonlRuntimeState>,
+    #[cfg(test)]
+    restart_count: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct JsonlRuntimeState {
     enabled: bool,
     path: Option<String>,
-    context_key: Option<SinkContextKey>,
+    runtime_generation: Option<u64>,
 }
 
 impl JsonlSink {
@@ -67,6 +69,8 @@ impl JsonlSink {
         Self {
             task: None,
             last_state: None,
+            #[cfg(test)]
+            restart_count: 0,
         }
     }
 }
@@ -85,12 +89,18 @@ impl PacketSink for JsonlSink {
         let next_state = JsonlRuntimeState {
             enabled: desired.jsonl_enabled,
             path: desired.jsonl_path.clone(),
-            context_key: context.map(|ctx| ctx.key),
+            runtime_generation: context.map(|ctx| ctx.key.runtime_generation),
         };
         if self.last_state.as_ref() == Some(&next_state) {
             return Ok(());
         }
 
+        if self.task.is_some() {
+            #[cfg(test)]
+            {
+                self.restart_count = self.restart_count.saturating_add(1);
+            }
+        }
         self.shutdown();
 
         if !next_state.enabled {
@@ -265,7 +275,7 @@ impl OutputManager {
 
     pub fn reload_from_config(&mut self, cfg: &RatitudeConfig) -> Result<()> {
         self.desired = output_state_from_config(cfg);
-        self.reconcile_all()
+        self.reconcile_all_strict()
     }
 
     pub async fn apply(
@@ -284,7 +294,8 @@ impl OutputManager {
             self.context = Some(SinkContext { hub, packets, key });
         }
 
-        self.reconcile_all()
+        self.reconcile_all_non_fatal();
+        Ok(())
     }
 
     pub async fn shutdown(&mut self) {
@@ -308,13 +319,28 @@ impl OutputManager {
             .sync(&self.desired, self.context.as_ref(), &self.failure_tx)
     }
 
-    fn reconcile_all(&mut self) -> Result<()> {
+    fn reconcile_all_strict(&mut self) -> Result<()> {
         for entry in &mut self.sinks {
             entry
                 .sink
                 .sync(&self.desired, self.context.as_ref(), &self.failure_tx)?;
         }
         Ok(())
+    }
+
+    fn reconcile_all_non_fatal(&mut self) {
+        for entry in &mut self.sinks {
+            if let Err(err) =
+                entry
+                    .sink
+                    .sync(&self.desired, self.context.as_ref(), &self.failure_tx)
+            {
+                let _ = self.failure_tx.send(SinkFailure {
+                    sink_key: entry.key,
+                    reason: format!("output sink apply failed: {err}"),
+                });
+            }
+        }
     }
 }
 

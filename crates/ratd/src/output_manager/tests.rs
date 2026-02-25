@@ -239,6 +239,80 @@ fn recover_after_sink_failure_forces_shutdown_then_reconcile() {
 }
 
 #[tokio::test]
+async fn apply_reports_sink_failure_without_stopping_runtime_path() {
+    let dir = unique_temp_dir("ratd_jsonl_apply_degrade");
+    let invalid_jsonl_path = dir
+        .join("blocked")
+        .join("packets.jsonl")
+        .to_string_lossy()
+        .to_string();
+    let mut cfg = RatitudeConfig::default();
+    cfg.ratd.outputs.foxglove.enabled = false;
+    cfg.ratd.outputs.jsonl.enabled = true;
+    cfg.ratd.outputs.jsonl.path = invalid_jsonl_path;
+    let mut manager = OutputManager::from_config(&cfg).expect("build output manager");
+    let mut failures = manager.subscribe_failures();
+
+    manager
+        .apply(Hub::new(8), 1, 0xABCD_u64, Vec::new())
+        .await
+        .expect("runtime apply should degrade instead of failing");
+
+    let failure = failures
+        .try_recv()
+        .expect("sink failure should be reported");
+    assert_eq!(failure.sink_key, "jsonl");
+    assert!(failure.reason.contains("output sink apply failed"));
+    assert!(failure.reason.contains("failed to open jsonl file"));
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn jsonl_sink_ignores_schema_hash_for_same_runtime_generation() {
+    let dir = unique_temp_dir("ratd_jsonl_hash_no_restart");
+    let jsonl_path = dir.join("packets.jsonl");
+    let desired = OutputState {
+        jsonl_enabled: true,
+        jsonl_path: Some(jsonl_path.to_string_lossy().to_string()),
+        foxglove_enabled: false,
+        foxglove_ws_addr: "127.0.0.1:8765".to_string(),
+    };
+    let (failure_tx, _failure_rx) = tokio::sync::broadcast::channel::<SinkFailure>(8);
+    let mut sink = JsonlSink::new();
+    let hub = Hub::new(8);
+    let first_context = SinkContext {
+        hub: hub.clone(),
+        packets: Vec::new(),
+        key: SinkContextKey {
+            runtime_generation: 7,
+            schema_hash: 0xAAAA,
+        },
+    };
+    let second_context = SinkContext {
+        hub,
+        packets: Vec::new(),
+        key: SinkContextKey {
+            runtime_generation: 7,
+            schema_hash: 0xBBBB,
+        },
+    };
+
+    sink.sync(&desired, Some(&first_context), &failure_tx)
+        .expect("first sync");
+    sink.sync(&desired, Some(&second_context), &failure_tx)
+        .expect("second sync");
+    assert_eq!(
+        sink.restart_count, 0,
+        "jsonl should not restart when only schema hash changes"
+    );
+
+    sink.shutdown();
+    let _ = std::fs::remove_file(&jsonl_path);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
 async fn jsonl_apply_across_runtime_generations_keeps_existing_file_content() {
     let dir = unique_temp_dir("ratd_jsonl_append");
     let jsonl_path = dir.join("packets.jsonl");
