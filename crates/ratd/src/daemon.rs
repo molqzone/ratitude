@@ -298,8 +298,9 @@ fn process_output_failure(
         }
         Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
             warn!("output sink failure channel lagged (skipped {skipped} messages)");
+            output_manager.refresh_unhealthy_sinks();
             let now = Instant::now();
-            for sink_key in output_manager.sink_keys() {
+            for sink_key in output_manager.unhealthy_sink_keys() {
                 attempt_sink_recovery(output_manager, recovery_backoff, sink_key, now);
             }
             Ok(true)
@@ -311,6 +312,7 @@ fn process_periodic_sink_recovery(
     output_manager: &mut OutputManager,
     recovery_backoff: &mut SinkRecoveryBackoff,
 ) {
+    output_manager.refresh_unhealthy_sinks();
     let now = Instant::now();
     for sink_key in output_manager.unhealthy_sink_keys() {
         attempt_sink_recovery(output_manager, recovery_backoff, sink_key, now);

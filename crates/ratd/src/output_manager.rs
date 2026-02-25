@@ -41,6 +41,9 @@ trait PacketSink {
         failure_tx: &broadcast::Sender<SinkFailure>,
     ) -> Result<()>;
     fn shutdown(&mut self);
+    fn is_healthy(&self, _desired: &OutputState, _context: Option<&SinkContext>) -> bool {
+        true
+    }
     fn force_reconcile(&mut self) {
         self.shutdown();
     }
@@ -144,6 +147,14 @@ impl PacketSink for JsonlSink {
         }
         self.last_state = None;
     }
+
+    fn is_healthy(&self, desired: &OutputState, context: Option<&SinkContext>) -> bool {
+        let should_run = desired.jsonl_enabled && context.is_some();
+        if !should_run {
+            return true;
+        }
+        self.task.as_ref().is_some_and(|task| !task.is_finished())
+    }
 }
 
 struct FoxgloveSink {
@@ -234,6 +245,14 @@ impl PacketSink for FoxgloveSink {
         }
         self.last_state = None;
     }
+
+    fn is_healthy(&self, desired: &OutputState, context: Option<&SinkContext>) -> bool {
+        let should_run = desired.foxglove_enabled && context.is_some();
+        if !should_run {
+            return true;
+        }
+        self.task.as_ref().is_some_and(|task| !task.is_finished())
+    }
 }
 
 pub struct OutputManager {
@@ -318,8 +337,26 @@ impl OutputManager {
         self.unhealthy_sinks.iter().copied().collect()
     }
 
-    pub fn sink_keys(&self) -> Vec<&'static str> {
-        self.sinks.iter().map(|entry| entry.key).collect()
+    pub fn refresh_unhealthy_sinks(&mut self) {
+        let desired = &self.desired;
+        let context = self.context.as_ref();
+        let mut healthy = Vec::new();
+        let mut unhealthy = Vec::new();
+
+        for entry in &self.sinks {
+            if entry.sink.is_healthy(desired, context) {
+                healthy.push(entry.key);
+            } else {
+                unhealthy.push(entry.key);
+            }
+        }
+
+        for sink_key in healthy {
+            self.unhealthy_sinks.remove(sink_key);
+        }
+        for sink_key in unhealthy {
+            self.unhealthy_sinks.insert(sink_key);
+        }
     }
 
     pub fn mark_sink_unhealthy(&mut self, sink_key: &'static str) -> bool {

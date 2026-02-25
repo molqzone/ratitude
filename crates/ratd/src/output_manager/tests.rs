@@ -22,6 +22,7 @@ struct FailOnceSink {
 }
 
 struct NoopSink;
+struct UnhealthyProbeSink;
 struct RecoverProbeSink {
     sync_calls: Arc<AtomicUsize>,
     shutdown_calls: Arc<AtomicUsize>,
@@ -69,6 +70,27 @@ impl PacketSink for NoopSink {
     }
 
     fn shutdown(&mut self) {}
+}
+
+impl PacketSink for UnhealthyProbeSink {
+    fn key(&self) -> &'static str {
+        "probe"
+    }
+
+    fn sync(
+        &mut self,
+        _desired: &OutputState,
+        _context: Option<&SinkContext>,
+        _failure_tx: &broadcast::Sender<SinkFailure>,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    fn shutdown(&mut self) {}
+
+    fn is_healthy(&self, _desired: &OutputState, _context: Option<&SinkContext>) -> bool {
+        false
+    }
 }
 
 impl PacketSink for RecoverProbeSink {
@@ -287,6 +309,27 @@ fn recover_sink_failure_tracks_unhealthy_state_until_success() {
         manager.unhealthy_sink_keys().is_empty(),
         "successful recovery should clear unhealthy marker"
     );
+}
+
+#[test]
+fn refresh_unhealthy_sinks_marks_runtime_unhealthy_probe() {
+    let mut manager = OutputManager::with_sinks_for_test(
+        OutputState {
+            jsonl_enabled: false,
+            jsonl_path: None,
+            foxglove_enabled: false,
+            foxglove_ws_addr: "127.0.0.1:8765".to_string(),
+        },
+        vec![Box::new(UnhealthyProbeSink)],
+    )
+    .expect("build output manager");
+
+    assert!(
+        manager.unhealthy_sink_keys().is_empty(),
+        "precondition: unhealthy should start empty"
+    );
+    manager.refresh_unhealthy_sinks();
+    assert_eq!(manager.unhealthy_sink_keys(), vec!["probe"]);
 }
 
 #[tokio::test]

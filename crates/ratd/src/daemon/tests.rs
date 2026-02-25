@@ -368,7 +368,7 @@ fn output_failure_marks_sink_unhealthy_even_when_retry_is_throttled() {
 }
 
 #[test]
-fn output_failure_lagged_attempts_recovery_for_all_sink_keys() {
+fn output_failure_lagged_does_not_schedule_healthy_sink_recovery() {
     let mut output_manager =
         OutputManager::from_config(&RatitudeConfig::default()).expect("build output manager");
     let mut backoff = SinkRecoveryBackoff::new(Duration::from_secs(30));
@@ -384,12 +384,8 @@ fn output_failure_lagged_attempts_recovery_for_all_sink_keys() {
     );
     assert!(result.expect("lagged should keep listener attached"));
     assert!(
-        backoff.next_retry_at.contains_key("jsonl"),
-        "lagged compensation should cover jsonl even without unhealthy marker"
-    );
-    assert!(
-        backoff.next_retry_at.contains_key("foxglove"),
-        "lagged compensation should cover foxglove even without unhealthy marker"
+        backoff.next_retry_at.is_empty(),
+        "lagged compensation should not restart healthy sinks"
     );
 }
 

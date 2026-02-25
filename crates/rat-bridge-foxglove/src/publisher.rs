@@ -10,6 +10,7 @@ use serde::Serialize;
 use serde_json::{json, Map, Value};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 use crate::channels::PacketChannels;
 
@@ -34,7 +35,13 @@ pub(crate) fn spawn_packet_publish_task(
                     let packet = match packet {
                         Ok(value) => value,
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                            warn!(
+                                skipped,
+                                "foxglove publish loop lagged; dropping packets from hub channel"
+                            );
+                            continue;
+                        }
                     };
                     publish_packet(&channels, &packet);
                 }
