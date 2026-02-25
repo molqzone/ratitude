@@ -134,10 +134,6 @@ pub(crate) struct PacketBinding {
 }
 
 pub(crate) fn packet_schema_json(fields: &[FieldDef]) -> Result<String> {
-    if fields.is_empty() {
-        return Err(anyhow!("packet schema requires at least one field"));
-    }
-
     let mut properties = serde_json::Map::new();
     let mut required = Vec::with_capacity(fields.len());
     for field in fields {

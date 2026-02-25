@@ -209,6 +209,18 @@ mod tests {
     }
 
     #[test]
+    fn empty_fields_schema_is_allowed() {
+        let schema = packet_schema_json(&[]).expect("empty schema");
+        let value: Value = serde_json::from_str(&schema).expect("json schema");
+        assert_eq!(value["type"], "object");
+        assert_eq!(
+            value["properties"].as_object().map(|obj| obj.len()),
+            Some(0)
+        );
+        assert_eq!(value["required"].as_array().map(|arr| arr.len()), Some(0));
+    }
+
+    #[test]
     fn binding_falls_back_to_packet_id_when_struct_name_has_no_valid_chars() {
         let packets = vec![PacketDef {
             id: 0x42,

@@ -22,6 +22,11 @@ impl RatitudeConfig {
                 "generation.header_name must not be empty".to_string(),
             ));
         }
+        if self.ratd.text_id == 0 {
+            return Err(ConfigError::Validation(
+                "ratd.text_id 0x0 is reserved for runtime control packet".to_string(),
+            ));
+        }
         if self.ratd.text_id > 0xFF {
             return Err(ConfigError::Validation(format!(
                 "ratd.text_id out of range: 0x{:X}",
@@ -63,6 +68,7 @@ impl RatitudeConfig {
                 "ratd.outputs.foxglove.ws_addr must not be empty".to_string(),
             ));
         }
+        validate_foxglove_ws_addr(&self.ratd.outputs.foxglove.ws_addr)?;
         Ok(())
     }
 
@@ -153,5 +159,48 @@ impl RatdBehaviorConfig {
 fn parse_duration_value(field: &str, raw: &str) -> Result<Duration, ConfigError> {
     humantime::parse_duration(raw).map_err(|err| {
         ConfigError::Validation(format!("{field} must be a valid duration string ({err})"))
+    })
+}
+
+fn validate_foxglove_ws_addr(raw_addr: &str) -> Result<(), ConfigError> {
+    let normalized = raw_addr.trim();
+    if let Some(rest) = normalized.strip_prefix('[') {
+        let (host, suffix) = rest.split_once(']').ok_or_else(|| {
+            ConfigError::Validation(format!(
+                "ratd.outputs.foxglove.ws_addr must be host:port or [ipv6]:port: {raw_addr}"
+            ))
+        })?;
+        if host.is_empty() {
+            return Err(ConfigError::Validation(format!(
+                "ratd.outputs.foxglove.ws_addr must be host:port or [ipv6]:port: {raw_addr}"
+            )));
+        }
+        let port_raw = suffix.strip_prefix(':').ok_or_else(|| {
+            ConfigError::Validation(format!(
+                "ratd.outputs.foxglove.ws_addr must be host:port or [ipv6]:port: {raw_addr}"
+            ))
+        })?;
+        parse_ws_port(port_raw, raw_addr)?;
+        return Ok(());
+    }
+
+    let (host, port_raw) = normalized.rsplit_once(':').ok_or_else(|| {
+        ConfigError::Validation(format!(
+            "ratd.outputs.foxglove.ws_addr must be host:port or [ipv6]:port: {raw_addr}"
+        ))
+    })?;
+    if host.is_empty() || host.contains(':') {
+        return Err(ConfigError::Validation(format!(
+            "ratd.outputs.foxglove.ws_addr must be host:port or [ipv6]:port: {raw_addr}"
+        )));
+    }
+    parse_ws_port(port_raw, raw_addr)
+}
+
+fn parse_ws_port(raw_port: &str, raw_addr: &str) -> Result<(), ConfigError> {
+    raw_port.parse::<u16>().map(|_| ()).map_err(|err| {
+        ConfigError::Validation(format!(
+            "ratd.outputs.foxglove.ws_addr has invalid port in {raw_addr}: {err}"
+        ))
     })
 }

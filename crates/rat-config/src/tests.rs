@@ -127,6 +127,24 @@ fn validate_rejects_empty_seed_addrs_when_auto_scan_enabled() {
 }
 
 #[test]
+fn validate_rejects_reserved_text_id() {
+    let mut cfg = RatitudeConfig::default();
+    cfg.ratd.text_id = 0;
+    let err = cfg.validate().expect_err("validation should fail");
+    assert!(err
+        .to_string()
+        .contains("ratd.text_id 0x0 is reserved for runtime control packet"));
+}
+
+#[test]
+fn validate_rejects_invalid_foxglove_ws_addr() {
+    let mut cfg = RatitudeConfig::default();
+    cfg.ratd.outputs.foxglove.ws_addr = "::1:8765".to_string();
+    let err = cfg.validate().expect_err("validation should fail");
+    assert!(err.to_string().contains("host:port or [ipv6]:port"));
+}
+
+#[test]
 fn normalize_restores_seed_addrs_when_empty() {
     let mut cfg = RatitudeConfig::default();
     cfg.ratd.source.seed_addrs.clear();
