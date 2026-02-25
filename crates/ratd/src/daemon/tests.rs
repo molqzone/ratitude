@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rat_config::ConfigStore;
 use rat_core::Hub;
@@ -331,9 +331,11 @@ fn ratd_manifest_keeps_protocol_dependency_indirect() {
 fn output_failure_lagged_is_non_fatal() {
     let mut output_manager =
         OutputManager::from_config(&RatitudeConfig::default()).expect("build output manager");
+    let mut backoff = SinkRecoveryBackoff::new(Duration::from_secs(1));
     let result = process_output_failure(
         Err(tokio::sync::broadcast::error::RecvError::Lagged(3)),
         &mut output_manager,
+        &mut backoff,
     );
     assert!(result.expect("lagged should keep listener attached"));
 }
@@ -342,12 +344,14 @@ fn output_failure_lagged_is_non_fatal() {
 fn output_failure_reason_is_non_fatal() {
     let mut output_manager =
         OutputManager::from_config(&RatitudeConfig::default()).expect("build output manager");
+    let mut backoff = SinkRecoveryBackoff::new(Duration::from_secs(1));
     let result = process_output_failure(
         Ok(rat_core::SinkFailure {
             sink_key: "jsonl",
             reason: "sink failed".to_string(),
         }),
         &mut output_manager,
+        &mut backoff,
     );
     assert!(result.expect("sink failure should keep listener attached"));
 }
@@ -356,11 +360,24 @@ fn output_failure_reason_is_non_fatal() {
 fn output_failure_channel_closed_is_non_fatal() {
     let mut output_manager =
         OutputManager::from_config(&RatitudeConfig::default()).expect("build output manager");
+    let mut backoff = SinkRecoveryBackoff::new(Duration::from_secs(1));
     let result = process_output_failure(
         Err(tokio::sync::broadcast::error::RecvError::Closed),
         &mut output_manager,
+        &mut backoff,
     );
     assert!(!result.expect("closed should detach listener"));
+}
+
+#[test]
+fn sink_recovery_backoff_throttles_immediate_retry() {
+    let mut backoff = SinkRecoveryBackoff::new(Duration::from_secs(1));
+    let now = Instant::now();
+
+    assert!(backoff.should_attempt("jsonl", now));
+    assert!(!backoff.should_attempt("jsonl", now + Duration::from_millis(500)));
+    assert!(backoff.should_attempt("jsonl", now + Duration::from_secs(1)));
+    assert!(backoff.should_attempt("foxglove", now + Duration::from_millis(500)));
 }
 
 #[test]

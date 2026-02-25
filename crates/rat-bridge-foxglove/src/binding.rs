@@ -165,15 +165,19 @@ pub(crate) fn build_packet_bindings(packets: &[PacketDef]) -> Result<Vec<PacketB
             return Err(anyhow!("packet id out of range: 0x{:X}", packet.id));
         }
 
-        let base = sanitize_topic_segment(&packet.struct_name);
+        let base = binding_base(&packet.struct_name, packet.id);
         let mut topic = format!("/rat/{}", base);
         let counter = topic_count.entry(topic.clone()).or_insert(0);
+        let schema_name = if *counter > 0 {
+            format!("ratitude.{}_0x{:02X}", base, packet.id)
+        } else {
+            format!("ratitude.{}", base)
+        };
         if *counter > 0 {
             topic = format!("{}_0x{:02X}", topic, packet.id);
         }
         *counter += 1;
 
-        let schema_name = format!("ratitude.{}", base);
         let is_quat = packet.packet_type == PacketType::Quat;
         let is_image = packet.packet_type == PacketType::Image;
 
@@ -203,6 +207,14 @@ pub(crate) fn build_packet_bindings(packets: &[PacketDef]) -> Result<Vec<PacketB
     }
 
     Ok(out)
+}
+
+fn binding_base(struct_name: &str, packet_id: u16) -> String {
+    let base = sanitize_topic_segment(struct_name);
+    if base.chars().any(|ch| ch.is_ascii_alphanumeric()) {
+        return base;
+    }
+    format!("packet_0x{:02X}", packet_id)
 }
 
 pub(crate) fn log_derived_image_channels(bindings: &[PacketBinding]) {

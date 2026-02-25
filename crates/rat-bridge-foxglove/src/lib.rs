@@ -186,6 +186,8 @@ mod tests {
         let bindings = build_packet_bindings(&packets).expect("bindings");
         assert_eq!(bindings[0].topic, "/rat/Attitude");
         assert_eq!(bindings[1].topic, "/rat/Attitude_0x11");
+        assert_eq!(bindings[0].schema_name, "ratitude.Attitude");
+        assert_eq!(bindings[1].schema_name, "ratitude.Attitude_0x11");
         assert_eq!(
             bindings[0].marker_topic.as_deref(),
             Some("/rat/Attitude/marker")
@@ -204,6 +206,23 @@ mod tests {
             size: 8,
         }];
         assert!(packet_schema_json(&fields).is_err());
+    }
+
+    #[test]
+    fn binding_falls_back_to_packet_id_when_struct_name_has_no_valid_chars() {
+        let packets = vec![PacketDef {
+            id: 0x42,
+            struct_name: "!!!".to_string(),
+            packet_type: PacketType::Plot,
+            packed: true,
+            byte_size: 8,
+            source: String::new(),
+            fields: sample_fields(),
+        }];
+
+        let bindings = build_packet_bindings(&packets).expect("bindings");
+        assert_eq!(bindings[0].topic, "/rat/packet_0x42");
+        assert_eq!(bindings[0].schema_name, "ratitude.packet_0x42");
     }
 
     #[test]

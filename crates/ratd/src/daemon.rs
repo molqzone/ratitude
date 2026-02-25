@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
+
 use anyhow::{anyhow, Context, Result};
 use rat_config::RatitudeConfig;
 use rat_core::{RuntimeSignal, SinkFailure};
@@ -13,6 +16,8 @@ use crate::runtime_lifecycle::{apply_schema_ready, restart_runtime, start_runtim
 use crate::runtime_schema::RuntimeSchemaState;
 use crate::source_scan::render_candidates;
 use crate::source_state::{build_source_domain, SourceDomainState};
+
+const OUTPUT_RECOVERY_COOLDOWN: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone)]
 pub(crate) struct RuntimeDomainState {
@@ -119,6 +124,7 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
     let mut command_rx = spawn_console_reader(console_shutdown.clone());
     let mut console_attached = true;
     let mut output_failure_attached = true;
+    let mut recovery_backoff = SinkRecoveryBackoff::new(OUTPUT_RECOVERY_COOLDOWN);
 
     let run_result: Result<()> = loop {
         tokio::select! {
@@ -152,7 +158,7 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
                 }
             }
             sink_failure = output_failure_rx.recv(), if output_failure_attached => {
-                match process_output_failure(sink_failure, &mut output_manager) {
+                match process_output_failure(sink_failure, &mut output_manager, &mut recovery_backoff) {
                     Ok(keep_attached) => output_failure_attached = keep_attached,
                     Err(err) => break Err(err),
                 }
@@ -255,6 +261,7 @@ async fn process_runtime_signal(
 fn process_output_failure(
     sink_failure: std::result::Result<SinkFailure, tokio::sync::broadcast::error::RecvError>,
     output_manager: &mut OutputManager,
+    recovery_backoff: &mut SinkRecoveryBackoff,
 ) -> Result<bool> {
     match sink_failure {
         Ok(failure) => {
@@ -263,6 +270,14 @@ fn process_output_failure(
                 reason = %failure.reason,
                 "output sink failed; daemon keeps running"
             );
+            if !recovery_backoff.should_attempt(failure.sink_key, Instant::now()) {
+                warn!(
+                    sink = failure.sink_key,
+                    cooldown_ms = recovery_backoff.cooldown().as_millis(),
+                    "output sink recovery throttled"
+                );
+                return Ok(true);
+            }
             if let Err(err) = output_manager.recover_sink_after_failure(failure.sink_key) {
                 warn!(
                     sink = failure.sink_key,
@@ -280,6 +295,35 @@ fn process_output_failure(
             warn!("output sink failure channel lagged (skipped {skipped} messages)");
             Ok(true)
         }
+    }
+}
+
+#[derive(Debug)]
+struct SinkRecoveryBackoff {
+    cooldown: Duration,
+    next_retry_at: HashMap<&'static str, Instant>,
+}
+
+impl SinkRecoveryBackoff {
+    fn new(cooldown: Duration) -> Self {
+        Self {
+            cooldown,
+            next_retry_at: HashMap::new(),
+        }
+    }
+
+    fn should_attempt(&mut self, sink_key: &'static str, now: Instant) -> bool {
+        if let Some(next_retry) = self.next_retry_at.get(&sink_key) {
+            if now < *next_retry {
+                return false;
+            }
+        }
+        self.next_retry_at.insert(sink_key, now + self.cooldown);
+        true
+    }
+
+    fn cooldown(&self) -> Duration {
+        self.cooldown
     }
 }
 
