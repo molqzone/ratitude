@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use rat_config::{FieldDef, PacketType};
 
@@ -8,12 +8,20 @@ use crate::{SyncError, RAT_ID_MAX, RAT_ID_MIN};
 
 pub(crate) fn allocate_packet_ids(
     discovered: &[DiscoveredPacket],
+    previous_packets: &[GeneratedPacketDef],
 ) -> Result<Vec<GeneratedPacketDef>, SyncError> {
+    let previous_ids = signature_to_id_map(previous_packets);
     let mut used_ids = BTreeSet::new();
     let mut assigned = Vec::with_capacity(discovered.len());
 
     for packet in discovered {
-        let id = select_fresh_packet_id(packet.signature_hash, &used_ids);
+        let preferred = previous_ids
+            .get(&signature_key_for_discovered(packet))
+            .copied()
+            .filter(|id| (RAT_ID_MIN..=RAT_ID_MAX).contains(id))
+            .filter(|id| !used_ids.contains(id));
+        let id =
+            preferred.unwrap_or_else(|| select_fresh_packet_id(packet.signature_hash, &used_ids));
 
         if !used_ids.insert(id) {
             return Err(SyncError::Validation(format!(
@@ -49,7 +57,18 @@ pub(crate) fn select_fresh_packet_id(signature_hash: u64, used_ids: &BTreeSet<u1
 }
 
 pub(crate) fn compute_signature_hash(packet: &DiscoveredPacket) -> u64 {
-    compute_signature_hash_parts(
+    let signature = signature_key_parts(
+        &packet.struct_name,
+        &packet.packet_type,
+        packet.packed,
+        packet.byte_size,
+        &packet.fields,
+    );
+    fnv1a64(signature.as_bytes())
+}
+
+fn signature_key_for_discovered(packet: &DiscoveredPacket) -> String {
+    signature_key_parts(
         &packet.struct_name,
         &packet.packet_type,
         packet.packed,
@@ -58,13 +77,31 @@ pub(crate) fn compute_signature_hash(packet: &DiscoveredPacket) -> u64 {
     )
 }
 
-fn compute_signature_hash_parts(
+fn signature_key_for_generated(packet: &GeneratedPacketDef) -> String {
+    signature_key_parts(
+        &packet.struct_name,
+        &packet.packet_type,
+        packet.packed,
+        packet.byte_size,
+        &packet.fields,
+    )
+}
+
+fn signature_to_id_map(previous_packets: &[GeneratedPacketDef]) -> HashMap<String, u16> {
+    let mut out = HashMap::new();
+    for packet in previous_packets {
+        out.insert(signature_key_for_generated(packet), packet.id);
+    }
+    out
+}
+
+fn signature_key_parts(
     struct_name: &str,
     packet_type: &PacketType,
     packed: bool,
     byte_size: usize,
     fields: &[FieldDef],
-) -> u64 {
+) -> String {
     let mut signature = format!(
         "{struct_name}|{}|{packed}|{byte_size}",
         packet_type.as_str()
@@ -79,7 +116,7 @@ fn compute_signature_hash_parts(
         signature.push(':');
         signature.push_str(&field.size.to_string());
     }
-    fnv1a64(signature.as_bytes())
+    signature
 }
 
 pub(crate) fn fnv1a64(bytes: &[u8]) -> u64 {

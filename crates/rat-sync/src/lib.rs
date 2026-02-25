@@ -37,6 +37,11 @@ pub enum SyncError {
     },
     #[error("failed to parse C source {path}")]
     ParseSource { path: PathBuf },
+    #[error("failed to read generated header {path}: {source}")]
+    ReadGeneratedHeader {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("sync validation failed: {0}")]
     Validation(String),
     #[error("failed to write generated header {path}: {source}")]

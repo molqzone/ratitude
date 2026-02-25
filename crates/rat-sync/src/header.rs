@@ -1,10 +1,21 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::sync::OnceLock;
+
+use rat_config::PacketDef;
+use regex::Regex;
+use serde::Deserialize;
 
 use crate::generated::GeneratedConfig;
 use crate::schema::build_runtime_schema_toml;
 use crate::SyncError;
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct RuntimeSchemaToml {
+    packets: Vec<PacketDef>,
+}
 
 pub(crate) fn write_generated_header(
     path: &Path,
@@ -63,6 +74,21 @@ pub(crate) fn write_generated_header(
     })
 }
 
+pub(crate) fn read_generated_header_packets(path: &Path) -> Result<Vec<PacketDef>, SyncError> {
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => {
+            return Err(SyncError::ReadGeneratedHeader {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+
+    parse_generated_header_packets(&raw, path)
+}
+
 pub(crate) fn macroize_struct_name(value: &str) -> String {
     let mut out = String::new();
     for ch in value.chars() {
@@ -116,6 +142,56 @@ fn parse_schema_hash(raw: &str) -> Result<u64, SyncError> {
             raw
         ))
     })
+}
+
+fn parse_generated_header_packets(raw: &str, path: &Path) -> Result<Vec<PacketDef>, SyncError> {
+    let schema_bytes = parse_schema_bytes_from_header(raw).ok_or_else(|| {
+        SyncError::Validation(format!(
+            "generated header {} does not contain rat_gen_schema_bytes",
+            path.display()
+        ))
+    })?;
+    let schema_raw = String::from_utf8(schema_bytes).map_err(|err| {
+        SyncError::Validation(format!(
+            "generated header {} has invalid utf8 schema bytes ({err})",
+            path.display()
+        ))
+    })?;
+    let schema = schema_raw.trim_end_matches('\0').trim();
+    if schema.is_empty() {
+        return Ok(Vec::new());
+    }
+    let parsed: RuntimeSchemaToml = toml::from_str(schema).map_err(|err| {
+        SyncError::Validation(format!(
+            "generated header {} has invalid runtime schema ({err})",
+            path.display()
+        ))
+    })?;
+    Ok(parsed.packets)
+}
+
+fn parse_schema_bytes_from_header(raw: &str) -> Option<Vec<u8>> {
+    static SCHEMA_BYTES_RE: OnceLock<Regex> = OnceLock::new();
+    static BYTE_RE: OnceLock<Regex> = OnceLock::new();
+
+    let schema_bytes_re = SCHEMA_BYTES_RE.get_or_init(|| {
+        Regex::new(
+            r"(?s)static const uint8_t\s+rat_gen_schema_bytes\[[^\]]+\]\s*=\s*\{(?P<body>.*?)\};",
+        )
+        .expect("compile schema bytes regex")
+    });
+    let byte_re = BYTE_RE.get_or_init(|| {
+        Regex::new(r"0x([0-9A-Fa-f]{2})u?").expect("compile schema byte token regex")
+    });
+
+    let body = schema_bytes_re.captures(raw)?.name("body")?.as_str();
+    let mut bytes = Vec::new();
+    for cap in byte_re.captures_iter(body) {
+        let token = cap.get(1)?.as_str();
+        let value = u8::from_str_radix(token, 16).ok()?;
+        bytes.push(value);
+    }
+    Some(bytes)
 }
 
 #[cfg(test)]
@@ -201,6 +277,35 @@ mod tests {
         assert!(err
             .to_string()
             .contains("invalid schema hash in generated metadata"));
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn read_generated_header_packets_round_trips_schema() {
+        let dir = std::env::temp_dir().join(format!(
+            "rat_sync_header_schema_roundtrip_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join("rat_gen.h");
+        let generated = sample_generated();
+
+        write_generated_header(&path, &generated).expect("write header");
+        let packets = read_generated_header_packets(&path).expect("read header packets");
+        let expected = generated
+            .packets
+            .iter()
+            .cloned()
+            .map(|mut packet| {
+                packet.source.clear();
+                packet
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(packets, expected);
 
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir_all(dir);

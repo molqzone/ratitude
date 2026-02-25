@@ -6,7 +6,9 @@ use nom::number::complete::{
 use nom::IResult;
 use serde_json::{Map, Value};
 
-use crate::{DynamicFieldDef, DynamicPacketDef, PacketData, ProtocolError};
+use crate::{
+    c_type_size, normalize_c_type, DynamicFieldDef, DynamicPacketDef, PacketData, ProtocolError,
+};
 
 #[derive(Clone, Debug)]
 pub struct ProtocolContext {
@@ -161,7 +163,11 @@ where
     F: FnMut(&'a [u8]) -> IResult<&'a [u8], O>,
 {
     let (rest, value) = parser(input).ok()?;
-    if rest.is_empty() { Some(value) } else { None }
+    if rest.is_empty() {
+        Some(value)
+    } else {
+        None
+    }
 }
 
 fn decode_dynamic_value(field: &DynamicFieldDef, data: &[u8]) -> Result<Value, ProtocolError> {
@@ -186,28 +192,4 @@ fn decode_dynamic_value(field: &DynamicFieldDef, data: &[u8]) -> Result<Value, P
         other => return Err(ProtocolError::UnsupportedCType(other.to_string())),
     };
     Ok(value)
-}
-
-fn c_type_size(c_type: &str) -> Option<usize> {
-    match c_type {
-        "float" => Some(4),
-        "double" => Some(8),
-        "int8_t" | "uint8_t" | "bool" | "_bool" => Some(1),
-        "int16_t" | "uint16_t" => Some(2),
-        "int32_t" | "uint32_t" => Some(4),
-        "int64_t" | "uint64_t" => Some(8),
-        _ => None,
-    }
-}
-
-fn normalize_c_type(raw: &str) -> String {
-    let mut value = raw.trim().to_ascii_lowercase();
-    while value.contains("  ") {
-        value = value.replace("  ", " ");
-    }
-    value = value
-        .trim_start_matches("const ")
-        .trim_start_matches("volatile ")
-        .to_string();
-    value.trim().to_string()
 }

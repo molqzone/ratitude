@@ -48,7 +48,7 @@ pub(crate) fn children_for_field<'a>(node: Node<'a>, field: &str) -> Vec<Node<'a
     let child_count = node.child_count();
     for idx in 0..child_count {
         let child_index = idx as u32;
-        if node.field_name_for_child(child_index).as_deref() == Some(field) {
+        if node.field_name_for_child(child_index) == Some(field) {
             if let Some(child) = node.child(child_index) {
                 out.push(child);
             }
@@ -65,31 +65,6 @@ pub(crate) fn is_identifier(value: &str) -> bool {
     }
     chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
-
-pub(crate) fn normalize_c_type(raw: &str) -> String {
-    let mut value = raw.trim().to_ascii_lowercase();
-    while value.contains("  ") {
-        value = value.replace("  ", " ");
-    }
-    value = value
-        .trim_start_matches("const ")
-        .trim_start_matches("volatile ")
-        .to_string();
-    value.trim().to_string()
-}
-
-pub(crate) fn c_type_size(c_type: &str) -> Option<usize> {
-    match c_type {
-        "float" => Some(4),
-        "double" => Some(8),
-        "int8_t" | "uint8_t" | "bool" | "_bool" => Some(1),
-        "int16_t" | "uint16_t" => Some(2),
-        "int32_t" | "uint32_t" => Some(4),
-        "int64_t" | "uint64_t" => Some(8),
-        _ => None,
-    }
-}
-
 pub(crate) fn align_up(value: usize, align: usize) -> usize {
     if align <= 1 {
         return value;

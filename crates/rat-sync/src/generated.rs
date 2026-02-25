@@ -1,20 +1,11 @@
 use rat_config::PacketDef;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct GeneratedMeta {
     pub project: String,
     pub schema_hash: String,
-}
-
-impl Default for GeneratedMeta {
-    fn default() -> Self {
-        Self {
-            project: String::new(),
-            schema_hash: String::new(),
-        }
-    }
 }
 
 pub type GeneratedPacketDef = PacketDef;

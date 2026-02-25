@@ -2,12 +2,12 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use rat_config::{FieldDef, PacketType};
+use rat_protocol::{c_type_size, normalize_c_type};
 use regex::Regex;
 use tree_sitter::{Node, Tree};
 
 use crate::ast::{
-    align_up, c_type_size, children_for_field, find_first_kind, has_kind, is_identifier,
-    normalize_c_type, walk_nodes,
+    align_up, children_for_field, find_first_kind, has_kind, is_identifier, walk_nodes,
 };
 use crate::layout::{detect_packed_layout, validate_layout_modifiers};
 use crate::model::{FieldSpec, StructDef, TagMatch};

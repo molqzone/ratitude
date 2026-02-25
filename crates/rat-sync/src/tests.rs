@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-use rat_config::{FieldDef, PacketType};
+use rat_config::{FieldDef, PacketDef, PacketType};
 
 use crate::ast::align_up;
 use crate::generated::GeneratedMeta;
@@ -10,7 +10,7 @@ use crate::ids::{compute_signature_hash, fnv1a64, select_fresh_packet_id};
 use crate::layout::detect_packed_layout;
 use crate::model::{DiscoveredPacket, SyncPipelineInput};
 use crate::parser::normalize_packet_type;
-use crate::pipeline::run_sync_pipeline;
+use crate::pipeline::{run_sync_pipeline, run_sync_pipeline_with_previous_packets};
 use crate::{sync_packets_fs, RAT_ID_MAX, RAT_ID_MIN};
 
 #[test]
@@ -119,6 +119,72 @@ fn run_sync_pipeline_is_deterministic_for_identical_input() {
         first.generated, second.generated,
         "identical input should produce identical generated output"
     );
+}
+
+#[test]
+fn run_sync_pipeline_preserves_existing_ids_for_unchanged_packets() {
+    let mut unchanged = DiscoveredPacket {
+        signature_hash: 0,
+        struct_name: "RatSample".to_string(),
+        packet_type: PacketType::Plot,
+        packed: false,
+        byte_size: 8,
+        source: "src/main.c".to_string(),
+        fields: sample_fields(),
+    };
+    unchanged.signature_hash = compute_signature_hash(&unchanged);
+
+    let mut added = DiscoveredPacket {
+        signature_hash: 0,
+        struct_name: "RatExtra".to_string(),
+        packet_type: PacketType::Quat,
+        packed: false,
+        byte_size: 8,
+        source: "src/main.c".to_string(),
+        fields: vec![
+            FieldDef {
+                name: "x".to_string(),
+                c_type: "float".to_string(),
+                offset: 0,
+                size: 4,
+            },
+            FieldDef {
+                name: "w".to_string(),
+                c_type: "float".to_string(),
+                offset: 4,
+                size: 4,
+            },
+        ],
+    };
+    added.signature_hash = compute_signature_hash(&added);
+
+    let previous = vec![PacketDef {
+        id: 0x40,
+        struct_name: unchanged.struct_name.clone(),
+        packet_type: unchanged.packet_type,
+        packed: unchanged.packed,
+        byte_size: unchanged.byte_size,
+        source: String::new(),
+        fields: unchanged.fields.clone(),
+    }];
+
+    let output = run_sync_pipeline_with_previous_packets(
+        SyncPipelineInput {
+            project_name: "sync_test".to_string(),
+            discovered_packets: vec![added, unchanged],
+        },
+        &previous,
+    )
+    .expect("pipeline should preserve id");
+
+    let preserved = output
+        .generated
+        .packets
+        .iter()
+        .find(|packet| packet.struct_name == "RatSample")
+        .map(|packet| packet.id)
+        .expect("RatSample packet id");
+    assert_eq!(preserved, 0x40);
 }
 
 #[test]
@@ -323,6 +389,60 @@ typedef struct __attribute__((packed)) {
         "packed layout should not produce blockers/warnings: {:?}",
         result.layout_warnings
     );
+
+    let _ = fs::remove_dir_all(&temp);
+}
+
+#[test]
+fn sync_packets_fs_preserves_existing_ids_across_incremental_changes() {
+    let temp = std::env::temp_dir().join(format!("rat_sync_id_stable_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp);
+    fs::create_dir_all(temp.join("src")).expect("mkdir");
+
+    let config_path = temp.join("rat.toml");
+    write_test_config(&config_path, "src");
+
+    let first_source = r#"
+// @rat, plot
+typedef struct {
+  int32_t value;
+  uint32_t tick;
+} KeepPacket;
+"#;
+    fs::write(temp.join("src").join("main.c"), first_source).expect("write first source");
+
+    let first = sync_packets_fs(&config_path, None).expect("first sync");
+    let keep_id_first = first
+        .packet_defs
+        .iter()
+        .find(|packet| packet.struct_name == "KeepPacket")
+        .map(|packet| packet.id)
+        .expect("keep packet id");
+
+    let second_source = r#"
+// @rat, quat
+typedef struct {
+  float x;
+  float w;
+} NewPacket;
+
+// @rat, plot
+typedef struct {
+  int32_t value;
+  uint32_t tick;
+} KeepPacket;
+"#;
+    fs::write(temp.join("src").join("main.c"), second_source).expect("write second source");
+
+    let second = sync_packets_fs(&config_path, None).expect("second sync");
+    let keep_id_second = second
+        .packet_defs
+        .iter()
+        .find(|packet| packet.struct_name == "KeepPacket")
+        .map(|packet| packet.id)
+        .expect("keep packet id");
+
+    assert_eq!(keep_id_second, keep_id_first);
 
     let _ = fs::remove_dir_all(&temp);
 }

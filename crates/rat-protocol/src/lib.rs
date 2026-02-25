@@ -1,7 +1,9 @@
+mod c_types;
 mod context;
 mod types;
 mod wire;
 
+pub use c_types::{c_type_size, normalize_c_type};
 pub use context::{parse_text, ProtocolContext};
 pub use types::{
     DynamicFieldDef, DynamicPacketDef, PacketData, PacketType, ProtocolError, RatPacket,
@@ -64,8 +66,7 @@ mod tests {
                     offset: 0,
                     size: 4,
                 }],
-            },
-            )
+            })
             .expect("register dynamic");
 
         let payload = 42_i32.to_le_bytes();
