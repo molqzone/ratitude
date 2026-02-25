@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Context, Result};
 use rat_config::RatitudeConfig;
 use rat_core::{RuntimeSignal, SinkFailure};
+use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -125,6 +126,9 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
     let mut console_attached = true;
     let mut output_failure_attached = true;
     let mut recovery_backoff = SinkRecoveryBackoff::new(OUTPUT_RECOVERY_COOLDOWN);
+    let mut sink_recovery_tick = tokio::time::interval(OUTPUT_RECOVERY_COOLDOWN);
+    sink_recovery_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    sink_recovery_tick.tick().await;
 
     let run_result: Result<()> = loop {
         tokio::select! {
@@ -162,6 +166,9 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
                     Ok(keep_attached) => output_failure_attached = keep_attached,
                     Err(err) => break Err(err),
                 }
+            }
+            _ = sink_recovery_tick.tick() => {
+                process_periodic_sink_recovery(&mut output_manager, &mut recovery_backoff);
             }
         }
     };
@@ -270,21 +277,12 @@ fn process_output_failure(
                 reason = %failure.reason,
                 "output sink failed; daemon keeps running"
             );
-            if !recovery_backoff.should_attempt(failure.sink_key, Instant::now()) {
-                warn!(
-                    sink = failure.sink_key,
-                    cooldown_ms = recovery_backoff.cooldown().as_millis(),
-                    "output sink recovery throttled"
-                );
-                return Ok(true);
-            }
-            if let Err(err) = output_manager.recover_sink_after_failure(failure.sink_key) {
-                warn!(
-                    sink = failure.sink_key,
-                    error = %err,
-                    "failed to recover output sink after failure"
-                );
-            }
+            attempt_sink_recovery(
+                output_manager,
+                recovery_backoff,
+                failure.sink_key,
+                Instant::now(),
+            );
             Ok(true)
         }
         Err(tokio::sync::broadcast::error::RecvError::Closed) => {
@@ -293,8 +291,40 @@ fn process_output_failure(
         }
         Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
             warn!("output sink failure channel lagged (skipped {skipped} messages)");
+            let now = Instant::now();
+            for sink_key in output_manager.unhealthy_sink_keys() {
+                attempt_sink_recovery(output_manager, recovery_backoff, sink_key, now);
+            }
             Ok(true)
         }
+    }
+}
+
+fn process_periodic_sink_recovery(
+    output_manager: &mut OutputManager,
+    recovery_backoff: &mut SinkRecoveryBackoff,
+) {
+    let now = Instant::now();
+    for sink_key in output_manager.unhealthy_sink_keys() {
+        attempt_sink_recovery(output_manager, recovery_backoff, sink_key, now);
+    }
+}
+
+fn attempt_sink_recovery(
+    output_manager: &mut OutputManager,
+    recovery_backoff: &mut SinkRecoveryBackoff,
+    sink_key: &'static str,
+    now: Instant,
+) {
+    if !recovery_backoff.should_attempt(sink_key, now) {
+        return;
+    }
+    if let Err(err) = output_manager.recover_sink_after_failure(sink_key) {
+        warn!(
+            sink = sink_key,
+            error = %err,
+            "failed to recover output sink after failure"
+        );
     }
 }
 
@@ -320,10 +350,6 @@ impl SinkRecoveryBackoff {
         }
         self.next_retry_at.insert(sink_key, now + self.cooldown);
         true
-    }
-
-    fn cooldown(&self) -> Duration {
-        self.cooldown
     }
 }
 

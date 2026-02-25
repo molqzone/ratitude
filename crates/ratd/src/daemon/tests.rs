@@ -340,6 +340,51 @@ fn output_failure_lagged_is_non_fatal() {
     assert!(result.expect("lagged should keep listener attached"));
 }
 
+#[tokio::test]
+async fn output_failure_lagged_attempts_unhealthy_sink_recovery() {
+    let dir = unique_temp_dir("ratd_output_lagged_recovery");
+    let invalid_jsonl_path = dir
+        .join("blocked")
+        .join("packets.jsonl")
+        .to_string_lossy()
+        .to_string();
+    let mut cfg = RatitudeConfig::default();
+    cfg.ratd.outputs.foxglove.enabled = false;
+    cfg.ratd.outputs.jsonl.enabled = true;
+    cfg.ratd.outputs.jsonl.path = invalid_jsonl_path;
+
+    let mut output_manager = OutputManager::from_config(&cfg).expect("build output manager");
+    output_manager
+        .apply(Hub::new(8), 1, 0x1, Vec::new())
+        .await
+        .expect("apply should degrade");
+    assert_eq!(output_manager.unhealthy_sink_keys(), vec!["jsonl"]);
+
+    let mut backoff = SinkRecoveryBackoff::new(Duration::from_secs(30));
+    assert!(
+        !backoff.next_retry_at.contains_key("jsonl"),
+        "lagged compensation should set retry schedule"
+    );
+    let result = process_output_failure(
+        Err(tokio::sync::broadcast::error::RecvError::Lagged(5)),
+        &mut output_manager,
+        &mut backoff,
+    );
+    assert!(result.expect("lagged should keep listener attached"));
+    assert!(
+        backoff.next_retry_at.contains_key("jsonl"),
+        "lagged compensation should attempt unhealthy sink recovery"
+    );
+    assert_eq!(
+        output_manager.unhealthy_sink_keys(),
+        vec!["jsonl"],
+        "invalid path keeps sink unhealthy after retry attempt"
+    );
+
+    output_manager.shutdown().await;
+    let _ = fs::remove_dir_all(dir);
+}
+
 #[test]
 fn output_failure_reason_is_non_fatal() {
     let mut output_manager =

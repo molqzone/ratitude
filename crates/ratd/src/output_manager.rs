@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
@@ -240,6 +241,7 @@ pub struct OutputManager {
     context: Option<SinkContext>,
     sinks: Vec<RegisteredSink>,
     failure_tx: broadcast::Sender<SinkFailure>,
+    unhealthy_sinks: BTreeSet<&'static str>,
 }
 
 impl OutputManager {
@@ -254,6 +256,7 @@ impl OutputManager {
             context: None,
             sinks,
             failure_tx,
+            unhealthy_sinks: BTreeSet::new(),
         })
     }
 
@@ -266,6 +269,7 @@ impl OutputManager {
             context: None,
             sinks: registered,
             failure_tx,
+            unhealthy_sinks: BTreeSet::new(),
         })
     }
 
@@ -300,6 +304,7 @@ impl OutputManager {
 
     pub async fn shutdown(&mut self) {
         self.context = None;
+        self.unhealthy_sinks.clear();
         for entry in &mut self.sinks {
             entry.sink.shutdown();
         }
@@ -309,21 +314,45 @@ impl OutputManager {
         self.failure_tx.subscribe()
     }
 
+    pub fn unhealthy_sink_keys(&self) -> Vec<&'static str> {
+        self.unhealthy_sinks.iter().copied().collect()
+    }
+
     pub fn recover_sink_after_failure(&mut self, sink_key: &str) -> Result<()> {
         let Some(entry) = self.sinks.iter_mut().find(|entry| entry.key == sink_key) else {
             return Err(anyhow!("unknown sink key in OutputManager: {}", sink_key));
         };
         entry.sink.force_reconcile();
-        entry
+        let sync_result = entry
             .sink
-            .sync(&self.desired, self.context.as_ref(), &self.failure_tx)
+            .sync(&self.desired, self.context.as_ref(), &self.failure_tx);
+        match sync_result {
+            Ok(()) => {
+                self.unhealthy_sinks.remove(entry.key);
+                Ok(())
+            }
+            Err(err) => {
+                self.unhealthy_sinks.insert(entry.key);
+                Err(err)
+            }
+        }
     }
 
     fn reconcile_all_strict(&mut self) -> Result<()> {
         for entry in &mut self.sinks {
-            entry
-                .sink
-                .sync(&self.desired, self.context.as_ref(), &self.failure_tx)?;
+            let sync_result =
+                entry
+                    .sink
+                    .sync(&self.desired, self.context.as_ref(), &self.failure_tx);
+            match sync_result {
+                Ok(()) => {
+                    self.unhealthy_sinks.remove(entry.key);
+                }
+                Err(err) => {
+                    self.unhealthy_sinks.insert(entry.key);
+                    return Err(err);
+                }
+            }
         }
         Ok(())
     }
@@ -335,10 +364,13 @@ impl OutputManager {
                     .sink
                     .sync(&self.desired, self.context.as_ref(), &self.failure_tx)
             {
+                self.unhealthy_sinks.insert(entry.key);
                 let _ = self.failure_tx.send(SinkFailure {
                     sink_key: entry.key,
                     reason: format!("output sink apply failed: {err}"),
                 });
+            } else {
+                self.unhealthy_sinks.remove(entry.key);
             }
         }
     }

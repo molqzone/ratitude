@@ -26,6 +26,9 @@ struct RecoverProbeSink {
     sync_calls: Arc<AtomicUsize>,
     shutdown_calls: Arc<AtomicUsize>,
 }
+struct FlakySink {
+    failures_left: usize,
+}
 
 impl PacketSink for FailOnceSink {
     fn key(&self) -> &'static str {
@@ -86,6 +89,27 @@ impl PacketSink for RecoverProbeSink {
     fn shutdown(&mut self) {
         self.shutdown_calls.fetch_add(1, Ordering::SeqCst);
     }
+}
+
+impl PacketSink for FlakySink {
+    fn key(&self) -> &'static str {
+        "flaky"
+    }
+
+    fn sync(
+        &mut self,
+        _desired: &OutputState,
+        _context: Option<&SinkContext>,
+        _failure_tx: &broadcast::Sender<SinkFailure>,
+    ) -> Result<()> {
+        if self.failures_left > 0 {
+            self.failures_left -= 1;
+            return Err(anyhow::anyhow!("flaky sink failed"));
+        }
+        Ok(())
+    }
+
+    fn shutdown(&mut self) {}
 }
 
 #[test]
@@ -238,6 +262,33 @@ fn recover_after_sink_failure_forces_shutdown_then_reconcile() {
     assert_eq!(sync_calls.load(Ordering::SeqCst), 1);
 }
 
+#[test]
+fn recover_sink_failure_tracks_unhealthy_state_until_success() {
+    let mut manager = OutputManager::with_sinks_for_test(
+        OutputState {
+            jsonl_enabled: false,
+            jsonl_path: None,
+            foxglove_enabled: false,
+            foxglove_ws_addr: "127.0.0.1:8765".to_string(),
+        },
+        vec![Box::new(FlakySink { failures_left: 1 })],
+    )
+    .expect("build output manager");
+
+    manager
+        .recover_sink_after_failure("flaky")
+        .expect_err("first recovery should fail");
+    assert_eq!(manager.unhealthy_sink_keys(), vec!["flaky"]);
+
+    manager
+        .recover_sink_after_failure("flaky")
+        .expect("second recovery should succeed");
+    assert!(
+        manager.unhealthy_sink_keys().is_empty(),
+        "successful recovery should clear unhealthy marker"
+    );
+}
+
 #[tokio::test]
 async fn apply_reports_sink_failure_without_stopping_runtime_path() {
     let dir = unique_temp_dir("ratd_jsonl_apply_degrade");
@@ -266,6 +317,39 @@ async fn apply_reports_sink_failure_without_stopping_runtime_path() {
     assert!(failure.reason.contains("failed to open jsonl file"));
 
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn apply_marks_sync_failure_sink_as_unhealthy_for_periodic_retry() {
+    let mut manager = OutputManager::with_sinks_for_test(
+        OutputState {
+            jsonl_enabled: false,
+            jsonl_path: None,
+            foxglove_enabled: false,
+            foxglove_ws_addr: "127.0.0.1:8765".to_string(),
+        },
+        vec![Box::new(FlakySink { failures_left: 2 })],
+    )
+    .expect("build output manager");
+    let mut failures = manager.subscribe_failures();
+
+    manager
+        .apply(Hub::new(8), 1, 0xA_u64, Vec::new())
+        .await
+        .expect("apply should degrade");
+    let failure = failures.try_recv().expect("failure should be emitted");
+    assert_eq!(failure.sink_key, "flaky");
+    assert_eq!(manager.unhealthy_sink_keys(), vec!["flaky"]);
+
+    manager
+        .recover_sink_after_failure("flaky")
+        .expect_err("first retry should still fail");
+    assert_eq!(manager.unhealthy_sink_keys(), vec!["flaky"]);
+
+    manager
+        .recover_sink_after_failure("flaky")
+        .expect("second retry should recover");
+    assert!(manager.unhealthy_sink_keys().is_empty());
 }
 
 #[tokio::test]
