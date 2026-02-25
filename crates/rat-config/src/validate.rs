@@ -129,7 +129,13 @@ impl RatitudeConfig {
 
 impl RatdBehaviorConfig {
     pub fn reconnect_duration(&self) -> Result<Duration, ConfigError> {
-        parse_duration_value("ratd.behavior.reconnect", &self.reconnect)
+        let reconnect = parse_duration_value("ratd.behavior.reconnect", &self.reconnect)?;
+        if reconnect.is_zero() {
+            return Err(ConfigError::Validation(
+                "ratd.behavior.reconnect must be > 0".to_string(),
+            ));
+        }
+        Ok(reconnect)
     }
 
     pub fn schema_timeout_duration(&self) -> Result<Duration, ConfigError> {

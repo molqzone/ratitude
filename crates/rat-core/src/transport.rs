@@ -32,6 +32,7 @@ impl Default for ListenerOptions {
 
 const JLINK_BANNER_PREFIX: &[u8] = b"SEGGER J-Link";
 const JLINK_BANNER_MAX_BYTES: usize = 1024;
+const MAX_FRAME_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum BannerStripState {
@@ -63,8 +64,27 @@ impl Decoder for ZeroDelimitedFrameCodec {
         }
 
         let Some(delimiter_index) = src.iter().position(|byte| *byte == 0) else {
+            if src.len() > MAX_FRAME_BYTES {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "frame buffer exceeds max bytes without delimiter: {} > {}",
+                        src.len(),
+                        MAX_FRAME_BYTES
+                    ),
+                ));
+            }
             return Ok(None);
         };
+        if delimiter_index > MAX_FRAME_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "frame payload exceeds max bytes: {} > {}",
+                    delimiter_index, MAX_FRAME_BYTES
+                ),
+            ));
+        }
 
         let mut frame = src.split_to(delimiter_index + 1);
         frame.truncate(delimiter_index);
@@ -318,5 +338,28 @@ mod tests {
             frame.len(),
             JLINK_BANNER_PREFIX.len() + JLINK_BANNER_MAX_BYTES + 32
         );
+    }
+
+    #[test]
+    fn codec_rejects_buffer_growth_without_delimiter() {
+        let mut codec = ZeroDelimitedFrameCodec::default();
+        let raw = vec![b'A'; MAX_FRAME_BYTES + 1];
+        let mut src = BytesMut::from(raw.as_slice());
+
+        let err = codec.decode(&mut src).expect_err("oversized buffer");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("exceeds max bytes"));
+    }
+
+    #[test]
+    fn codec_rejects_oversized_frame_payload() {
+        let mut codec = ZeroDelimitedFrameCodec::default();
+        let mut raw = vec![b'A'; MAX_FRAME_BYTES + 1];
+        raw.push(0);
+        let mut src = BytesMut::from(raw.as_slice());
+
+        let err = codec.decode(&mut src).expect_err("oversized frame");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("frame payload exceeds max bytes"));
     }
 }
