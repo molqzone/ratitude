@@ -53,6 +53,9 @@ pub enum RuntimeError {
     #[error("packet id out of range: 0x{id:X}")]
     PacketIdOutOfRange { id: u16 },
 
+    #[error("packet id 0x{id:X} is reserved for runtime control protocol")]
+    ReservedPacketId { id: u16 },
+
     #[error("register packet 0x{id:02X} ({struct_name}) failed: {reason}")]
     PacketRegisterFailed {
         id: u16,
@@ -98,6 +101,9 @@ pub enum RuntimeError {
 
     #[error("unknown packet threshold must be > 0")]
     InvalidUnknownThreshold,
+
+    #[error("text packet id 0x{id:02X} is reserved for runtime control protocol")]
+    InvalidTextPacketId { id: u8 },
 }
 
 pub struct IngestRuntime {
@@ -140,6 +146,11 @@ impl IngestRuntime {
 }
 
 pub async fn start_ingest_runtime(cfg: IngestRuntimeConfig) -> Result<IngestRuntime, RuntimeError> {
+    if cfg.text_packet_id == CONTROL_PACKET_ID {
+        return Err(RuntimeError::InvalidTextPacketId {
+            id: cfg.text_packet_id,
+        });
+    }
     if cfg.schema_timeout.is_zero() {
         return Err(RuntimeError::InvalidSchemaTimeout);
     }

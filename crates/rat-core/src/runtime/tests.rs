@@ -77,6 +77,24 @@ fn schema_toml_with_duplicate_id() -> String {
     .join("\n")
 }
 
+fn schema_toml_with_reserved_id() -> String {
+    [
+        "[[packets]]",
+        "id = 0",
+        "struct_name = \"ControlConflictPacket\"",
+        "type = \"plot\"",
+        "packed = true",
+        "byte_size = 4",
+        "",
+        "[[packets.fields]]",
+        "name = \"value\"",
+        "c_type = \"uint32_t\"",
+        "offset = 0",
+        "size = 4",
+    ]
+    .join("\n")
+}
+
 fn schema_toml_with_unknown_field() -> String {
     [
         "[[packets]]",
@@ -238,6 +256,27 @@ async fn runtime_rejects_zero_unknown_threshold() {
         Err(RuntimeError::InvalidUnknownThreshold) => {}
         Err(other) => panic!("unexpected error: {other}"),
         Ok(_) => panic!("zero unknown threshold must be rejected"),
+    }
+}
+
+#[tokio::test]
+async fn runtime_rejects_reserved_text_packet_id() {
+    let result = start_ingest_runtime(IngestRuntimeConfig {
+        addr: "127.0.0.1:19021".to_string(),
+        listener: listener_opts(),
+        hub_buffer: 8,
+        text_packet_id: CONTROL_PACKET_ID,
+        schema_timeout: Duration::from_millis(10),
+        unknown_window: Duration::from_secs(5),
+        unknown_threshold: 20,
+    })
+    .await;
+    match result {
+        Err(RuntimeError::InvalidTextPacketId { id }) => {
+            assert_eq!(id, CONTROL_PACKET_ID);
+        }
+        Err(other) => panic!("unexpected error: {other}"),
+        Ok(_) => panic!("reserved text packet id must be rejected"),
     }
 }
 
@@ -438,6 +477,40 @@ async fn runtime_emits_fatal_on_duplicate_packet_id() {
     match signal {
         RuntimeSignal::Fatal(RuntimeError::DuplicatePacketId { id }) => {
             assert_eq!(id, 33);
+        }
+        other => panic!("unexpected signal: {other:?}"),
+    }
+
+    runtime.shutdown().await;
+    let _ = send_task.await;
+}
+
+#[tokio::test]
+async fn runtime_emits_fatal_on_reserved_packet_id() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr").to_string();
+    let schema = schema_toml_with_reserved_id().into_bytes();
+    let send_task = spawn_frames_once(listener, control_frames(&schema, 32)).await;
+
+    let mut runtime = start_ingest_runtime(IngestRuntimeConfig {
+        addr,
+        listener: listener_opts(),
+        hub_buffer: 8,
+        text_packet_id: 0xFF,
+        schema_timeout: Duration::from_secs(1),
+        unknown_window: Duration::from_secs(5),
+        unknown_threshold: 20,
+    })
+    .await
+    .expect("start runtime");
+
+    let signal = tokio::time::timeout(Duration::from_secs(1), runtime.recv_signal())
+        .await
+        .expect("signal timeout")
+        .expect("signal");
+    match signal {
+        RuntimeSignal::Fatal(RuntimeError::ReservedPacketId { id }) => {
+            assert_eq!(id, 0);
         }
         other => panic!("unexpected signal: {other:?}"),
     }

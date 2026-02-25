@@ -277,6 +277,13 @@ fn process_output_failure(
                 reason = %failure.reason,
                 "output sink failed; daemon keeps running"
             );
+            if !output_manager.mark_sink_unhealthy(failure.sink_key) {
+                warn!(
+                    sink = failure.sink_key,
+                    "output sink failure reported for unknown sink key; skip recovery"
+                );
+                return Ok(true);
+            }
             attempt_sink_recovery(
                 output_manager,
                 recovery_backoff,
@@ -292,7 +299,7 @@ fn process_output_failure(
         Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
             warn!("output sink failure channel lagged (skipped {skipped} messages)");
             let now = Instant::now();
-            for sink_key in output_manager.unhealthy_sink_keys() {
+            for sink_key in output_manager.sink_keys() {
                 attempt_sink_recovery(output_manager, recovery_backoff, sink_key, now);
             }
             Ok(true)

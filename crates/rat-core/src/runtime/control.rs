@@ -90,6 +90,9 @@ fn register_runtime_schema(
         "registering runtime schema packets"
     );
     for packet in packets {
+        if packet.id == CONTROL_PACKET_ID as u16 {
+            return Err(RuntimeError::ReservedPacketId { id: packet.id });
+        }
         if !seen_ids.insert(packet.id) {
             return Err(RuntimeError::DuplicatePacketId { id: packet.id });
         }

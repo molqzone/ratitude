@@ -38,6 +38,11 @@ pub(crate) fn build_runtime_spec(
 }
 
 fn parse_text_id(value: u16) -> Result<u8> {
+    if value == 0 {
+        return Err(anyhow!(
+            "text id 0x0 is reserved for runtime control packet"
+        ));
+    }
     if value > 0xFF {
         return Err(anyhow!("text id out of range: 0x{:X}", value));
     }
@@ -69,5 +74,17 @@ mod tests {
         assert!(err
             .to_string()
             .contains("ratd.behavior.schema_timeout must be a valid duration string"));
+    }
+
+    #[test]
+    fn build_runtime_spec_rejects_reserved_text_id() {
+        let mut cfg = RatitudeConfig::default();
+        cfg.ratd.text_id = 0;
+
+        let err = build_runtime_spec(&cfg, "127.0.0.1:19021", Duration::from_secs(5), 20)
+            .expect_err("reserved text id should fail");
+        assert!(err
+            .to_string()
+            .contains("text id 0x0 is reserved for runtime control packet"));
     }
 }

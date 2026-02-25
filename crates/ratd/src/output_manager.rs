@@ -318,6 +318,18 @@ impl OutputManager {
         self.unhealthy_sinks.iter().copied().collect()
     }
 
+    pub fn sink_keys(&self) -> Vec<&'static str> {
+        self.sinks.iter().map(|entry| entry.key).collect()
+    }
+
+    pub fn mark_sink_unhealthy(&mut self, sink_key: &'static str) -> bool {
+        let exists = self.sinks.iter().any(|entry| entry.key == sink_key);
+        if exists {
+            self.unhealthy_sinks.insert(sink_key);
+        }
+        exists
+    }
+
     pub fn recover_sink_after_failure(&mut self, sink_key: &str) -> Result<()> {
         let Some(entry) = self.sinks.iter_mut().find(|entry| entry.key == sink_key) else {
             return Err(anyhow!("unknown sink key in OutputManager: {}", sink_key));

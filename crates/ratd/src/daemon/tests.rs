@@ -340,6 +340,59 @@ fn output_failure_lagged_is_non_fatal() {
     assert!(result.expect("lagged should keep listener attached"));
 }
 
+#[test]
+fn output_failure_marks_sink_unhealthy_even_when_retry_is_throttled() {
+    let mut output_manager =
+        OutputManager::from_config(&RatitudeConfig::default()).expect("build output manager");
+    let mut backoff = SinkRecoveryBackoff::new(Duration::from_secs(60));
+    let now = Instant::now();
+    assert!(
+        backoff.should_attempt("jsonl", now),
+        "precondition: first retry should be allowed"
+    );
+
+    let result = process_output_failure(
+        Ok(rat_core::SinkFailure {
+            sink_key: "jsonl",
+            reason: "sink failed".to_string(),
+        }),
+        &mut output_manager,
+        &mut backoff,
+    );
+    assert!(result.expect("sink failure should keep listener attached"));
+    assert_eq!(
+        output_manager.unhealthy_sink_keys(),
+        vec!["jsonl"],
+        "failure must enter unhealthy set even when retry is throttled"
+    );
+}
+
+#[test]
+fn output_failure_lagged_attempts_recovery_for_all_sink_keys() {
+    let mut output_manager =
+        OutputManager::from_config(&RatitudeConfig::default()).expect("build output manager");
+    let mut backoff = SinkRecoveryBackoff::new(Duration::from_secs(30));
+    assert!(
+        output_manager.unhealthy_sink_keys().is_empty(),
+        "precondition: no unhealthy sinks"
+    );
+
+    let result = process_output_failure(
+        Err(tokio::sync::broadcast::error::RecvError::Lagged(3)),
+        &mut output_manager,
+        &mut backoff,
+    );
+    assert!(result.expect("lagged should keep listener attached"));
+    assert!(
+        backoff.next_retry_at.contains_key("jsonl"),
+        "lagged compensation should cover jsonl even without unhealthy marker"
+    );
+    assert!(
+        backoff.next_retry_at.contains_key("foxglove"),
+        "lagged compensation should cover foxglove even without unhealthy marker"
+    );
+}
+
 #[tokio::test]
 async fn output_failure_lagged_attempts_unhealthy_sink_recovery() {
     let dir = unique_temp_dir("ratd_output_lagged_recovery");
