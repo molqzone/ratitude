@@ -41,9 +41,19 @@ fn alignment_works() {
 #[test]
 fn id_allocator_avoids_reserved_ids() {
     let used = BTreeSet::from([1_u16, 2, 3, 0xFE]);
-    let id = select_fresh_packet_id(0, &used);
+    let id = select_fresh_packet_id(0, &used).expect("available id");
     assert!((RAT_ID_MIN..=RAT_ID_MAX).contains(&id));
     assert!(!used.contains(&id));
+}
+
+#[test]
+fn id_allocator_reports_none_when_pool_is_exhausted() {
+    let used = (RAT_ID_MIN..=RAT_ID_MAX).collect::<BTreeSet<u16>>();
+    let id = select_fresh_packet_id(0, &used);
+    assert!(
+        id.is_none(),
+        "allocator should not loop forever when id pool is exhausted"
+    );
 }
 
 #[test]

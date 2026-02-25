@@ -20,8 +20,15 @@ pub(crate) fn allocate_packet_ids(
             .copied()
             .filter(|id| (RAT_ID_MIN..=RAT_ID_MAX).contains(id))
             .filter(|id| !used_ids.contains(id));
-        let id =
-            preferred.unwrap_or_else(|| select_fresh_packet_id(packet.signature_hash, &used_ids));
+        let id = match preferred {
+            Some(id) => id,
+            None => select_fresh_packet_id(packet.signature_hash, &used_ids).ok_or_else(|| {
+                SyncError::Validation(format!(
+                    "packet id pool exhausted while assigning {} (supported range 0x{:02X}..=0x{:02X})",
+                    packet.struct_name, RAT_ID_MIN, RAT_ID_MAX
+                ))
+            })?,
+        };
 
         if !used_ids.insert(id) {
             return Err(SyncError::Validation(format!(
@@ -44,16 +51,32 @@ pub(crate) fn allocate_packet_ids(
     Ok(assigned)
 }
 
-pub(crate) fn select_fresh_packet_id(signature_hash: u64, used_ids: &BTreeSet<u16>) -> u16 {
-    let mut candidate = ((signature_hash % 254) as u16) + 1;
-    while used_ids.contains(&candidate) {
+pub(crate) fn select_fresh_packet_id(signature_hash: u64, used_ids: &BTreeSet<u16>) -> Option<u16> {
+    let id_span = usize::from(RAT_ID_MAX - RAT_ID_MIN + 1);
+    let used_in_range = used_ids
+        .iter()
+        .copied()
+        .filter(|id| (RAT_ID_MIN..=RAT_ID_MAX).contains(id))
+        .count();
+    if used_in_range >= id_span {
+        return None;
+    }
+
+    let start = (signature_hash % (id_span as u64)) as u16 + RAT_ID_MIN;
+    let mut candidate = start;
+    loop {
+        if !used_ids.contains(&candidate) {
+            return Some(candidate);
+        }
         candidate = if candidate >= RAT_ID_MAX {
             RAT_ID_MIN
         } else {
             candidate + 1
         };
+        if candidate == start {
+            return None;
+        }
     }
-    candidate
 }
 
 pub(crate) fn compute_signature_hash(packet: &DiscoveredPacket) -> u64 {

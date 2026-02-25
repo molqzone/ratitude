@@ -400,6 +400,58 @@ async fn runtime_schema_timeout_renews_while_chunks_keep_arriving() {
 }
 
 #[tokio::test]
+async fn runtime_emits_fatal_on_empty_schema_chunk() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr").to_string();
+    let schema = schema_toml().into_bytes();
+    let schema_hash = hash_schema_bytes(&schema);
+
+    let mut frames = Vec::new();
+    let mut hello = vec![CONTROL_PACKET_ID, CONTROL_HELLO];
+    hello.extend_from_slice(CONTROL_MAGIC);
+    hello.push(CONTROL_VERSION);
+    hello.extend_from_slice(&(schema.len() as u32).to_le_bytes());
+    hello.extend_from_slice(&schema_hash.to_le_bytes());
+    frames.push(encode_frame(&hello));
+
+    let mut empty_chunk = vec![CONTROL_PACKET_ID, CONTROL_SCHEMA_CHUNK];
+    empty_chunk.extend_from_slice(&0_u32.to_le_bytes());
+    empty_chunk.extend_from_slice(&0_u16.to_le_bytes());
+    frames.push(encode_frame(&empty_chunk));
+
+    let send_task = spawn_frames_once(listener, frames).await;
+
+    let mut runtime = start_ingest_runtime(IngestRuntimeConfig {
+        addr,
+        listener: listener_opts(),
+        hub_buffer: 8,
+        text_packet_id: 0xFF,
+        schema_timeout: Duration::from_secs(1),
+        unknown_window: Duration::from_secs(5),
+        unknown_threshold: 20,
+    })
+    .await
+    .expect("start runtime");
+
+    let signal = tokio::time::timeout(Duration::from_secs(1), runtime.recv_signal())
+        .await
+        .expect("signal timeout")
+        .expect("signal");
+    match signal {
+        RuntimeSignal::Fatal(RuntimeError::ControlProtocol { reason }) => {
+            assert!(
+                reason.contains("schema chunk length must be > 0"),
+                "unexpected reason: {reason}"
+            );
+        }
+        other => panic!("unexpected signal: {other:?}"),
+    }
+
+    runtime.shutdown().await;
+    let _ = send_task.await;
+}
+
+#[tokio::test]
 async fn runtime_emits_fatal_on_schema_hash_mismatch() {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr").to_string();

@@ -11,13 +11,10 @@ pub fn c_type_size(c_type: &str) -> Option<usize> {
 }
 
 pub fn normalize_c_type(raw: &str) -> String {
-    let mut value = raw.trim().to_ascii_lowercase();
-    while value.contains("  ") {
-        value = value.replace("  ", " ");
-    }
-    value = value
-        .trim_start_matches("const ")
-        .trim_start_matches("volatile ")
-        .to_string();
-    value.trim().to_string()
+    let lowered = raw.trim().to_ascii_lowercase();
+    let tokens = lowered
+        .split_whitespace()
+        .filter(|token| !matches!(*token, "const" | "volatile"))
+        .collect::<Vec<_>>();
+    tokens.join(" ")
 }

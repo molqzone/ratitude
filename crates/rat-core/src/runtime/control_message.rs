@@ -77,6 +77,11 @@ fn parse_chunk_message(payload: &[u8]) -> Result<ControlMessage, RuntimeError> {
 
     let offset = read_u32_le(&payload[1..5])? as usize;
     let chunk_len = read_u16_le(&payload[5..7])? as usize;
+    if chunk_len == 0 {
+        return Err(RuntimeError::ControlProtocol {
+            reason: "schema chunk length must be > 0".to_string(),
+        });
+    }
     let expected_len = 7 + chunk_len;
     if payload.len() != expected_len {
         return Err(RuntimeError::ControlProtocol {

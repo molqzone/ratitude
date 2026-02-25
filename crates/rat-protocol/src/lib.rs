@@ -100,4 +100,14 @@ mod tests {
             "schema hash must stay stable across crates"
         );
     }
+
+    #[test]
+    fn normalize_c_type_ignores_qualifier_order_and_whitespace() {
+        assert_eq!(normalize_c_type("volatile const uint32_t"), "uint32_t");
+        assert_eq!(
+            normalize_c_type("  const   volatile   int16_t  "),
+            "int16_t"
+        );
+        assert_eq!(normalize_c_type("\tconst\tfloat\n"), "float");
+    }
 }
