@@ -1,10 +1,8 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::sync::OnceLock;
 
 use rat_config::PacketDef;
-use regex::Regex;
 use serde::Deserialize;
 
 use crate::generated::GeneratedConfig;
@@ -147,7 +145,7 @@ fn parse_schema_hash(raw: &str) -> Result<u64, SyncError> {
 fn parse_generated_header_packets(raw: &str, path: &Path) -> Result<Vec<PacketDef>, SyncError> {
     let schema_bytes = parse_schema_bytes_from_header(raw).ok_or_else(|| {
         SyncError::Validation(format!(
-            "generated header {} does not contain rat_gen_schema_bytes",
+            "generated header {} is incompatible (missing rat_gen_schema_bytes); regenerate it with the current ratsync",
             path.display()
         ))
     })?;
@@ -171,25 +169,30 @@ fn parse_generated_header_packets(raw: &str, path: &Path) -> Result<Vec<PacketDe
 }
 
 fn parse_schema_bytes_from_header(raw: &str) -> Option<Vec<u8>> {
-    static SCHEMA_BYTES_RE: OnceLock<Regex> = OnceLock::new();
-    static BYTE_RE: OnceLock<Regex> = OnceLock::new();
+    const SCHEMA_BYTES_DECL: &str = "static const uint8_t rat_gen_schema_bytes";
 
-    let schema_bytes_re = SCHEMA_BYTES_RE.get_or_init(|| {
-        Regex::new(
-            r"(?s)static const uint8_t\s+rat_gen_schema_bytes\[[^\]]+\]\s*=\s*\{(?P<body>.*?)\};",
-        )
-        .expect("compile schema bytes regex")
-    });
-    let byte_re = BYTE_RE.get_or_init(|| {
-        Regex::new(r"0x([0-9A-Fa-f]{2})u?").expect("compile schema byte token regex")
-    });
+    let decl_start = raw.find(SCHEMA_BYTES_DECL)?;
+    let tail = &raw[decl_start + SCHEMA_BYTES_DECL.len()..];
+    let body_start = tail.find('{')?;
+    let body_tail = &tail[body_start + 1..];
+    let body_end = body_tail.find("};")?;
+    let body = &body_tail[..body_end];
 
-    let body = schema_bytes_re.captures(raw)?.name("body")?.as_str();
     let mut bytes = Vec::new();
-    for cap in byte_re.captures_iter(body) {
-        let token = cap.get(1)?.as_str();
-        let value = u8::from_str_radix(token, 16).ok()?;
+    for token in body.split(|ch: char| ch == ',' || ch.is_ascii_whitespace()) {
+        let token = token.trim();
+        if token.is_empty() {
+            continue;
+        }
+        let hex = token
+            .strip_prefix("0x")
+            .or_else(|| token.strip_prefix("0X"))?
+            .trim_end_matches(['u', 'U']);
+        let value = u8::from_str_radix(hex, 16).ok()?;
         bytes.push(value);
+    }
+    if bytes.is_empty() {
+        return None;
     }
     Some(bytes)
 }
@@ -306,6 +309,36 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(packets, expected);
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn read_generated_header_packets_rejects_legacy_header_without_schema_bytes() {
+        let dir = std::env::temp_dir().join(format!(
+            "rat_sync_header_legacy_reject_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join("rat_gen.h");
+
+        let legacy = r#"
+#ifndef RAT_GEN_H
+#define RAT_GEN_H
+/* legacy style header without embedded schema bytes */
+#define RAT_GEN_SCHEMA_HASH 0x6DC228D8526C7443ULL
+#define RAT_GEN_PACKET_COUNT 1u
+#define RAT_ID_DEMOPACKET 0x21u
+#endif
+"#;
+        fs::write(&path, legacy).expect("write legacy header");
+
+        let err = read_generated_header_packets(&path).expect_err("legacy header should fail");
+        let msg = err.to_string();
+        assert!(msg.contains("incompatible"));
+        assert!(msg.contains("rat_gen_schema_bytes"));
 
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir_all(dir);
