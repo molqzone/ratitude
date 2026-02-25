@@ -5,7 +5,7 @@ mod runtime;
 mod transport;
 
 pub use hub::Hub;
-pub use logger::spawn_jsonl_writer;
+pub use logger::{spawn_jsonl_writer, SinkFailure};
 pub use protocol_engine::{PacketEnvelope, PacketPayload};
 pub use runtime::{
     start_ingest_runtime, IngestRuntime, IngestRuntimeConfig, RuntimeError, RuntimeFieldDef,

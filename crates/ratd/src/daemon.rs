@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use rat_config::RatitudeConfig;
-use rat_core::RuntimeSignal;
+use rat_core::{RuntimeSignal, SinkFailure};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -253,14 +253,22 @@ async fn process_runtime_signal(
 }
 
 fn process_output_failure(
-    sink_failure: std::result::Result<String, tokio::sync::broadcast::error::RecvError>,
+    sink_failure: std::result::Result<SinkFailure, tokio::sync::broadcast::error::RecvError>,
     output_manager: &mut OutputManager,
 ) -> Result<bool> {
     match sink_failure {
-        Ok(reason) => {
-            warn!(reason = %reason, "output sink failed; daemon keeps running");
-            if let Err(err) = output_manager.recover_after_sink_failure() {
-                warn!(error = %err, "failed to recover output sinks after failure");
+        Ok(failure) => {
+            warn!(
+                sink = failure.sink_key,
+                reason = %failure.reason,
+                "output sink failed; daemon keeps running"
+            );
+            if let Err(err) = output_manager.recover_sink_after_failure(failure.sink_key) {
+                warn!(
+                    sink = failure.sink_key,
+                    error = %err,
+                    "failed to recover output sink after failure"
+                );
             }
             Ok(true)
         }

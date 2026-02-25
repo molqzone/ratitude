@@ -29,7 +29,7 @@ impl UnknownPacketMonitor {
     pub(crate) fn new(window: Duration, threshold: u32) -> Self {
         Self {
             window,
-            threshold: threshold.max(1),
+            threshold,
             window_started_at: Instant::now(),
             window_count: 0,
             total_count: 0,

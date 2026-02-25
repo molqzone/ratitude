@@ -10,21 +10,35 @@ use tokio::task::JoinHandle;
 
 use crate::{PacketEnvelope, PacketPayload};
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SinkFailure {
+    pub sink_key: &'static str,
+    pub reason: String,
+}
+
 #[derive(Serialize)]
-struct JsonRecord {
+struct JsonRecord<'a> {
     ts: String,
     id: String,
     payload_hex: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    data: Option<Value>,
+    data: Option<JsonRecordData<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    text: Option<String>,
+    text: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum JsonRecordData<'a> {
+    Text(&'a str),
+    Dynamic(&'a serde_json::Map<String, Value>),
 }
 
 pub fn spawn_jsonl_writer(
     mut receiver: broadcast::Receiver<PacketEnvelope>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
-    failure_tx: broadcast::Sender<String>,
+    failure_tx: broadcast::Sender<SinkFailure>,
+    sink_key: &'static str,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         loop {
@@ -41,24 +55,35 @@ pub fn spawn_jsonl_writer(
                     let line = match serde_json::to_string(&record) {
                         Ok(line) => line,
                         Err(err) => {
-                            let _ =
-                                failure_tx.send(format!("serialize jsonl record failed: {err}"));
+                            let _ = failure_tx.send(SinkFailure {
+                                sink_key,
+                                reason: format!("serialize jsonl record failed: {err}"),
+                            });
                             break;
                         }
                     };
                     let mut guard = match writer.lock() {
                         Ok(guard) => guard,
                         Err(err) => {
-                            let _ = failure_tx.send(format!("jsonl writer lock poisoned: {err}"));
+                            let _ = failure_tx.send(SinkFailure {
+                                sink_key,
+                                reason: format!("jsonl writer lock poisoned: {err}"),
+                            });
                             break;
                         }
                     };
                     if let Err(err) = guard.write_all(line.as_bytes()) {
-                        let _ = failure_tx.send(format!("write jsonl record failed: {err}"));
+                        let _ = failure_tx.send(SinkFailure {
+                            sink_key,
+                            reason: format!("write jsonl record failed: {err}"),
+                        });
                         break;
                     }
                     if let Err(err) = guard.write_all(b"\n") {
-                        let _ = failure_tx.send(format!("write jsonl newline failed: {err}"));
+                        let _ = failure_tx.send(SinkFailure {
+                            sink_key,
+                            reason: format!("write jsonl newline failed: {err}"),
+                        });
                         break;
                     }
                 }
@@ -80,9 +105,9 @@ fn format_timestamp(ts: std::time::SystemTime) -> String {
         .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string())
 }
 
-fn packet_data_json(data: &PacketPayload) -> (Option<Value>, Option<String>) {
+fn packet_data_json(data: &PacketPayload) -> (Option<JsonRecordData<'_>>, Option<&str>) {
     match data {
-        PacketPayload::Text(text) => (Some(Value::String(text.clone())), Some(text.clone())),
-        PacketPayload::Dynamic(map) => (Some(Value::Object(map.clone())), None),
+        PacketPayload::Text(text) => (Some(JsonRecordData::Text(text)), Some(text)),
+        PacketPayload::Dynamic(map) => (Some(JsonRecordData::Dynamic(map)), None),
     }
 }

@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use rat_core::{PacketEnvelope, PacketPayload};
+use rat_core::{PacketEnvelope, PacketPayload, SinkFailure};
 use tokio::sync::broadcast::error::TryRecvError;
 
 use super::*;
@@ -36,11 +36,14 @@ impl PacketSink for FailOnceSink {
         &mut self,
         _desired: &OutputState,
         _context: Option<&SinkContext>,
-        failure_tx: &broadcast::Sender<String>,
+        failure_tx: &broadcast::Sender<SinkFailure>,
     ) -> Result<()> {
         if !self.sent {
             self.sent = true;
-            let _ = failure_tx.send("sink failed".to_string());
+            let _ = failure_tx.send(SinkFailure {
+                sink_key: self.key(),
+                reason: "sink failed".to_string(),
+            });
         }
         Ok(())
     }
@@ -57,7 +60,7 @@ impl PacketSink for NoopSink {
         &mut self,
         _desired: &OutputState,
         _context: Option<&SinkContext>,
-        _failure_tx: &broadcast::Sender<String>,
+        _failure_tx: &broadcast::Sender<SinkFailure>,
     ) -> Result<()> {
         Ok(())
     }
@@ -74,7 +77,7 @@ impl PacketSink for RecoverProbeSink {
         &mut self,
         _desired: &OutputState,
         _context: Option<&SinkContext>,
-        _failure_tx: &broadcast::Sender<String>,
+        _failure_tx: &broadcast::Sender<SinkFailure>,
     ) -> Result<()> {
         self.sync_calls.fetch_add(1, Ordering::SeqCst);
         Ok(())
@@ -103,7 +106,8 @@ fn failure_subscription_receives_sink_error_once() {
     manager.reload_from_config(&cfg).expect("reload");
 
     let first = failures.try_recv().expect("first failure");
-    assert!(first.contains("sink failed"));
+    assert_eq!(first.sink_key, "jsonl");
+    assert!(first.reason.contains("sink failed"));
     assert!(matches!(failures.try_recv(), Err(TryRecvError::Empty)));
 }
 
@@ -227,7 +231,7 @@ fn recover_after_sink_failure_forces_shutdown_then_reconcile() {
     .expect("build output manager");
 
     manager
-        .recover_after_sink_failure()
+        .recover_sink_after_failure("probe")
         .expect("recover sinks after failure");
 
     assert_eq!(shutdown_calls.load(Ordering::SeqCst), 1);

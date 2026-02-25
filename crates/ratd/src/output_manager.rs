@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{anyhow, Context, Result};
 use rat_bridge_foxglove::{run_bridge, BridgeConfig};
 use rat_config::{PacketDef, RatitudeConfig};
-use rat_core::{spawn_jsonl_writer, Hub};
+use rat_core::{spawn_jsonl_writer, Hub, SinkFailure};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -37,7 +37,7 @@ trait PacketSink {
         &mut self,
         desired: &OutputState,
         context: Option<&SinkContext>,
-        failure_tx: &broadcast::Sender<String>,
+        failure_tx: &broadcast::Sender<SinkFailure>,
     ) -> Result<()>;
     fn shutdown(&mut self);
     fn force_reconcile(&mut self) {
@@ -80,7 +80,7 @@ impl PacketSink for JsonlSink {
         &mut self,
         desired: &OutputState,
         context: Option<&SinkContext>,
-        failure_tx: &broadcast::Sender<String>,
+        failure_tx: &broadcast::Sender<SinkFailure>,
     ) -> Result<()> {
         let next_state = JsonlRuntimeState {
             enabled: desired.jsonl_enabled,
@@ -115,10 +115,12 @@ impl PacketSink for JsonlSink {
             Box::new(io::stdout())
         };
         let writer = Arc::new(Mutex::new(writer));
+        let sink_key = self.key();
         self.task = Some(spawn_jsonl_writer(
             context.hub.subscribe(),
             writer,
             failure_tx.clone(),
+            sink_key,
         ));
         self.last_state = Some(next_state);
 
@@ -165,7 +167,7 @@ impl PacketSink for FoxgloveSink {
         &mut self,
         desired: &OutputState,
         context: Option<&SinkContext>,
-        failure_tx: &broadcast::Sender<String>,
+        failure_tx: &broadcast::Sender<SinkFailure>,
     ) -> Result<()> {
         let next_state = FoxgloveRuntimeState {
             enabled: desired.foxglove_enabled,
@@ -196,9 +198,13 @@ impl PacketSink for FoxgloveSink {
         let hub = context.hub.clone();
         let bridge_shutdown = shutdown.clone();
         let failure_tx = failure_tx.clone();
+        let sink_key = self.key();
         let task = tokio::spawn(async move {
             if let Err(err) = run_bridge(bridge_cfg, packets, hub, bridge_shutdown).await {
-                let _ = failure_tx.send(err.to_string());
+                let _ = failure_tx.send(SinkFailure {
+                    sink_key,
+                    reason: err.to_string(),
+                });
             }
         });
         self.task = Some(task);
@@ -223,13 +229,13 @@ pub struct OutputManager {
     desired: OutputState,
     context: Option<SinkContext>,
     sinks: Vec<RegisteredSink>,
-    failure_tx: broadcast::Sender<String>,
+    failure_tx: broadcast::Sender<SinkFailure>,
 }
 
 impl OutputManager {
     pub fn from_config(cfg: &RatitudeConfig) -> Result<Self> {
         let desired = output_state_from_config(cfg);
-        let (failure_tx, _failure_rx) = broadcast::channel::<String>(64);
+        let (failure_tx, _failure_rx) = broadcast::channel::<SinkFailure>(64);
 
         let sinks = build_registered_sinks(default_sinks())?;
 
@@ -243,7 +249,7 @@ impl OutputManager {
 
     #[cfg(test)]
     fn with_sinks_for_test(desired: OutputState, sinks: Vec<Box<dyn PacketSink>>) -> Result<Self> {
-        let (failure_tx, _failure_rx) = broadcast::channel::<String>(64);
+        let (failure_tx, _failure_rx) = broadcast::channel::<SinkFailure>(64);
         let registered = build_registered_sinks(sinks)?;
         Ok(Self {
             desired,
@@ -288,15 +294,18 @@ impl OutputManager {
         }
     }
 
-    pub fn subscribe_failures(&self) -> broadcast::Receiver<String> {
+    pub fn subscribe_failures(&self) -> broadcast::Receiver<SinkFailure> {
         self.failure_tx.subscribe()
     }
 
-    pub fn recover_after_sink_failure(&mut self) -> Result<()> {
-        for entry in &mut self.sinks {
-            entry.sink.force_reconcile();
-        }
-        self.reconcile_all()
+    pub fn recover_sink_after_failure(&mut self, sink_key: &str) -> Result<()> {
+        let Some(entry) = self.sinks.iter_mut().find(|entry| entry.key == sink_key) else {
+            return Err(anyhow!("unknown sink key in OutputManager: {}", sink_key));
+        };
+        entry.sink.force_reconcile();
+        entry
+            .sink
+            .sync(&self.desired, self.context.as_ref(), &self.failure_tx)
     }
 
     fn reconcile_all(&mut self) -> Result<()> {

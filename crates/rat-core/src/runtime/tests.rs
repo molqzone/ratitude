@@ -223,6 +223,25 @@ async fn runtime_rejects_zero_schema_timeout() {
 }
 
 #[tokio::test]
+async fn runtime_rejects_zero_unknown_threshold() {
+    let result = start_ingest_runtime(IngestRuntimeConfig {
+        addr: "127.0.0.1:19021".to_string(),
+        listener: listener_opts(),
+        hub_buffer: 8,
+        text_packet_id: 0xFF,
+        schema_timeout: Duration::from_millis(10),
+        unknown_window: Duration::from_secs(5),
+        unknown_threshold: 0,
+    })
+    .await;
+    match result {
+        Err(RuntimeError::InvalidUnknownThreshold) => {}
+        Err(other) => panic!("unexpected error: {other}"),
+        Ok(_) => panic!("zero unknown threshold must be rejected"),
+    }
+}
+
+#[tokio::test]
 async fn runtime_decodes_and_publishes_valid_packet_after_schema_ready() {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr").to_string();

@@ -112,7 +112,7 @@ mod tests {
     use serde_json::{json, Value};
 
     use crate::binding::{build_packet_bindings, packet_schema_json};
-    use crate::publisher::{build_image_message, extract_quaternion, packet_data_to_json};
+    use crate::publisher::{build_image_message, extract_quaternion, packet_data_map};
 
     use super::*;
 
@@ -232,13 +232,13 @@ mod tests {
 
     #[test]
     fn packet_data_to_json_supports_dynamic() {
-        let value = packet_data_to_json(&PacketData::Dynamic(serde_json::Map::from_iter([
+        let data = PacketData::Dynamic(serde_json::Map::from_iter([
             ("x".to_string(), json!(0.1)),
             ("y".to_string(), json!(0.2)),
             ("z".to_string(), json!(0.3)),
             ("w".to_string(), json!(0.9)),
-        ])))
-        .expect("dynamic value");
+        ]));
+        let value = packet_data_map(&data).expect("dynamic value");
 
         let x = value.get("x").and_then(Value::as_f64).expect("x");
         let w = value.get("w").and_then(Value::as_f64).expect("w");

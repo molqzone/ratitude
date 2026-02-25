@@ -95,6 +95,9 @@ pub enum RuntimeError {
 
     #[error("runtime schema timeout must be > 0ms")]
     InvalidSchemaTimeout,
+
+    #[error("unknown packet threshold must be > 0")]
+    InvalidUnknownThreshold,
 }
 
 pub struct IngestRuntime {
@@ -139,6 +142,9 @@ impl IngestRuntime {
 pub async fn start_ingest_runtime(cfg: IngestRuntimeConfig) -> Result<IngestRuntime, RuntimeError> {
     if cfg.schema_timeout.is_zero() {
         return Err(RuntimeError::InvalidSchemaTimeout);
+    }
+    if cfg.unknown_threshold == 0 {
+        return Err(RuntimeError::InvalidUnknownThreshold);
     }
 
     let mut protocol = RatProtocolEngine::new();

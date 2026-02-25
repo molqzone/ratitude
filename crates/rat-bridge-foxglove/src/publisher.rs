@@ -6,7 +6,8 @@ use foxglove::schemas::{RawImage, Timestamp};
 use foxglove::{PartialMetadata, RawChannel};
 use rat_config::PacketType;
 use rat_protocol::{PacketData, RatPacket};
-use serde_json::{json, Value};
+use serde::Serialize;
+use serde_json::{json, Map, Value};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -47,8 +48,8 @@ fn publish_packet(channels: &HashMap<u8, PacketChannels>, packet: &RatPacket) {
         return;
     };
 
-    if let Some(value) = packet_data_to_json(&packet.data) {
-        publish_json(&channels.data, packet.timestamp, &value);
+    if let Some(map) = packet_data_map(&packet.data) {
+        publish_json(&channels.data, packet.timestamp, map);
     }
 
     if channels.binding.packet_type == PacketType::Quat {
@@ -107,7 +108,10 @@ fn publish_packet(channels: &HashMap<u8, PacketChannels>, packet: &RatPacket) {
     }
 }
 
-fn publish_json(channel: &Arc<RawChannel>, ts: SystemTime, value: &Value) {
+fn publish_json<T>(channel: &Arc<RawChannel>, ts: SystemTime, value: &T)
+where
+    T: Serialize + ?Sized,
+{
     let Ok(payload) = serde_json::to_vec(value) else {
         return;
     };
@@ -117,9 +121,9 @@ fn publish_json(channel: &Arc<RawChannel>, ts: SystemTime, value: &Value) {
     );
 }
 
-pub(crate) fn packet_data_to_json(data: &PacketData) -> Option<Value> {
+pub(crate) fn packet_data_map(data: &PacketData) -> Option<&Map<String, Value>> {
     match data {
-        PacketData::Dynamic(map) => Some(Value::Object(map.clone())),
+        PacketData::Dynamic(map) => Some(map),
         PacketData::Text(_) => None,
     }
 }

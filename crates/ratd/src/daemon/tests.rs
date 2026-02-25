@@ -342,7 +342,13 @@ fn output_failure_lagged_is_non_fatal() {
 fn output_failure_reason_is_non_fatal() {
     let mut output_manager =
         OutputManager::from_config(&RatitudeConfig::default()).expect("build output manager");
-    let result = process_output_failure(Ok("sink failed".to_string()), &mut output_manager);
+    let result = process_output_failure(
+        Ok(rat_core::SinkFailure {
+            sink_key: "jsonl",
+            reason: "sink failed".to_string(),
+        }),
+        &mut output_manager,
+    );
     assert!(result.expect("sink failure should keep listener attached"));
 }
 
