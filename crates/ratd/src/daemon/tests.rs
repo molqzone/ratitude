@@ -337,7 +337,7 @@ fn output_failure_lagged_is_non_fatal() {
         Err(tokio::sync::broadcast::error::RecvError::Lagged(3)),
         &mut output_manager,
     );
-    assert!(result.is_ok());
+    assert!(result.expect("lagged should keep listener attached"));
 }
 
 #[test]
@@ -345,7 +345,7 @@ fn output_failure_reason_is_non_fatal() {
     let mut output_manager =
         OutputManager::from_config(&RatitudeConfig::default()).expect("build output manager");
     let result = process_output_failure(Ok("sink failed".to_string()), &mut output_manager);
-    assert!(result.is_ok());
+    assert!(result.expect("sink failure should keep listener attached"));
 }
 
 #[test]
@@ -356,7 +356,7 @@ fn output_failure_channel_closed_is_non_fatal() {
         Err(tokio::sync::broadcast::error::RecvError::Closed),
         &mut output_manager,
     );
-    assert!(result.is_ok());
+    assert!(!result.expect("closed should detach listener"));
 }
 
 #[test]

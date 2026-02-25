@@ -118,6 +118,7 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
     let console_shutdown = CancellationToken::new();
     let mut command_rx = spawn_console_reader(console_shutdown.clone());
     let mut console_attached = true;
+    let mut output_failure_attached = true;
 
     let run_result: Result<()> = loop {
         tokio::select! {
@@ -150,9 +151,10 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
                     break Err(err);
                 }
             }
-            sink_failure = output_failure_rx.recv() => {
-                if let Err(err) = process_output_failure(sink_failure, &mut output_manager) {
-                    break Err(err);
+            sink_failure = output_failure_rx.recv(), if output_failure_attached => {
+                match process_output_failure(sink_failure, &mut output_manager) {
+                    Ok(keep_attached) => output_failure_attached = keep_attached,
+                    Err(err) => break Err(err),
                 }
             }
         }
@@ -253,22 +255,22 @@ async fn process_runtime_signal(
 fn process_output_failure(
     sink_failure: std::result::Result<String, tokio::sync::broadcast::error::RecvError>,
     output_manager: &mut OutputManager,
-) -> Result<()> {
+) -> Result<bool> {
     match sink_failure {
         Ok(reason) => {
             warn!(reason = %reason, "output sink failed; daemon keeps running");
             if let Err(err) = output_manager.recover_after_sink_failure() {
                 warn!(error = %err, "failed to recover output sinks after failure");
             }
-            Ok(())
+            Ok(true)
         }
         Err(tokio::sync::broadcast::error::RecvError::Closed) => {
             warn!("output sink failure channel closed; daemon keeps running");
-            Ok(())
+            Ok(false)
         }
         Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
             warn!("output sink failure channel lagged (skipped {skipped} messages)");
-            Ok(())
+            Ok(true)
         }
     }
 }
