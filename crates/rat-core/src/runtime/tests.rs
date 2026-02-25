@@ -173,6 +173,55 @@ fn unknown_packet_monitor_threshold_once_per_window() {
     assert!(!fourth.threshold_crossed);
 }
 
+#[test]
+fn unknown_packet_log_action_suppresses_after_threshold() {
+    let mut monitor = UnknownPacketMonitor::new(Duration::from_secs(10), 3);
+    let start = Instant::now();
+
+    let first = monitor.record_at(0x10, start);
+    assert_eq!(
+        unknown_packet_log_action(&monitor, &first),
+        UnknownPacketLogAction::WarnPreThreshold
+    );
+
+    let second = monitor.record_at(0x10, start + Duration::from_millis(1));
+    assert_eq!(
+        unknown_packet_log_action(&monitor, &second),
+        UnknownPacketLogAction::WarnPreThreshold
+    );
+
+    let third = monitor.record_at(0x10, start + Duration::from_millis(2));
+    assert_eq!(
+        unknown_packet_log_action(&monitor, &third),
+        UnknownPacketLogAction::ThresholdCrossed
+    );
+
+    let fourth = monitor.record_at(0x10, start + Duration::from_millis(3));
+    assert_eq!(
+        unknown_packet_log_action(&monitor, &fourth),
+        UnknownPacketLogAction::Suppress
+    );
+}
+
+#[tokio::test]
+async fn runtime_rejects_zero_schema_timeout() {
+    let result = start_ingest_runtime(IngestRuntimeConfig {
+        addr: "127.0.0.1:19021".to_string(),
+        listener: listener_opts(),
+        hub_buffer: 8,
+        text_packet_id: 0xFF,
+        schema_timeout: Duration::from_millis(0),
+        unknown_window: Duration::from_secs(5),
+        unknown_threshold: 20,
+    })
+    .await;
+    match result {
+        Err(RuntimeError::InvalidSchemaTimeout) => {}
+        Err(other) => panic!("unexpected error: {other}"),
+        Ok(_) => panic!("zero schema timeout must be rejected"),
+    }
+}
+
 #[tokio::test]
 async fn runtime_decodes_and_publishes_valid_packet_after_schema_ready() {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");

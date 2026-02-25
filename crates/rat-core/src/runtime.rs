@@ -92,6 +92,9 @@ pub enum RuntimeError {
 
     #[error("frame consumer stopped before shutdown")]
     FrameConsumerStopped,
+
+    #[error("runtime schema timeout must be > 0ms")]
+    InvalidSchemaTimeout,
 }
 
 pub struct IngestRuntime {
@@ -134,6 +137,10 @@ impl IngestRuntime {
 }
 
 pub async fn start_ingest_runtime(cfg: IngestRuntimeConfig) -> Result<IngestRuntime, RuntimeError> {
+    if cfg.schema_timeout.is_zero() {
+        return Err(RuntimeError::InvalidSchemaTimeout);
+    }
+
     let mut protocol = RatProtocolEngine::new();
     protocol.set_text_packet_id(cfg.text_packet_id);
     protocol.clear_dynamic_registry();
@@ -211,7 +218,7 @@ async fn run_frame_consumer(
     unknown_threshold: u32,
     signals: mpsc::Sender<RuntimeSignal>,
 ) -> Result<(), RuntimeError> {
-    let timeout = schema_timeout.max(Duration::from_millis(1));
+    let timeout = schema_timeout;
     let mut schema_state = SchemaState::new(timeout);
     let mut unknown_monitor = UnknownPacketMonitor::new(unknown_window, unknown_threshold);
 
@@ -352,7 +359,7 @@ fn report_unknown_packet(
     unknown_monitor: &UnknownPacketMonitor,
     observation: UnknownPacketObservation,
 ) {
-    if let Some(report) = observation.rolled_over {
+    if let Some(report) = observation.rolled_over.as_ref() {
         warn!(
             window_secs = unknown_monitor.window.as_secs(),
             dropped = report.count,
@@ -360,23 +367,47 @@ fn report_unknown_packet(
             "unknown packets dropped in previous window"
         );
     }
-    if observation.threshold_crossed {
-        error!(
-            packet_id = format!("0x{:02X}", unknown_id),
-            window_secs = unknown_monitor.window.as_secs(),
-            threshold = unknown_monitor.threshold,
-            window_count = observation.window_count,
-            total_unknown = observation.total_count,
-            "unknown packet flood detected (not declared in runtime schema)"
-        );
-    } else {
-        warn!(
-            packet_id = format!("0x{:02X}", unknown_id),
-            window_count = observation.window_count,
-            total_unknown = observation.total_count,
-            "dropping unknown packet id (not declared in runtime schema)"
-        );
+    match unknown_packet_log_action(unknown_monitor, &observation) {
+        UnknownPacketLogAction::ThresholdCrossed => {
+            error!(
+                packet_id = format!("0x{:02X}", unknown_id),
+                window_secs = unknown_monitor.window.as_secs(),
+                threshold = unknown_monitor.threshold,
+                window_count = observation.window_count,
+                total_unknown = observation.total_count,
+                "unknown packet flood detected (not declared in runtime schema)"
+            );
+        }
+        UnknownPacketLogAction::WarnPreThreshold => {
+            warn!(
+                packet_id = format!("0x{:02X}", unknown_id),
+                window_count = observation.window_count,
+                total_unknown = observation.total_count,
+                "dropping unknown packet id (not declared in runtime schema)"
+            );
+        }
+        UnknownPacketLogAction::Suppress => {}
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnknownPacketLogAction {
+    ThresholdCrossed,
+    WarnPreThreshold,
+    Suppress,
+}
+
+fn unknown_packet_log_action(
+    unknown_monitor: &UnknownPacketMonitor,
+    observation: &UnknownPacketObservation,
+) -> UnknownPacketLogAction {
+    if observation.threshold_crossed {
+        return UnknownPacketLogAction::ThresholdCrossed;
+    }
+    if observation.window_count < unknown_monitor.threshold {
+        return UnknownPacketLogAction::WarnPreThreshold;
+    }
+    UnknownPacketLogAction::Suppress
 }
 
 fn publish_runtime_packet(hub: &Hub, id: u8, payload: Vec<u8>, data: PacketPayload) {
