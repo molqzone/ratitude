@@ -163,44 +163,45 @@ fn parse_duration_value(field: &str, raw: &str) -> Result<Duration, ConfigError>
 }
 
 fn validate_foxglove_ws_addr(raw_addr: &str) -> Result<(), ConfigError> {
-    let normalized = raw_addr.trim();
-    if let Some(rest) = normalized.strip_prefix('[') {
-        let (host, suffix) = rest.split_once(']').ok_or_else(|| {
-            ConfigError::Validation(format!(
-                "ratd.outputs.foxglove.ws_addr must be host:port or [ipv6]:port: {raw_addr}"
-            ))
-        })?;
-        if host.is_empty() {
-            return Err(ConfigError::Validation(format!(
-                "ratd.outputs.foxglove.ws_addr must be host:port or [ipv6]:port: {raw_addr}"
-            )));
-        }
-        let port_raw = suffix.strip_prefix(':').ok_or_else(|| {
-            ConfigError::Validation(format!(
-                "ratd.outputs.foxglove.ws_addr must be host:port or [ipv6]:port: {raw_addr}"
-            ))
-        })?;
-        parse_ws_port(port_raw, raw_addr)?;
-        return Ok(());
-    }
-
-    let (host, port_raw) = normalized.rsplit_once(':').ok_or_else(|| {
-        ConfigError::Validation(format!(
-            "ratd.outputs.foxglove.ws_addr must be host:port or [ipv6]:port: {raw_addr}"
-        ))
-    })?;
-    if host.is_empty() || host.contains(':') {
-        return Err(ConfigError::Validation(format!(
-            "ratd.outputs.foxglove.ws_addr must be host:port or [ipv6]:port: {raw_addr}"
-        )));
-    }
-    parse_ws_port(port_raw, raw_addr)
+    parse_foxglove_ws_addr(raw_addr).map(|_| ())
 }
 
-fn parse_ws_port(raw_port: &str, raw_addr: &str) -> Result<(), ConfigError> {
-    raw_port.parse::<u16>().map(|_| ()).map_err(|err| {
+pub fn parse_foxglove_ws_addr(raw_addr: &str) -> Result<(String, u16), ConfigError> {
+    let normalized = raw_addr.trim();
+    if let Some(rest) = normalized.strip_prefix('[') {
+        let (host, suffix) = rest
+            .split_once(']')
+            .ok_or_else(|| invalid_foxglove_ws_addr_error(raw_addr))?;
+        if host.is_empty() {
+            return Err(invalid_foxglove_ws_addr_error(raw_addr));
+        }
+        let port_raw = suffix
+            .strip_prefix(':')
+            .ok_or_else(|| invalid_foxglove_ws_addr_error(raw_addr))?;
+        let port = parse_ws_port(port_raw, raw_addr)?;
+        return Ok((host.to_string(), port));
+    }
+
+    let (host, port_raw) = normalized
+        .rsplit_once(':')
+        .ok_or_else(|| invalid_foxglove_ws_addr_error(raw_addr))?;
+    if host.is_empty() || host.contains(':') {
+        return Err(invalid_foxglove_ws_addr_error(raw_addr));
+    }
+    let port = parse_ws_port(port_raw, raw_addr)?;
+    Ok((host.to_string(), port))
+}
+
+fn parse_ws_port(raw_port: &str, raw_addr: &str) -> Result<u16, ConfigError> {
+    raw_port.parse::<u16>().map_err(|err| {
         ConfigError::Validation(format!(
             "ratd.outputs.foxglove.ws_addr has invalid port in {raw_addr}: {err}"
         ))
     })
+}
+
+fn invalid_foxglove_ws_addr_error(raw_addr: &str) -> ConfigError {
+    ConfigError::Validation(format!(
+        "ratd.outputs.foxglove.ws_addr must be host:port or [ipv6]:port: {raw_addr}"
+    ))
 }

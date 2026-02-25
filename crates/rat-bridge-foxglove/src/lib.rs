@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Context as AnyhowContext, Result};
 use foxglove::{Context, WebSocketServer};
-use rat_config::PacketDef;
+use rat_config::{parse_foxglove_ws_addr, PacketDef};
 use rat_core::Hub;
 use tokio_util::sync::CancellationToken;
 
@@ -39,7 +39,7 @@ pub async fn run_bridge(
     }
 
     let context = Context::new();
-    let (host, port) = split_host_port(&cfg.ws_addr)?;
+    let (host, port) = parse_foxglove_ws_addr(&cfg.ws_addr).map_err(anyhow::Error::from)?;
 
     let bindings = build_packet_bindings(&packets)?;
     log_derived_image_channels(&bindings);
@@ -67,40 +67,6 @@ pub async fn run_bridge(
     packet_task.abort();
     server.stop().wait().await;
     Ok(())
-}
-
-fn split_host_port(raw: &str) -> Result<(String, u16)> {
-    let normalized = raw.trim();
-    if let Some(rest) = normalized.strip_prefix('[') {
-        let (host, suffix) = rest
-            .split_once(']')
-            .ok_or_else(|| anyhow!("invalid ws address: {}", raw))?;
-        if host.is_empty() {
-            return Err(anyhow!("invalid ws address: {}", raw));
-        }
-        let port = parse_ws_port(
-            suffix
-                .strip_prefix(':')
-                .ok_or_else(|| anyhow!("invalid ws address: {}", raw))?,
-            raw,
-        )?;
-        return Ok((host.to_string(), port));
-    }
-
-    let (host, port_raw) = normalized
-        .rsplit_once(':')
-        .ok_or_else(|| anyhow!("invalid ws address: {}", raw))?;
-    if host.is_empty() || host.contains(':') {
-        return Err(anyhow!("invalid ws address: {}", raw));
-    }
-    let port = parse_ws_port(port_raw, raw)?;
-    Ok((host.to_string(), port))
-}
-
-fn parse_ws_port(raw_port: &str, raw_addr: &str) -> Result<u16> {
-    raw_port
-        .parse::<u16>()
-        .with_context(|| format!("invalid ws port in {}", raw_addr))
 }
 
 #[cfg(test)]
@@ -138,26 +104,6 @@ mod tests {
         let schema = packet_schema_json(&sample_fields()).expect("schema");
         assert!(schema.contains("\"w\":{\"type\":\"number\"}"));
         assert!(schema.contains("\"x\":{\"type\":\"number\"}"));
-    }
-
-    #[test]
-    fn split_host_port_supports_hostname_and_ipv4() {
-        let (host, port) = split_host_port("localhost:8765").expect("parse host:port");
-        assert_eq!(host, "localhost");
-        assert_eq!(port, 8765);
-    }
-
-    #[test]
-    fn split_host_port_supports_bracketed_ipv6() {
-        let (host, port) = split_host_port("[::1]:8765").expect("parse ipv6");
-        assert_eq!(host, "::1");
-        assert_eq!(port, 8765);
-    }
-
-    #[test]
-    fn split_host_port_rejects_unbracketed_ipv6() {
-        let err = split_host_port("::1:8765").expect_err("ipv6 must be bracketed");
-        assert!(err.to_string().contains("invalid ws address"));
     }
 
     #[test]

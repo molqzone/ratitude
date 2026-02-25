@@ -11,6 +11,7 @@ pub use model::{
 pub use paths::{resolve_config_paths, ConfigPaths};
 pub use rat_protocol::PacketType;
 pub use store::{load, ConfigStore};
+pub use validate::parse_foxglove_ws_addr;
 
 #[cfg(test)]
 mod tests;

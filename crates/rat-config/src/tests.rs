@@ -145,6 +145,20 @@ fn validate_rejects_invalid_foxglove_ws_addr() {
 }
 
 #[test]
+fn parse_foxglove_ws_addr_supports_hostname_and_ipv4() {
+    let (host, port) = parse_foxglove_ws_addr("localhost:8765").expect("parse host:port");
+    assert_eq!(host, "localhost");
+    assert_eq!(port, 8765);
+}
+
+#[test]
+fn parse_foxglove_ws_addr_supports_bracketed_ipv6() {
+    let (host, port) = parse_foxglove_ws_addr("[::1]:8765").expect("parse ipv6");
+    assert_eq!(host, "::1");
+    assert_eq!(port, 8765);
+}
+
+#[test]
 fn normalize_restores_seed_addrs_when_empty() {
     let mut cfg = RatitudeConfig::default();
     cfg.ratd.source.seed_addrs.clear();

@@ -327,7 +327,7 @@ mod tests {
         let mut codec = ZeroDelimitedFrameCodec::default();
         let mut raw = Vec::new();
         raw.extend_from_slice(JLINK_BANNER_PREFIX);
-        raw.extend(std::iter::repeat(b'A').take(JLINK_BANNER_MAX_BYTES + 32));
+        raw.extend(std::iter::repeat_n(b'A', JLINK_BANNER_MAX_BYTES + 32));
         raw.push(0);
         let mut src = BytesMut::from(raw.as_slice());
 

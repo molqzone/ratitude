@@ -7,6 +7,7 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
+use tracing::warn;
 
 use crate::{PacketEnvelope, PacketPayload};
 
@@ -88,7 +89,13 @@ pub fn spawn_jsonl_writer(
                     }
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    warn!(
+                        sink = sink_key,
+                        skipped, "jsonl writer lagged; dropping packets from hub channel"
+                    );
+                    continue;
+                }
             }
         }
     })
@@ -109,5 +116,85 @@ fn packet_data_json(data: &PacketPayload) -> (Option<JsonRecordData<'_>>, Option
     match data {
         PacketPayload::Text(text) => (Some(JsonRecordData::Text(text)), Some(text)),
         PacketPayload::Dynamic(map) => (Some(JsonRecordData::Dynamic(map)), None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Result as IoResult, Write};
+    use std::sync::{Arc, Mutex};
+    use std::time::SystemTime;
+
+    use tokio::sync::broadcast;
+    use tokio::time::{timeout, Duration};
+
+    use super::{spawn_jsonl_writer, PacketEnvelope, PacketPayload, SinkFailure};
+
+    struct SharedVecWriter {
+        output: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Write for SharedVecWriter {
+        fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+            self.output
+                .lock()
+                .expect("shared writer output lock")
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> IoResult<()> {
+            Ok(())
+        }
+    }
+
+    fn text_packet(id: u8, text: &str) -> PacketEnvelope {
+        PacketEnvelope {
+            id,
+            timestamp: SystemTime::UNIX_EPOCH,
+            payload: vec![id],
+            data: PacketPayload::Text(text.to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn writer_keeps_running_after_lagged_receive_error() {
+        let (tx, _) = broadcast::channel::<PacketEnvelope>(1);
+        let receiver = tx.subscribe();
+        let (failure_tx, mut failure_rx) = broadcast::channel::<SinkFailure>(8);
+
+        tx.send(text_packet(0x01, "first"))
+            .expect("send first packet");
+        tx.send(text_packet(0x02, "second"))
+            .expect("send second packet");
+
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let writer: Box<dyn Write + Send> = Box::new(SharedVecWriter {
+            output: output.clone(),
+        });
+        let writer = Arc::new(Mutex::new(writer));
+
+        let task = spawn_jsonl_writer(receiver, writer, failure_tx, "jsonl");
+
+        tx.send(text_packet(0x03, "third"))
+            .expect("send third packet");
+        drop(tx);
+
+        timeout(Duration::from_secs(1), task)
+            .await
+            .expect("jsonl writer task timed out")
+            .expect("jsonl writer task join failed");
+
+        assert!(
+            failure_rx.try_recv().is_err(),
+            "lagged receive must not report sink failure"
+        );
+
+        let written = String::from_utf8(output.lock().expect("shared writer output lock").clone())
+            .expect("jsonl output must be utf8");
+        assert!(
+            written.contains("\"id\":\"0x02\"") || written.contains("\"id\":\"0x03\""),
+            "writer must keep consuming packets after lagged event; written={written}"
+        );
     }
 }

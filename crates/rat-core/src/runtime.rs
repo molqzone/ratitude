@@ -25,6 +25,12 @@ const SIGNAL_BUFFER: usize = 8;
 pub type RuntimeFieldDef = FieldDef;
 pub type RuntimePacketDef = PacketDef;
 
+#[derive(Clone, Copy, Debug)]
+struct UnknownMonitorConfig {
+    window: Duration,
+    threshold: u32,
+}
+
 #[derive(Clone, Debug)]
 pub struct IngestRuntimeConfig {
     pub addr: String,
@@ -168,6 +174,10 @@ pub async fn start_ingest_runtime(cfg: IngestRuntimeConfig) -> Result<IngestRunt
     let (signals_tx, signals_rx) = mpsc::channel::<RuntimeSignal>(SIGNAL_BUFFER);
 
     let listener_task = spawn_listener(shutdown.clone(), cfg.addr, frame_tx, cfg.listener);
+    let unknown_monitor = UnknownMonitorConfig {
+        window: cfg.unknown_window,
+        threshold: cfg.unknown_threshold,
+    };
 
     let consume_task = spawn_frame_consumer_monitor(
         frame_rx,
@@ -175,8 +185,7 @@ pub async fn start_ingest_runtime(cfg: IngestRuntimeConfig) -> Result<IngestRunt
         protocol,
         shutdown.clone(),
         cfg.schema_timeout,
-        cfg.unknown_window,
-        cfg.unknown_threshold,
+        unknown_monitor,
         signals_tx,
     );
 
@@ -195,8 +204,7 @@ fn spawn_frame_consumer_monitor(
     mut protocol: RatProtocolEngine,
     shutdown: CancellationToken,
     schema_timeout: Duration,
-    unknown_window: Duration,
-    unknown_threshold: u32,
+    unknown_monitor: UnknownMonitorConfig,
     signals: mpsc::Sender<RuntimeSignal>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -206,8 +214,7 @@ fn spawn_frame_consumer_monitor(
             &mut protocol,
             shutdown.clone(),
             schema_timeout,
-            unknown_window,
-            unknown_threshold,
+            unknown_monitor,
             signals.clone(),
         )
         .await;
@@ -231,13 +238,13 @@ async fn run_frame_consumer(
     protocol: &mut RatProtocolEngine,
     shutdown: CancellationToken,
     schema_timeout: Duration,
-    unknown_window: Duration,
-    unknown_threshold: u32,
+    unknown_monitor: UnknownMonitorConfig,
     signals: mpsc::Sender<RuntimeSignal>,
 ) -> Result<(), RuntimeError> {
     let timeout = schema_timeout;
     let mut schema_state = SchemaState::new(timeout);
-    let mut unknown_monitor = UnknownPacketMonitor::new(unknown_window, unknown_threshold);
+    let mut unknown_monitor_state =
+        UnknownPacketMonitor::new(unknown_monitor.window, unknown_monitor.threshold);
 
     loop {
         tokio::select! {
@@ -259,9 +266,9 @@ async fn run_frame_consumer(
                         &payload,
                         &mut schema_state,
                         protocol,
-                        &mut unknown_monitor,
-                        unknown_window,
-                        unknown_threshold,
+                        &mut unknown_monitor_state,
+                        unknown_monitor.window,
+                        unknown_monitor.threshold,
                         &signals,
                     )
                     .await?;
@@ -277,7 +284,7 @@ async fn run_frame_consumer(
                     protocol,
                     id,
                     &payload,
-                    &mut unknown_monitor,
+                    &mut unknown_monitor_state,
                 ) else {
                     continue;
                 };

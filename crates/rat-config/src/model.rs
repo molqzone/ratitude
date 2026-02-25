@@ -25,24 +25,13 @@ pub enum ConfigError {
     Validation(String),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct RatitudeConfig {
     pub project: ProjectConfig,
     pub artifacts: ArtifactsConfig,
     pub generation: GenerationConfig,
     pub ratd: RatdConfig,
-}
-
-impl Default for RatitudeConfig {
-    fn default() -> Self {
-        Self {
-            project: ProjectConfig::default(),
-            artifacts: ArtifactsConfig::default(),
-            generation: GenerationConfig::default(),
-            ratd: RatdConfig::default(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -65,22 +54,12 @@ impl Default for ProjectConfig {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct ArtifactsConfig {
     pub elf: String,
     pub hex: String,
     pub bin: String,
-}
-
-impl Default for ArtifactsConfig {
-    fn default() -> Self {
-        Self {
-            elf: String::new(),
-            hex: String::new(),
-            bin: String::new(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -163,20 +142,11 @@ impl Default for RatdBehaviorConfig {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct RatdOutputsConfig {
     pub jsonl: JsonlOutputConfig,
     pub foxglove: FoxgloveOutputConfig,
-}
-
-impl Default for RatdOutputsConfig {
-    fn default() -> Self {
-        Self {
-            jsonl: JsonlOutputConfig::default(),
-            foxglove: FoxgloveOutputConfig::default(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
