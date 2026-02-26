@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Context, Result};
 use rat_config::RatitudeConfig;
 use rat_core::{RuntimeSignal, SinkFailure};
+use tokio::sync::{broadcast, mpsc};
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -123,53 +124,34 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
 
     let console_shutdown = CancellationToken::new();
     let mut command_rx = spawn_console_reader(console_shutdown.clone());
-    let mut console_attached = true;
-    let mut output_failure_attached = true;
+    let mut attachments = LoopAttachments::new();
     let mut recovery_backoff = SinkRecoveryBackoff::new(OUTPUT_RECOVERY_COOLDOWN);
     let mut sink_recovery_tick = tokio::time::interval(OUTPUT_RECOVERY_COOLDOWN);
     sink_recovery_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
     sink_recovery_tick.tick().await;
 
     let run_result: Result<()> = loop {
-        tokio::select! {
-            ctrl = tokio::signal::ctrl_c() => {
-                match process_ctrl_c(ctrl) {
-                    Ok(()) => break Ok(()),
-                    Err(err) => break Err(err),
-                }
-            }
-            command = command_rx.recv(), if console_attached => {
-                match process_console_event(command, &mut state, &mut output_manager, &mut runtime).await {
-                    Ok(console_event) => {
-                        console_attached = console_event.keep_attached;
-                        if console_event.should_quit {
-                            break Ok(());
-                        }
-                    }
-                    Err(err) => break Err(err),
-                }
-            }
-            maybe_signal = runtime.recv_signal() => {
-                if let Err(err) = process_runtime_signal(
-                    maybe_signal,
-                    &mut state,
-                    &mut output_manager,
-                    &runtime,
-                )
-                .await
-                {
-                    break Err(err);
-                }
-            }
-            sink_failure = output_failure_rx.recv(), if output_failure_attached => {
-                match process_output_failure(sink_failure, &mut output_manager, &mut recovery_backoff) {
-                    Ok(keep_attached) => output_failure_attached = keep_attached,
-                    Err(err) => break Err(err),
-                }
-            }
-            _ = sink_recovery_tick.tick() => {
-                process_periodic_sink_recovery(&mut output_manager, &mut recovery_backoff);
-            }
+        let event = wait_for_daemon_event(
+            &mut command_rx,
+            &mut runtime,
+            &mut output_failure_rx,
+            &mut sink_recovery_tick,
+            attachments,
+        )
+        .await;
+        match process_daemon_event(
+            event,
+            &mut state,
+            &mut output_manager,
+            &mut runtime,
+            &mut attachments,
+            &mut recovery_backoff,
+        )
+        .await
+        {
+            Ok(LoopControl::Continue) => {}
+            Ok(LoopControl::Exit) => break Ok(()),
+            Err(err) => break Err(err),
         }
     };
 
@@ -177,6 +159,90 @@ pub async fn run_daemon(cli: Cli) -> Result<()> {
     output_manager.shutdown().await;
     runtime.shutdown().await;
     run_result
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LoopAttachments {
+    console_attached: bool,
+    output_failure_attached: bool,
+}
+
+impl LoopAttachments {
+    const fn new() -> Self {
+        Self {
+            console_attached: true,
+            output_failure_attached: true,
+        }
+    }
+}
+
+#[derive(Debug)]
+enum DaemonEvent {
+    CtrlC(std::io::Result<()>),
+    ConsoleCommand(Option<crate::console::ConsoleCommand>),
+    RuntimeSignal(Option<RuntimeSignal>),
+    SinkFailure(std::result::Result<SinkFailure, broadcast::error::RecvError>),
+    RecoveryTick,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoopControl {
+    Continue,
+    Exit,
+}
+
+async fn wait_for_daemon_event(
+    command_rx: &mut mpsc::Receiver<crate::console::ConsoleCommand>,
+    runtime: &mut rat_core::IngestRuntime,
+    output_failure_rx: &mut broadcast::Receiver<SinkFailure>,
+    sink_recovery_tick: &mut tokio::time::Interval,
+    attachments: LoopAttachments,
+) -> DaemonEvent {
+    tokio::select! {
+        ctrl = tokio::signal::ctrl_c() => DaemonEvent::CtrlC(ctrl),
+        command = command_rx.recv(), if attachments.console_attached => DaemonEvent::ConsoleCommand(command),
+        maybe_signal = runtime.recv_signal() => DaemonEvent::RuntimeSignal(maybe_signal),
+        sink_failure = output_failure_rx.recv(), if attachments.output_failure_attached => DaemonEvent::SinkFailure(sink_failure),
+        _ = sink_recovery_tick.tick() => DaemonEvent::RecoveryTick,
+    }
+}
+
+async fn process_daemon_event(
+    event: DaemonEvent,
+    state: &mut DaemonState,
+    output_manager: &mut OutputManager,
+    runtime: &mut rat_core::IngestRuntime,
+    attachments: &mut LoopAttachments,
+    recovery_backoff: &mut SinkRecoveryBackoff,
+) -> Result<LoopControl> {
+    match event {
+        DaemonEvent::CtrlC(ctrl) => {
+            process_ctrl_c(ctrl)?;
+            Ok(LoopControl::Exit)
+        }
+        DaemonEvent::ConsoleCommand(command) => {
+            let console_event =
+                process_console_event(command, state, output_manager, runtime).await?;
+            attachments.console_attached = console_event.keep_attached;
+            if console_event.should_quit {
+                return Ok(LoopControl::Exit);
+            }
+            Ok(LoopControl::Continue)
+        }
+        DaemonEvent::RuntimeSignal(signal) => {
+            process_runtime_signal(signal, state, output_manager, runtime).await?;
+            Ok(LoopControl::Continue)
+        }
+        DaemonEvent::SinkFailure(sink_failure) => {
+            attachments.output_failure_attached =
+                process_output_failure(sink_failure, output_manager, recovery_backoff)?;
+            Ok(LoopControl::Continue)
+        }
+        DaemonEvent::RecoveryTick => {
+            process_periodic_sink_recovery(output_manager, recovery_backoff);
+            Ok(LoopControl::Continue)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

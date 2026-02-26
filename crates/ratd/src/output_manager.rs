@@ -340,22 +340,12 @@ impl OutputManager {
     pub fn refresh_unhealthy_sinks(&mut self) {
         let desired = &self.desired;
         let context = self.context.as_ref();
-        let mut healthy = Vec::new();
-        let mut unhealthy = Vec::new();
-
         for entry in &self.sinks {
             if entry.sink.is_healthy(desired, context) {
-                healthy.push(entry.key);
+                self.unhealthy_sinks.remove(entry.key);
             } else {
-                unhealthy.push(entry.key);
+                self.unhealthy_sinks.insert(entry.key);
             }
-        }
-
-        for sink_key in healthy {
-            self.unhealthy_sinks.remove(sink_key);
-        }
-        for sink_key in unhealthy {
-            self.unhealthy_sinks.insert(sink_key);
         }
     }
 

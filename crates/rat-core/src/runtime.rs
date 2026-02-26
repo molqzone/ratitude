@@ -298,7 +298,7 @@ async fn run_frame_consumer(
 }
 
 fn decode_transport_frame(frame: &[u8]) -> Option<(u8, Vec<u8>)> {
-    let decoded = match decode_frame(frame) {
+    let mut decoded = match decode_frame(frame) {
         Ok(decoded) => decoded,
         Err(err) => {
             debug!(
@@ -313,9 +313,8 @@ fn decode_transport_frame(frame: &[u8]) -> Option<(u8, Vec<u8>)> {
         return None;
     }
 
-    let id = decoded[0];
-    let payload = decoded[1..].to_vec();
-    Some((id, payload))
+    let id = decoded.remove(0);
+    Some((id, decoded))
 }
 
 async fn handle_control_frame(
