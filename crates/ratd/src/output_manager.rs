@@ -372,55 +372,61 @@ impl OutputManager {
             return Err(anyhow!("unknown sink key in OutputManager: {}", sink_key));
         };
         entry.sink.force_reconcile();
-        let sync_result = entry
-            .sink
-            .sync(&self.desired, self.context.as_ref(), &self.failure_tx);
-        match sync_result {
-            Ok(()) => {
-                self.unhealthy_sinks.remove(entry.key);
-                Ok(())
-            }
-            Err(err) => {
-                self.unhealthy_sinks.insert(entry.key);
-                Err(err)
-            }
-        }
+        reconcile_sink(
+            entry,
+            &self.desired,
+            self.context.as_ref(),
+            &self.failure_tx,
+            &mut self.unhealthy_sinks,
+        )
     }
 
     fn reconcile_all_strict(&mut self) -> Result<()> {
         for entry in &mut self.sinks {
-            let sync_result =
-                entry
-                    .sink
-                    .sync(&self.desired, self.context.as_ref(), &self.failure_tx);
-            match sync_result {
-                Ok(()) => {
-                    self.unhealthy_sinks.remove(entry.key);
-                }
-                Err(err) => {
-                    self.unhealthy_sinks.insert(entry.key);
-                    return Err(err);
-                }
-            }
+            reconcile_sink(
+                entry,
+                &self.desired,
+                self.context.as_ref(),
+                &self.failure_tx,
+                &mut self.unhealthy_sinks,
+            )?;
         }
         Ok(())
     }
 
     fn reconcile_all_non_fatal(&mut self) {
         for entry in &mut self.sinks {
-            if let Err(err) =
-                entry
-                    .sink
-                    .sync(&self.desired, self.context.as_ref(), &self.failure_tx)
-            {
-                self.unhealthy_sinks.insert(entry.key);
+            if let Err(err) = reconcile_sink(
+                entry,
+                &self.desired,
+                self.context.as_ref(),
+                &self.failure_tx,
+                &mut self.unhealthy_sinks,
+            ) {
                 let _ = self.failure_tx.send(SinkFailure {
                     sink_key: entry.key,
                     reason: format!("output sink apply failed: {err}"),
                 });
-            } else {
-                self.unhealthy_sinks.remove(entry.key);
             }
+        }
+    }
+}
+
+fn reconcile_sink(
+    entry: &mut RegisteredSink,
+    desired: &OutputState,
+    context: Option<&SinkContext>,
+    failure_tx: &broadcast::Sender<SinkFailure>,
+    unhealthy_sinks: &mut BTreeSet<&'static str>,
+) -> Result<()> {
+    match entry.sink.sync(desired, context, failure_tx) {
+        Ok(()) => {
+            unhealthy_sinks.remove(entry.key);
+            Ok(())
+        }
+        Err(err) => {
+            unhealthy_sinks.insert(entry.key);
+            Err(err)
         }
     }
 }

@@ -88,20 +88,21 @@ pub(crate) fn read_generated_header_packets(path: &Path) -> Result<Vec<PacketDef
 }
 
 pub(crate) fn macroize_struct_name(value: &str) -> String {
-    let mut out = String::new();
+    let mut out = String::with_capacity(value.len());
+    let mut prev_separator = true;
     for ch in value.chars() {
         if ch.is_ascii_alphanumeric() {
             out.push(ch.to_ascii_uppercase());
-        } else {
+            prev_separator = false;
+        } else if !prev_separator {
             out.push('_');
+            prev_separator = true;
         }
     }
-
-    while out.contains("__") {
-        out = out.replace("__", "_");
+    if out.ends_with('_') {
+        out.pop();
     }
-
-    out.trim_matches('_').to_string()
+    out
 }
 
 fn emit_schema_bytes(out: &mut String, schema_bytes: &[u8]) {
@@ -283,6 +284,14 @@ mod tests {
 
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn macroize_struct_name_collapses_non_alnum_runs() {
+        assert_eq!(macroize_struct_name("DemoPacket"), "DEMOPACKET");
+        assert_eq!(macroize_struct_name("Demo__Packet"), "DEMO_PACKET");
+        assert_eq!(macroize_struct_name("  __Demo---Packet__  "), "DEMO_PACKET");
+        assert_eq!(macroize_struct_name("__"), "");
     }
 
     #[test]
