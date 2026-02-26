@@ -29,7 +29,49 @@ fn identifier_tokens_ascii_lowercase(value: &str) -> Vec<String> {
     out
 }
 
+fn parse_parenthesized(raw: &str, open_idx: usize) -> Option<(usize, String)> {
+    let bytes = raw.as_bytes();
+    if bytes.get(open_idx) != Some(&b'(') {
+        return None;
+    }
+
+    let mut depth = 0usize;
+    let mut idx = open_idx;
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b'(' => depth = depth.saturating_add(1),
+            b')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    let inner = raw[open_idx + 1..idx].to_string();
+                    return Some((idx + 1, inner));
+                }
+            }
+            _ => {}
+        }
+        idx += 1;
+    }
+    None
+}
+
+fn attribute_tokens_ascii_lowercase(compact: &str) -> Vec<String> {
+    const ATTRIBUTE_TAG: &str = "__attribute__";
+
+    let mut out = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(hit) = compact[cursor..].find(ATTRIBUTE_TAG) {
+        let start = cursor + hit + ATTRIBUTE_TAG.len();
+        let Some((next, args)) = parse_parenthesized(compact, start) else {
+            break;
+        };
+        out.extend(identifier_tokens_ascii_lowercase(&args));
+        cursor = next;
+    }
+    out
+}
+
 pub(crate) fn detect_packed_layout(raw_typedef: &str) -> bool {
+    let compact = compact_ascii_lowercase(raw_typedef);
     let tokens = identifier_tokens_ascii_lowercase(raw_typedef);
     if tokens
         .iter()
@@ -38,18 +80,9 @@ pub(crate) fn detect_packed_layout(raw_typedef: &str) -> bool {
         return true;
     }
 
-    let mut saw_attribute = false;
-    for token in &tokens {
-        if token == "__attribute__" {
-            saw_attribute = true;
-            continue;
-        }
-        if saw_attribute && (token == "packed" || token == "__packed" || token == "__packed__") {
-            return true;
-        }
-    }
-
-    false
+    attribute_tokens_ascii_lowercase(&compact)
+        .into_iter()
+        .any(|token| token == "packed" || token == "__packed" || token == "__packed__")
 }
 
 pub(crate) fn validate_layout_modifiers(

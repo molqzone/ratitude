@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
@@ -259,8 +259,9 @@ pub struct OutputManager {
     desired: OutputState,
     context: Option<SinkContext>,
     sinks: Vec<RegisteredSink>,
+    sink_index_by_key: HashMap<&'static str, usize>,
     failure_tx: broadcast::Sender<SinkFailure>,
-    unhealthy_sinks: BTreeSet<&'static str>,
+    unhealthy_sinks: BTreeSet<usize>,
 }
 
 impl OutputManager {
@@ -268,12 +269,13 @@ impl OutputManager {
         let desired = output_state_from_config(cfg);
         let (failure_tx, _failure_rx) = broadcast::channel::<SinkFailure>(64);
 
-        let sinks = build_registered_sinks(default_sinks())?;
+        let (sinks, sink_index_by_key) = build_registered_sinks(default_sinks())?;
 
         Ok(Self {
             desired,
             context: None,
             sinks,
+            sink_index_by_key,
             failure_tx,
             unhealthy_sinks: BTreeSet::new(),
         })
@@ -282,11 +284,12 @@ impl OutputManager {
     #[cfg(test)]
     fn with_sinks_for_test(desired: OutputState, sinks: Vec<Box<dyn PacketSink>>) -> Result<Self> {
         let (failure_tx, _failure_rx) = broadcast::channel::<SinkFailure>(64);
-        let registered = build_registered_sinks(sinks)?;
+        let (registered, sink_index_by_key) = build_registered_sinks(sinks)?;
         Ok(Self {
             desired,
             context: None,
             sinks: registered,
+            sink_index_by_key,
             failure_tx,
             unhealthy_sinks: BTreeSet::new(),
         })
@@ -334,35 +337,48 @@ impl OutputManager {
     }
 
     pub fn unhealthy_sink_keys(&self) -> Vec<&'static str> {
-        self.unhealthy_sinks.iter().copied().collect()
+        let mut keys = self
+            .unhealthy_sinks
+            .iter()
+            .filter_map(|index| self.sinks.get(*index).map(|entry| entry.key))
+            .collect::<Vec<_>>();
+        keys.sort_unstable();
+        keys
     }
 
     pub fn refresh_unhealthy_sinks(&mut self) {
         let desired = &self.desired;
         let context = self.context.as_ref();
-        for entry in &self.sinks {
+        for (index, entry) in self.sinks.iter().enumerate() {
             if entry.sink.is_healthy(desired, context) {
-                self.unhealthy_sinks.remove(entry.key);
+                self.unhealthy_sinks.remove(&index);
             } else {
-                self.unhealthy_sinks.insert(entry.key);
+                self.unhealthy_sinks.insert(index);
             }
         }
     }
 
     pub fn mark_sink_unhealthy(&mut self, sink_key: &'static str) -> bool {
-        let exists = self.sinks.iter().any(|entry| entry.key == sink_key);
-        if exists {
-            self.unhealthy_sinks.insert(sink_key);
-        }
-        exists
+        let Some(index) = self.sink_index_by_key.get(sink_key).copied() else {
+            return false;
+        };
+        self.unhealthy_sinks.insert(index);
+        true
     }
 
     pub fn recover_sink_after_failure(&mut self, sink_key: &str) -> Result<()> {
-        let Some(entry) = self.sinks.iter_mut().find(|entry| entry.key == sink_key) else {
+        let Some(index) = self.sink_index_by_key.get(sink_key).copied() else {
             return Err(anyhow!("unknown sink key in OutputManager: {}", sink_key));
+        };
+        let Some(entry) = self.sinks.get_mut(index) else {
+            return Err(anyhow!(
+                "sink index missing for key in OutputManager: {}",
+                sink_key
+            ));
         };
         entry.sink.force_reconcile();
         reconcile_sink(
+            index,
             entry,
             &self.desired,
             self.context.as_ref(),
@@ -372,8 +388,9 @@ impl OutputManager {
     }
 
     fn reconcile_all_strict(&mut self) -> Result<()> {
-        for entry in &mut self.sinks {
+        for (index, entry) in self.sinks.iter_mut().enumerate() {
             reconcile_sink(
+                index,
                 entry,
                 &self.desired,
                 self.context.as_ref(),
@@ -385,8 +402,9 @@ impl OutputManager {
     }
 
     fn reconcile_all_non_fatal(&mut self) {
-        for entry in &mut self.sinks {
+        for (index, entry) in self.sinks.iter_mut().enumerate() {
             if let Err(err) = reconcile_sink(
+                index,
                 entry,
                 &self.desired,
                 self.context.as_ref(),
@@ -403,19 +421,20 @@ impl OutputManager {
 }
 
 fn reconcile_sink(
+    sink_index: usize,
     entry: &mut RegisteredSink,
     desired: &OutputState,
     context: Option<&SinkContext>,
     failure_tx: &broadcast::Sender<SinkFailure>,
-    unhealthy_sinks: &mut BTreeSet<&'static str>,
+    unhealthy_sinks: &mut BTreeSet<usize>,
 ) -> Result<()> {
     match entry.sink.sync(desired, context, failure_tx) {
         Ok(()) => {
-            unhealthy_sinks.remove(entry.key);
+            unhealthy_sinks.remove(&sink_index);
             Ok(())
         }
         Err(err) => {
-            unhealthy_sinks.insert(entry.key);
+            unhealthy_sinks.insert(sink_index);
             Err(err)
         }
     }
@@ -439,21 +458,29 @@ fn default_sinks() -> Vec<Box<dyn PacketSink>> {
     vec![Box::new(JsonlSink::new()), Box::new(FoxgloveSink::new())]
 }
 
-fn build_registered_sinks(sinks: Vec<Box<dyn PacketSink>>) -> Result<Vec<RegisteredSink>> {
+fn build_registered_sinks(
+    sinks: Vec<Box<dyn PacketSink>>,
+) -> Result<(Vec<RegisteredSink>, HashMap<&'static str, usize>)> {
     let mut registered = Vec::new();
+    let mut sink_index_by_key = HashMap::new();
     for sink in sinks {
-        register_sink(&mut registered, sink)?;
+        register_sink(&mut registered, &mut sink_index_by_key, sink)?;
     }
-    Ok(registered)
+    Ok((registered, sink_index_by_key))
 }
 
-fn register_sink(sinks: &mut Vec<RegisteredSink>, sink: Box<dyn PacketSink>) -> Result<()> {
+fn register_sink(
+    sinks: &mut Vec<RegisteredSink>,
+    sink_index_by_key: &mut HashMap<&'static str, usize>,
+    sink: Box<dyn PacketSink>,
+) -> Result<()> {
     let key = sink.key();
-    let duplicate = sinks.iter().any(|entry| entry.key == key);
-    if duplicate {
+    if sink_index_by_key.contains_key(&key) {
         return Err(anyhow!("duplicate sink key in OutputManager: {}", key));
     }
+    let index = sinks.len();
     sinks.push(RegisteredSink { key, sink });
+    sink_index_by_key.insert(key, index);
     Ok(())
 }
 

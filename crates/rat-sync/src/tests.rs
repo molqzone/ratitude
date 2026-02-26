@@ -240,6 +240,13 @@ fn packed_detection_is_explicit() {
 
     let packed_keyword = "typedef __packed struct { int32_t value; } Foo;";
     assert!(detect_packed_layout(packed_keyword));
+
+    let aligned_attr = "typedef struct __attribute__((aligned(8))) { int32_t packed; } Foo;";
+    assert!(!detect_packed_layout(aligned_attr));
+
+    let non_packed_mixed_attr =
+        "typedef struct __attribute__((aligned(8), section(\"packeds\"))) { int32_t value; } Foo;";
+    assert!(!detect_packed_layout(non_packed_mixed_attr));
 }
 
 #[test]
