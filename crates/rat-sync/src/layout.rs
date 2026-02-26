@@ -11,48 +11,45 @@ fn compact_ascii_lowercase(value: &str) -> String {
         .collect()
 }
 
-fn is_identifier_byte(byte: u8) -> bool {
-    byte == b'_' || byte.is_ascii_alphanumeric()
-}
-
-fn contains_identifier_token(haystack: &str, token: &str) -> bool {
-    let haystack_bytes = haystack.as_bytes();
-    let token_bytes = token.as_bytes();
-    if token_bytes.is_empty() || token_bytes.len() > haystack_bytes.len() {
-        return false;
-    }
-
-    for idx in 0..=(haystack_bytes.len() - token_bytes.len()) {
-        if &haystack_bytes[idx..idx + token_bytes.len()] != token_bytes {
+fn identifier_tokens_ascii_lowercase(value: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut token = String::new();
+    for ch in value.chars() {
+        if ch == '_' || ch.is_ascii_alphanumeric() {
+            token.push(ch.to_ascii_lowercase());
             continue;
         }
+        if !token.is_empty() {
+            out.push(std::mem::take(&mut token));
+        }
+    }
+    if !token.is_empty() {
+        out.push(token);
+    }
+    out
+}
 
-        let left_ok = idx == 0 || !is_identifier_byte(haystack_bytes[idx - 1]);
-        let right_idx = idx + token_bytes.len();
-        let right_ok =
-            right_idx == haystack_bytes.len() || !is_identifier_byte(haystack_bytes[right_idx]);
-        if left_ok && right_ok {
+pub(crate) fn detect_packed_layout(raw_typedef: &str) -> bool {
+    let tokens = identifier_tokens_ascii_lowercase(raw_typedef);
+    if tokens
+        .iter()
+        .any(|token| token == "__packed" || token == "__packed__")
+    {
+        return true;
+    }
+
+    let mut saw_attribute = false;
+    for token in &tokens {
+        if token == "__attribute__" {
+            saw_attribute = true;
+            continue;
+        }
+        if saw_attribute && (token == "packed" || token == "__packed" || token == "__packed__") {
             return true;
         }
     }
 
     false
-}
-
-pub(crate) fn detect_packed_layout(raw_typedef: &str) -> bool {
-    let lowered = raw_typedef.to_ascii_lowercase();
-    let compact = compact_ascii_lowercase(raw_typedef);
-    if compact.contains("__attribute__((packed") || compact.contains("__attribute__((__packed__") {
-        return true;
-    }
-    contains_identifier_token(&lowered, "__packed")
-        || contains_identifier_token(&lowered, "__packed__")
-        || compact.contains("__packedstruct")
-        || compact.contains("__packed__struct")
-        || compact.contains("struct__packed")
-        || compact.contains("struct__packed__")
-        || contains_identifier_token(&compact, "__packed")
-        || contains_identifier_token(&compact, "__packed__")
 }
 
 pub(crate) fn validate_layout_modifiers(

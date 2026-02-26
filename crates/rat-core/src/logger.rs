@@ -5,7 +5,7 @@ use serde::Serialize;
 use serde_json::Value;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tracing::warn;
 
@@ -35,6 +35,8 @@ enum JsonRecordData<'a> {
     Dynamic(&'a serde_json::Map<String, Value>),
 }
 
+const JSONL_WRITE_QUEUE_CAP: usize = 256;
+
 pub fn spawn_jsonl_writer(
     mut receiver: broadcast::Receiver<PacketEnvelope>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
@@ -42,6 +44,41 @@ pub fn spawn_jsonl_writer(
     sink_key: &'static str,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
+        let (line_tx, mut line_rx) = mpsc::channel::<Vec<u8>>(JSONL_WRITE_QUEUE_CAP);
+        let writer = Arc::clone(&writer);
+        let writer_failure_tx = failure_tx.clone();
+        let writer_task = tokio::task::spawn_blocking(move || {
+            while let Some(line) = line_rx.blocking_recv() {
+                let mut guard = match writer.lock() {
+                    Ok(guard) => guard,
+                    Err(err) => {
+                        report_sink_failure(
+                            &writer_failure_tx,
+                            sink_key,
+                            format!("jsonl writer lock poisoned: {err}"),
+                        );
+                        return;
+                    }
+                };
+                if let Err(err) = guard.write_all(&line) {
+                    report_sink_failure(
+                        &writer_failure_tx,
+                        sink_key,
+                        format!("write jsonl record failed: {err}"),
+                    );
+                    return;
+                }
+                if let Err(err) = guard.write_all(b"\n") {
+                    report_sink_failure(
+                        &writer_failure_tx,
+                        sink_key,
+                        format!("write jsonl newline failed: {err}"),
+                    );
+                    return;
+                }
+            }
+        });
+
         loop {
             match receiver.recv().await {
                 Ok(packet) => {
@@ -56,35 +93,20 @@ pub fn spawn_jsonl_writer(
                     let line = match serde_json::to_string(&record) {
                         Ok(line) => line,
                         Err(err) => {
-                            let _ = failure_tx.send(SinkFailure {
+                            report_sink_failure(
+                                &failure_tx,
                                 sink_key,
-                                reason: format!("serialize jsonl record failed: {err}"),
-                            });
+                                format!("serialize jsonl record failed: {err}"),
+                            );
                             break;
                         }
                     };
-                    let mut guard = match writer.lock() {
-                        Ok(guard) => guard,
-                        Err(err) => {
-                            let _ = failure_tx.send(SinkFailure {
-                                sink_key,
-                                reason: format!("jsonl writer lock poisoned: {err}"),
-                            });
-                            break;
-                        }
-                    };
-                    if let Err(err) = guard.write_all(line.as_bytes()) {
-                        let _ = failure_tx.send(SinkFailure {
+                    if line_tx.send(line.into_bytes()).await.is_err() {
+                        report_sink_failure(
+                            &failure_tx,
                             sink_key,
-                            reason: format!("write jsonl record failed: {err}"),
-                        });
-                        break;
-                    }
-                    if let Err(err) = guard.write_all(b"\n") {
-                        let _ = failure_tx.send(SinkFailure {
-                            sink_key,
-                            reason: format!("write jsonl newline failed: {err}"),
-                        });
+                            "jsonl writer worker stopped before runtime shutdown".to_string(),
+                        );
                         break;
                     }
                 }
@@ -98,7 +120,26 @@ pub fn spawn_jsonl_writer(
                 }
             }
         }
+
+        drop(line_tx);
+        if let Err(err) = writer_task.await {
+            if !err.is_cancelled() {
+                report_sink_failure(
+                    &failure_tx,
+                    sink_key,
+                    format!("jsonl writer worker join failed: {err}"),
+                );
+            }
+        }
     })
+}
+
+fn report_sink_failure(
+    failure_tx: &broadcast::Sender<SinkFailure>,
+    sink_key: &'static str,
+    reason: String,
+) {
+    let _ = failure_tx.send(SinkFailure { sink_key, reason });
 }
 
 fn format_timestamp(ts: std::time::SystemTime) -> String {
