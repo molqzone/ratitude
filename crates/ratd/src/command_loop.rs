@@ -53,6 +53,13 @@ pub(crate) async fn handle_console_command(
                 render_candidates(state.source().candidates());
                 return Ok(action);
             };
+            if !candidate.reachable {
+                println!(
+                    "source {} is unreachable; keep current source",
+                    candidate.addr
+                );
+                return Ok(action);
+            }
 
             let mut next = state.config().clone();
             next.ratd.source.last_selected_addr = candidate.addr.clone();

@@ -171,6 +171,56 @@ async fn source_use_revalidates_index_against_refreshed_candidates() {
 }
 
 #[tokio::test]
+async fn source_use_rejects_unreachable_candidate_after_refresh() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let reachable_addr = listener.local_addr().expect("local addr").to_string();
+    let unreachable_addr = "127.0.0.1:65535".to_string();
+
+    let mut cfg = RatitudeConfig::default();
+    cfg.ratd.source.auto_scan = true;
+    cfg.ratd.source.scan_timeout_ms = 10;
+    cfg.ratd.source.last_selected_addr = reachable_addr.clone();
+    cfg.ratd.source.seed_addrs = vec![reachable_addr.clone(), unreachable_addr.clone()];
+
+    let original_active = reachable_addr.clone();
+    let mut state = DaemonState::new(
+        String::new(),
+        cfg.clone(),
+        SourceDomainState::new(
+            vec![
+                SourceCandidate {
+                    addr: reachable_addr.clone(),
+                    reachable: true,
+                },
+                SourceCandidate {
+                    addr: unreachable_addr.clone(),
+                    reachable: true,
+                },
+            ],
+            original_active.clone(),
+        ),
+    );
+    let mut output_manager = OutputManager::from_config(&cfg).expect("build output manager");
+    let action = handle_console_command(
+        ConsoleCommand::SourceUse(1),
+        &mut state,
+        &mut output_manager,
+    )
+    .await
+    .expect("source use should not fail");
+
+    assert!(!action.should_quit);
+    assert!(
+        !action.restart_runtime,
+        "unreachable candidate must not trigger restart"
+    );
+    assert_eq!(state.source().active_addr(), original_active);
+    assert_eq!(state.source().candidates().len(), 2);
+    assert!(state.source().candidates()[0].reachable);
+    assert!(!state.source().candidates()[1].reachable);
+}
+
+#[tokio::test]
 async fn output_commands_apply_without_runtime_restart() {
     let dir = unique_temp_dir("ratd_output_command_apply");
     let config_path = dir.join("rat.toml");
