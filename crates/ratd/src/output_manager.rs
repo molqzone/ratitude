@@ -161,6 +161,8 @@ struct FoxgloveSink {
     task: Option<JoinHandle<()>>,
     shutdown: Option<CancellationToken>,
     last_state: Option<FoxgloveRuntimeState>,
+    #[cfg(test)]
+    restart_count: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -176,6 +178,8 @@ impl FoxgloveSink {
             task: None,
             shutdown: None,
             last_state: None,
+            #[cfg(test)]
+            restart_count: 0,
         }
     }
 }
@@ -200,6 +204,12 @@ impl PacketSink for FoxgloveSink {
             return Ok(());
         }
 
+        if self.task.is_some() {
+            #[cfg(test)]
+            {
+                self.restart_count = self.restart_count.saturating_add(1);
+            }
+        }
         self.shutdown();
 
         if !next_state.enabled {

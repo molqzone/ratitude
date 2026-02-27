@@ -498,6 +498,46 @@ async fn jsonl_sink_restarts_when_task_finished_even_if_state_unchanged() {
 }
 
 #[tokio::test]
+async fn foxglove_sink_restarts_when_task_finished_even_if_state_unchanged() {
+    let desired = OutputState {
+        jsonl_enabled: false,
+        jsonl_path: None,
+        foxglove_enabled: true,
+        foxglove_ws_addr: "127.0.0.1:8765".to_string(),
+    };
+    let (failure_tx, _failure_rx) = tokio::sync::broadcast::channel::<SinkFailure>(8);
+    let mut sink = FoxgloveSink::new();
+    let context = SinkContext {
+        hub: Hub::new(8),
+        packets: Vec::new(),
+        key: SinkContextKey {
+            runtime_generation: 3,
+            schema_hash: 0xAA,
+        },
+    };
+
+    sink.sync(&desired, Some(&context), &failure_tx)
+        .expect("first sync");
+    sink.task
+        .as_ref()
+        .expect("foxglove task should exist")
+        .abort();
+    tokio::task::yield_now().await;
+    assert!(
+        sink.task
+            .as_ref()
+            .is_some_and(tokio::task::JoinHandle::is_finished),
+        "precondition: task should be finished after abort"
+    );
+
+    sink.sync(&desired, Some(&context), &failure_tx)
+        .expect("resync should restart finished task");
+    assert_eq!(sink.restart_count, 1, "finished task must trigger restart");
+
+    sink.shutdown();
+}
+
+#[tokio::test]
 async fn jsonl_apply_across_runtime_generations_keeps_existing_file_content() {
     let dir = unique_temp_dir("ratd_jsonl_append");
     let jsonl_path = dir.join("packets.jsonl");

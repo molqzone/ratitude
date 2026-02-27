@@ -267,6 +267,10 @@ fn packed_detection_is_explicit() {
         "typedef struct __attribute__((aligned(8), // not packed here\n packed)) { int32_t value; } Foo;";
     assert!(detect_packed_layout(packed_after_line_comment_attr));
 
+    let packed_after_noncall_attribute_tag =
+        "typedef struct /* __attribute__ marker */ __attribute__((packed)) { int32_t value; } Foo;";
+    assert!(detect_packed_layout(packed_after_noncall_attribute_tag));
+
     let packed_keyword_in_comment = "typedef struct { int32_t value; } Foo; // __packed";
     assert!(!detect_packed_layout(packed_keyword_in_comment));
 

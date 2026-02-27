@@ -261,13 +261,15 @@ fn attribute_tokens_ascii_lowercase(lowered: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cursor = 0usize;
     while let Some(hit) = lowered[cursor..].find(ATTRIBUTE_TAG) {
-        let mut start = cursor + hit + ATTRIBUTE_TAG.len();
+        let tag_end = cursor + hit + ATTRIBUTE_TAG.len();
+        let mut start = tag_end;
         while matches!(bytes.get(start), Some(byte) if byte.is_ascii_whitespace()) {
             start += 1;
         }
 
         let Some((next, args)) = parse_parenthesized(lowered, start) else {
-            break;
+            cursor = tag_end;
+            continue;
         };
         out.extend(identifier_tokens_without_literals_and_comments_ascii_lowercase(&args));
         cursor = next;
