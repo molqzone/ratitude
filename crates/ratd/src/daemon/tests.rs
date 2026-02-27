@@ -221,6 +221,104 @@ async fn source_use_rejects_unreachable_candidate_after_refresh() {
 }
 
 #[tokio::test]
+async fn source_use_same_active_source_does_not_restart_runtime() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local addr").to_string();
+
+    let mut cfg = RatitudeConfig::default();
+    cfg.ratd.source.auto_scan = false;
+    cfg.ratd.source.scan_timeout_ms = 100;
+    cfg.ratd.source.last_selected_addr = addr.clone();
+
+    let mut state = DaemonState::new(
+        String::new(),
+        cfg.clone(),
+        SourceDomainState::new(
+            vec![SourceCandidate {
+                addr: addr.clone(),
+                reachable: true,
+            }],
+            addr.clone(),
+        ),
+    );
+    let mut output_manager = OutputManager::from_config(&cfg).expect("build output manager");
+    let action = handle_console_command(
+        ConsoleCommand::SourceUse(0),
+        &mut state,
+        &mut output_manager,
+    )
+    .await
+    .expect("source use");
+
+    assert!(!action.should_quit);
+    assert!(
+        !action.restart_runtime,
+        "reselecting the active source should not restart runtime"
+    );
+    assert_eq!(state.source().active_addr(), addr);
+}
+
+#[tokio::test]
+async fn source_use_persists_new_last_selected_without_restart_when_active_unchanged() {
+    let dir = unique_temp_dir("ratd_source_use_persist_without_restart");
+    let config_path = dir.join("rat.toml");
+    let config_path_str = config_path.to_string_lossy().to_string();
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let reachable_addr = listener.local_addr().expect("local addr").to_string();
+    let stale_addr = "127.0.0.1:65535".to_string();
+
+    let mut cfg = RatitudeConfig::default();
+    cfg.ratd.source.auto_scan = true;
+    cfg.ratd.source.scan_timeout_ms = 10;
+    cfg.ratd.source.last_selected_addr = stale_addr.clone();
+    cfg.ratd.source.seed_addrs = vec![reachable_addr.clone()];
+    ConfigStore::new(&config_path)
+        .save(&cfg)
+        .expect("save config");
+
+    let mut state = DaemonState::new(
+        config_path_str.clone(),
+        cfg.clone(),
+        SourceDomainState::new(
+            vec![SourceCandidate {
+                addr: reachable_addr.clone(),
+                reachable: true,
+            }],
+            reachable_addr.clone(),
+        ),
+    );
+    let mut output_manager = OutputManager::from_config(&cfg).expect("build output manager");
+    let action = handle_console_command(
+        ConsoleCommand::SourceUse(0),
+        &mut state,
+        &mut output_manager,
+    )
+    .await
+    .expect("source use");
+
+    assert!(!action.should_quit);
+    assert!(
+        !action.restart_runtime,
+        "persist-only selection should not restart runtime"
+    );
+    assert_eq!(state.source().active_addr(), reachable_addr);
+    assert_eq!(
+        state.config().ratd.source.last_selected_addr,
+        state.source().active_addr()
+    );
+
+    let saved = ConfigStore::new(&config_path).load().expect("load config");
+    assert_eq!(
+        saved.ratd.source.last_selected_addr,
+        state.source().active_addr()
+    );
+
+    let _ = fs::remove_file(&config_path);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
 async fn output_commands_apply_without_runtime_restart() {
     let dir = unique_temp_dir("ratd_output_command_apply");
     let config_path = dir.join("rat.toml");

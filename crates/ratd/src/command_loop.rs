@@ -61,11 +61,22 @@ pub(crate) async fn handle_console_command(
                 return Ok(action);
             }
 
+            let selected_addr = candidate.addr.clone();
             let mut next = state.config().clone();
-            next.ratd.source.last_selected_addr = candidate.addr.clone();
-            save_config(state.config_path(), &next).await?;
-            state.replace_config(next);
-            state.source_mut().set_active_addr(candidate.addr.clone());
+            let config_changed = next.ratd.source.last_selected_addr.trim() != selected_addr;
+            if config_changed {
+                next.ratd.source.last_selected_addr = selected_addr.clone();
+                save_config(state.config_path(), &next).await?;
+                state.replace_config(next);
+            }
+
+            let active_changed = state.source().active_addr() != selected_addr;
+            if !active_changed {
+                println!("selected source unchanged: {}", selected_addr);
+                return Ok(action);
+            }
+
+            state.source_mut().set_active_addr(selected_addr);
             println!("selected source: {}", state.source().active_addr());
             action.restart_runtime = true;
         }
