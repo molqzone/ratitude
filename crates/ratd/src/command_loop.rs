@@ -147,6 +147,9 @@ where
     let previous = state.config().clone();
     let mut next = previous.clone();
     mutate(&mut next);
+    if next == previous {
+        return Ok(());
+    }
 
     if let Err(apply_err) = output_manager.reload_from_config(&next) {
         return Err(rollback_output_state(

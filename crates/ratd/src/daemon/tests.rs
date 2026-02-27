@@ -361,6 +361,54 @@ async fn output_commands_apply_without_runtime_restart() {
 }
 
 #[tokio::test]
+async fn output_noop_command_does_not_rewrite_config_file() {
+    let dir = unique_temp_dir("ratd_output_noop_read_only");
+    let config_path = dir.join("rat.toml");
+    let config_path_str = config_path.to_string_lossy().to_string();
+    let raw = r#"# keep comment and formatting
+[project]
+name = "demo"
+scan_root = "."
+recursive = true
+extensions = [".c", ".h"]
+
+[generation]
+out_dir = "."
+header_name = "rat_gen.h"
+
+[ratd]
+text_id = 255
+"#;
+    fs::write(&config_path, raw).expect("write config");
+
+    let cfg = load_config(&config_path_str).await.expect("load config");
+    let mut state = DaemonState::new(
+        config_path_str.clone(),
+        cfg.clone(),
+        SourceDomainState::new(Vec::new(), "127.0.0.1:19021".to_string()),
+    );
+    let mut output_manager = OutputManager::from_config(&cfg).expect("build output manager");
+    let action = handle_console_command(
+        ConsoleCommand::Jsonl {
+            enabled: cfg.ratd.outputs.jsonl.enabled,
+            path: None,
+        },
+        &mut state,
+        &mut output_manager,
+    )
+    .await
+    .expect("noop jsonl command");
+    assert!(!action.should_quit);
+    assert!(!action.restart_runtime);
+
+    let after = fs::read_to_string(&config_path).expect("read config");
+    assert_eq!(after, raw);
+
+    let _ = fs::remove_file(&config_path);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
 async fn jsonl_command_failure_does_not_persist_invalid_config() {
     let dir = unique_temp_dir("ratd_jsonl_command_rollback");
     let config_path = dir.join("rat.toml");
