@@ -11,24 +11,6 @@ fn compact_ascii_lowercase(value: &str) -> String {
         .collect()
 }
 
-fn identifier_tokens_ascii_lowercase(value: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut token = String::new();
-    for ch in value.chars() {
-        if ch == '_' || ch.is_ascii_alphanumeric() {
-            token.push(ch.to_ascii_lowercase());
-            continue;
-        }
-        if !token.is_empty() {
-            out.push(std::mem::take(&mut token));
-        }
-    }
-    if !token.is_empty() {
-        out.push(token);
-    }
-    out
-}
-
 fn identifier_tokens_without_literals_and_comments_ascii_lowercase(value: &str) -> Vec<String> {
     let bytes = value.as_bytes();
     let mut out = Vec::new();
@@ -295,7 +277,7 @@ fn attribute_tokens_ascii_lowercase(lowered: &str) -> Vec<String> {
 
 pub(crate) fn detect_packed_layout(raw_typedef: &str) -> bool {
     let lowered = raw_typedef.to_ascii_lowercase();
-    let tokens = identifier_tokens_ascii_lowercase(raw_typedef);
+    let tokens = identifier_tokens_without_literals_and_comments_ascii_lowercase(raw_typedef);
     if tokens
         .iter()
         .any(|token| token == "__packed" || token == "__packed__")
