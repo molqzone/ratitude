@@ -272,14 +272,19 @@ fn parse_parenthesized(raw: &str, open_idx: usize) -> Option<(usize, String)> {
     None
 }
 
-fn attribute_tokens_ascii_lowercase(compact: &str) -> Vec<String> {
+fn attribute_tokens_ascii_lowercase(lowered: &str) -> Vec<String> {
     const ATTRIBUTE_TAG: &str = "__attribute__";
 
+    let bytes = lowered.as_bytes();
     let mut out = Vec::new();
     let mut cursor = 0usize;
-    while let Some(hit) = compact[cursor..].find(ATTRIBUTE_TAG) {
-        let start = cursor + hit + ATTRIBUTE_TAG.len();
-        let Some((next, args)) = parse_parenthesized(compact, start) else {
+    while let Some(hit) = lowered[cursor..].find(ATTRIBUTE_TAG) {
+        let mut start = cursor + hit + ATTRIBUTE_TAG.len();
+        while matches!(bytes.get(start), Some(byte) if byte.is_ascii_whitespace()) {
+            start += 1;
+        }
+
+        let Some((next, args)) = parse_parenthesized(lowered, start) else {
             break;
         };
         out.extend(identifier_tokens_without_literals_and_comments_ascii_lowercase(&args));
@@ -289,7 +294,7 @@ fn attribute_tokens_ascii_lowercase(compact: &str) -> Vec<String> {
 }
 
 pub(crate) fn detect_packed_layout(raw_typedef: &str) -> bool {
-    let compact = compact_ascii_lowercase(raw_typedef);
+    let lowered = raw_typedef.to_ascii_lowercase();
     let tokens = identifier_tokens_ascii_lowercase(raw_typedef);
     if tokens
         .iter()
@@ -298,7 +303,7 @@ pub(crate) fn detect_packed_layout(raw_typedef: &str) -> bool {
         return true;
     }
 
-    attribute_tokens_ascii_lowercase(&compact)
+    attribute_tokens_ascii_lowercase(&lowered)
         .into_iter()
         .any(|token| token == "packed" || token == "__packed" || token == "__packed__")
 }
