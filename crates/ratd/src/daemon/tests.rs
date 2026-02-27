@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rat_config::ConfigStore;
-use rat_core::Hub;
+use rat_core::{start_ingest_runtime, Hub, IngestRuntimeConfig, ListenerOptions};
 use tokio::net::TcpListener;
 
 use super::*;
@@ -539,4 +539,42 @@ fn console_channel_closed_keeps_daemon_running_without_console() {
     let state = process_console_channel_closed();
     assert!(!state.keep_attached);
     assert!(!state.should_quit);
+}
+
+#[tokio::test]
+async fn console_command_failure_keeps_daemon_running() {
+    let dir = unique_temp_dir("ratd_console_command_failure_nonfatal");
+    let cfg = RatitudeConfig::default();
+    let mut state = DaemonState::new(
+        dir.to_string_lossy().to_string(),
+        cfg.clone(),
+        SourceDomainState::new(Vec::new(), "127.0.0.1:19021".to_string()),
+    );
+    let mut output_manager = OutputManager::from_config(&cfg).expect("build output manager");
+    let mut runtime = start_ingest_runtime(IngestRuntimeConfig {
+        addr: "127.0.0.1:19021".to_string(),
+        listener: ListenerOptions::default(),
+        hub_buffer: 8,
+        text_packet_id: 0xFF,
+        schema_timeout: Duration::from_secs(1),
+        unknown_window: Duration::from_secs(5),
+        unknown_threshold: 20,
+    })
+    .await
+    .expect("start runtime");
+
+    let event = process_console_event(
+        Some(ConsoleCommand::Foxglove(true)),
+        &mut state,
+        &mut output_manager,
+        &mut runtime,
+    )
+    .await
+    .expect("command failure should not stop daemon");
+    assert!(event.keep_attached);
+    assert!(!event.should_quit);
+
+    output_manager.shutdown().await;
+    runtime.shutdown().await;
+    let _ = fs::remove_dir_all(dir);
 }

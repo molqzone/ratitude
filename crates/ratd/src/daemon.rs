@@ -287,7 +287,14 @@ async fn process_console_event(
         return Ok(process_console_channel_closed());
     };
 
-    let action = handle_console_command(command, state, output_manager).await?;
+    let action = match handle_console_command(command, state, output_manager).await {
+        Ok(action) => action,
+        Err(err) => {
+            warn!(error = %err, "console command failed; daemon keeps running");
+            println!("command failed: {err:#}");
+            return Ok(ConsoleEvent::continue_with(true));
+        }
+    };
     if action.restart_runtime {
         restart_runtime(runtime, state, output_manager).await?;
     }
