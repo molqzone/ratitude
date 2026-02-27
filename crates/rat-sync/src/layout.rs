@@ -29,68 +29,125 @@ fn identifier_tokens_ascii_lowercase(value: &str) -> Vec<String> {
     out
 }
 
-fn identifier_tokens_without_literals_ascii_lowercase(value: &str) -> Vec<String> {
+fn identifier_tokens_without_literals_and_comments_ascii_lowercase(value: &str) -> Vec<String> {
+    let bytes = value.as_bytes();
     let mut out = Vec::new();
     let mut token = String::new();
+
     let mut in_single_quoted = false;
     let mut in_double_quoted = false;
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
     let mut escaped = false;
+    let mut idx = 0usize;
 
-    for ch in value.chars() {
+    while idx < bytes.len() {
+        let byte = bytes[idx];
+
+        if in_line_comment {
+            if byte == b'\n' {
+                in_line_comment = false;
+            }
+            idx += 1;
+            continue;
+        }
+
+        if in_block_comment {
+            if byte == b'*' && bytes.get(idx + 1) == Some(&b'/') {
+                in_block_comment = false;
+                idx += 2;
+            } else {
+                idx += 1;
+            }
+            continue;
+        }
+
         if in_single_quoted {
             if escaped {
                 escaped = false;
+                idx += 1;
                 continue;
             }
-            if ch == '\\' {
+            if byte == b'\\' {
                 escaped = true;
+                idx += 1;
                 continue;
             }
-            if ch == '\'' {
+            if byte == b'\'' {
                 in_single_quoted = false;
             }
+            idx += 1;
             continue;
         }
 
         if in_double_quoted {
             if escaped {
                 escaped = false;
+                idx += 1;
                 continue;
             }
-            if ch == '\\' {
+            if byte == b'\\' {
                 escaped = true;
+                idx += 1;
                 continue;
             }
-            if ch == '"' {
+            if byte == b'"' {
                 in_double_quoted = false;
             }
+            idx += 1;
             continue;
         }
 
-        if ch == '\'' {
+        if byte == b'/' {
+            match bytes.get(idx + 1) {
+                Some(b'/') => {
+                    if !token.is_empty() {
+                        out.push(std::mem::take(&mut token));
+                    }
+                    in_line_comment = true;
+                    idx += 2;
+                    continue;
+                }
+                Some(b'*') => {
+                    if !token.is_empty() {
+                        out.push(std::mem::take(&mut token));
+                    }
+                    in_block_comment = true;
+                    idx += 2;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+
+        if byte == b'\'' {
             if !token.is_empty() {
                 out.push(std::mem::take(&mut token));
             }
             in_single_quoted = true;
             escaped = false;
+            idx += 1;
             continue;
         }
-        if ch == '"' {
+        if byte == b'"' {
             if !token.is_empty() {
                 out.push(std::mem::take(&mut token));
             }
             in_double_quoted = true;
             escaped = false;
+            idx += 1;
             continue;
         }
 
-        if ch == '_' || ch.is_ascii_alphanumeric() {
-            token.push(ch.to_ascii_lowercase());
+        if byte == b'_' || byte.is_ascii_alphanumeric() {
+            token.push((byte as char).to_ascii_lowercase());
+            idx += 1;
             continue;
         }
         if !token.is_empty() {
             out.push(std::mem::take(&mut token));
         }
+        idx += 1;
     }
 
     if !token.is_empty() {
@@ -107,8 +164,98 @@ fn parse_parenthesized(raw: &str, open_idx: usize) -> Option<(usize, String)> {
     }
 
     let mut depth = 0usize;
+    let mut in_single_quoted = false;
+    let mut in_double_quoted = false;
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let mut escaped = false;
     let mut idx = open_idx;
     while idx < bytes.len() {
+        let byte = bytes[idx];
+
+        if in_line_comment {
+            if byte == b'\n' {
+                in_line_comment = false;
+            }
+            idx += 1;
+            continue;
+        }
+
+        if in_block_comment {
+            if byte == b'*' && bytes.get(idx + 1) == Some(&b'/') {
+                in_block_comment = false;
+                idx += 2;
+            } else {
+                idx += 1;
+            }
+            continue;
+        }
+
+        if in_single_quoted {
+            if escaped {
+                escaped = false;
+                idx += 1;
+                continue;
+            }
+            if byte == b'\\' {
+                escaped = true;
+                idx += 1;
+                continue;
+            }
+            if byte == b'\'' {
+                in_single_quoted = false;
+            }
+            idx += 1;
+            continue;
+        }
+
+        if in_double_quoted {
+            if escaped {
+                escaped = false;
+                idx += 1;
+                continue;
+            }
+            if byte == b'\\' {
+                escaped = true;
+                idx += 1;
+                continue;
+            }
+            if byte == b'"' {
+                in_double_quoted = false;
+            }
+            idx += 1;
+            continue;
+        }
+
+        if byte == b'/' {
+            match bytes.get(idx + 1) {
+                Some(b'/') => {
+                    in_line_comment = true;
+                    idx += 2;
+                    continue;
+                }
+                Some(b'*') => {
+                    in_block_comment = true;
+                    idx += 2;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+
+        if byte == b'\'' {
+            in_single_quoted = true;
+            escaped = false;
+            idx += 1;
+            continue;
+        }
+        if byte == b'"' {
+            in_double_quoted = true;
+            escaped = false;
+            idx += 1;
+            continue;
+        }
+
         match bytes[idx] {
             b'(' => depth = depth.saturating_add(1),
             b')' => {
@@ -135,7 +282,7 @@ fn attribute_tokens_ascii_lowercase(compact: &str) -> Vec<String> {
         let Some((next, args)) = parse_parenthesized(compact, start) else {
             break;
         };
-        out.extend(identifier_tokens_without_literals_ascii_lowercase(&args));
+        out.extend(identifier_tokens_without_literals_and_comments_ascii_lowercase(&args));
         cursor = next;
     }
     out

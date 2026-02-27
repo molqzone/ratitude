@@ -251,6 +251,17 @@ fn packed_detection_is_explicit() {
     let packed_string_literal_attr =
         "typedef struct __attribute__((section(\"packed\"))) { int32_t value; } Foo;";
     assert!(!detect_packed_layout(packed_string_literal_attr));
+
+    let packed_comment_attr =
+        "typedef struct __attribute__((aligned(8) /* packed */)) { int32_t value; } Foo;";
+    assert!(!detect_packed_layout(packed_comment_attr));
+
+    let packed_after_string_paren_attr =
+        "typedef struct __attribute__((section(\"x)\"), packed)) { int32_t value; } Foo;";
+    assert!(detect_packed_layout(packed_after_string_paren_attr));
+
+    let packed_line_comment_attr = "typedef struct __attribute__((aligned(8), // packed\n section(\"x\"))) { int32_t value; } Foo;";
+    assert!(!detect_packed_layout(packed_line_comment_attr));
 }
 
 #[test]
