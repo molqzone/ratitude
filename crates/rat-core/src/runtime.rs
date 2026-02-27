@@ -257,13 +257,16 @@ async fn run_frame_consumer(
                 let Some(frame) = maybe_frame else {
                     return Err(RuntimeError::FrameConsumerStopped);
                 };
-                let Some((id, payload)) = decode_transport_frame(&frame) else {
+                let Some(decoded) = decode_transport_frame(&frame) else {
+                    continue;
+                };
+                let Some((&id, payload)) = decoded.split_first() else {
                     continue;
                 };
 
                 if id == CONTROL_PACKET_ID {
                     handle_control_frame(
-                        &payload,
+                        payload,
                         &mut schema_state,
                         protocol,
                         &mut unknown_monitor_state,
@@ -283,13 +286,13 @@ async fn run_frame_consumer(
                 let Some(data) = parse_data_packet(
                     protocol,
                     id,
-                    &payload,
+                    payload,
                     &mut unknown_monitor_state,
                 ) else {
                     continue;
                 };
 
-                publish_runtime_packet(&hub, id, payload, data);
+                publish_runtime_packet(&hub, id, payload.to_vec(), data);
             }
         }
     }
@@ -297,8 +300,8 @@ async fn run_frame_consumer(
     Ok(())
 }
 
-fn decode_transport_frame(frame: &[u8]) -> Option<(u8, Vec<u8>)> {
-    let mut decoded = match decode_frame(frame) {
+fn decode_transport_frame(frame: &[u8]) -> Option<Vec<u8>> {
+    let decoded = match decode_frame(frame) {
         Ok(decoded) => decoded,
         Err(err) => {
             debug!(
@@ -312,9 +315,7 @@ fn decode_transport_frame(frame: &[u8]) -> Option<(u8, Vec<u8>)> {
     if decoded.is_empty() {
         return None;
     }
-
-    let id = decoded.remove(0);
-    Some((id, decoded))
+    Some(decoded)
 }
 
 async fn handle_control_frame(

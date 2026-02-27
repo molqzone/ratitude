@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::sync::{Arc, Mutex};
+use std::{fmt, str::FromStr};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -13,8 +14,43 @@ use crate::{PacketEnvelope, PacketPayload};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SinkFailure {
-    pub sink_key: &'static str,
+    pub sink_key: SinkKey,
     pub reason: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum SinkKey {
+    Jsonl,
+    Foxglove,
+    Custom(&'static str),
+}
+
+impl SinkKey {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Jsonl => "jsonl",
+            Self::Foxglove => "foxglove",
+            Self::Custom(key) => key,
+        }
+    }
+}
+
+impl fmt::Display for SinkKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for SinkKey {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "jsonl" => Ok(Self::Jsonl),
+            "foxglove" => Ok(Self::Foxglove),
+            _ => Err(()),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -41,7 +77,7 @@ pub fn spawn_jsonl_writer(
     mut receiver: broadcast::Receiver<PacketEnvelope>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     failure_tx: broadcast::Sender<SinkFailure>,
-    sink_key: &'static str,
+    sink_key: SinkKey,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let (line_tx, mut line_rx) = mpsc::channel::<Vec<u8>>(JSONL_WRITE_QUEUE_CAP);
@@ -113,7 +149,7 @@ pub fn spawn_jsonl_writer(
                 Err(broadcast::error::RecvError::Closed) => break,
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {
                     warn!(
-                        sink = sink_key,
+                        sink = %sink_key,
                         skipped, "jsonl writer lagged; dropping packets from hub channel"
                     );
                     continue;
@@ -136,7 +172,7 @@ pub fn spawn_jsonl_writer(
 
 fn report_sink_failure(
     failure_tx: &broadcast::Sender<SinkFailure>,
-    sink_key: &'static str,
+    sink_key: SinkKey,
     reason: String,
 ) {
     let _ = failure_tx.send(SinkFailure { sink_key, reason });
@@ -169,7 +205,7 @@ mod tests {
     use tokio::sync::broadcast;
     use tokio::time::{timeout, Duration};
 
-    use super::{spawn_jsonl_writer, PacketEnvelope, PacketPayload, SinkFailure};
+    use super::{spawn_jsonl_writer, PacketEnvelope, PacketPayload, SinkFailure, SinkKey};
 
     struct SharedVecWriter {
         output: Arc<Mutex<Vec<u8>>>,
@@ -215,7 +251,7 @@ mod tests {
         });
         let writer = Arc::new(Mutex::new(writer));
 
-        let task = spawn_jsonl_writer(receiver, writer, failure_tx, "jsonl");
+        let task = spawn_jsonl_writer(receiver, writer, failure_tx, SinkKey::Jsonl);
 
         tx.send(text_packet(0x03, "third"))
             .expect("send third packet");

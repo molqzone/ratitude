@@ -347,13 +347,13 @@ fn output_failure_marks_sink_unhealthy_even_when_retry_is_throttled() {
     let mut backoff = SinkRecoveryBackoff::new(Duration::from_secs(60));
     let now = Instant::now();
     assert!(
-        backoff.should_attempt("jsonl", now),
+        backoff.should_attempt(rat_core::SinkKey::Jsonl, now),
         "precondition: first retry should be allowed"
     );
 
     let result = process_output_failure(
         Ok(rat_core::SinkFailure {
-            sink_key: "jsonl",
+            sink_key: rat_core::SinkKey::Jsonl,
             reason: "sink failed".to_string(),
         }),
         &mut output_manager,
@@ -362,7 +362,7 @@ fn output_failure_marks_sink_unhealthy_even_when_retry_is_throttled() {
     assert!(result.expect("sink failure should keep listener attached"));
     assert_eq!(
         output_manager.unhealthy_sink_keys(),
-        vec!["jsonl"],
+        vec![rat_core::SinkKey::Jsonl],
         "failure must enter unhealthy set even when retry is throttled"
     );
 }
@@ -407,11 +407,16 @@ async fn output_failure_lagged_attempts_unhealthy_sink_recovery() {
         .apply(Hub::new(8), 1, 0x1, Vec::new())
         .await
         .expect("apply should degrade");
-    assert_eq!(output_manager.unhealthy_sink_keys(), vec!["jsonl"]);
+    assert_eq!(
+        output_manager.unhealthy_sink_keys(),
+        vec![rat_core::SinkKey::Jsonl]
+    );
 
     let mut backoff = SinkRecoveryBackoff::new(Duration::from_secs(30));
     assert!(
-        !backoff.next_retry_at.contains_key("jsonl"),
+        !backoff
+            .next_retry_at
+            .contains_key(&rat_core::SinkKey::Jsonl),
         "lagged compensation should set retry schedule"
     );
     let result = process_output_failure(
@@ -421,12 +426,14 @@ async fn output_failure_lagged_attempts_unhealthy_sink_recovery() {
     );
     assert!(result.expect("lagged should keep listener attached"));
     assert!(
-        backoff.next_retry_at.contains_key("jsonl"),
+        backoff
+            .next_retry_at
+            .contains_key(&rat_core::SinkKey::Jsonl),
         "lagged compensation should attempt unhealthy sink recovery"
     );
     assert_eq!(
         output_manager.unhealthy_sink_keys(),
-        vec!["jsonl"],
+        vec![rat_core::SinkKey::Jsonl],
         "invalid path keeps sink unhealthy after retry attempt"
     );
 
@@ -441,7 +448,7 @@ fn output_failure_reason_is_non_fatal() {
     let mut backoff = SinkRecoveryBackoff::new(Duration::from_secs(1));
     let result = process_output_failure(
         Ok(rat_core::SinkFailure {
-            sink_key: "jsonl",
+            sink_key: rat_core::SinkKey::Jsonl,
             reason: "sink failed".to_string(),
         }),
         &mut output_manager,
@@ -468,10 +475,13 @@ fn sink_recovery_backoff_throttles_immediate_retry() {
     let mut backoff = SinkRecoveryBackoff::new(Duration::from_secs(1));
     let now = Instant::now();
 
-    assert!(backoff.should_attempt("jsonl", now));
-    assert!(!backoff.should_attempt("jsonl", now + Duration::from_millis(500)));
-    assert!(backoff.should_attempt("jsonl", now + Duration::from_secs(1)));
-    assert!(backoff.should_attempt("foxglove", now + Duration::from_millis(500)));
+    assert!(backoff.should_attempt(rat_core::SinkKey::Jsonl, now));
+    assert!(!backoff.should_attempt(rat_core::SinkKey::Jsonl, now + Duration::from_millis(500)));
+    assert!(backoff.should_attempt(rat_core::SinkKey::Jsonl, now + Duration::from_secs(1)));
+    assert!(backoff.should_attempt(
+        rat_core::SinkKey::Foxglove,
+        now + Duration::from_millis(500)
+    ));
 }
 
 #[test]

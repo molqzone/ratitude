@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{anyhow, Context, Result};
 use rat_bridge_foxglove::{run_bridge, BridgeConfig};
 use rat_config::{PacketDef, RatitudeConfig};
-use rat_core::{spawn_jsonl_writer, Hub, SinkFailure};
+use rat_core::{spawn_jsonl_writer, Hub, SinkFailure, SinkKey};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -33,7 +33,7 @@ struct SinkContextKey {
 }
 
 trait PacketSink {
-    fn key(&self) -> &'static str;
+    fn key(&self) -> SinkKey;
     fn sync(
         &mut self,
         desired: &OutputState,
@@ -50,7 +50,7 @@ trait PacketSink {
 }
 
 struct RegisteredSink {
-    key: &'static str,
+    key: SinkKey,
     sink: Box<dyn PacketSink>,
 }
 
@@ -80,8 +80,8 @@ impl JsonlSink {
 }
 
 impl PacketSink for JsonlSink {
-    fn key(&self) -> &'static str {
-        "jsonl"
+    fn key(&self) -> SinkKey {
+        SinkKey::Jsonl
     }
 
     fn sync(
@@ -181,8 +181,8 @@ impl FoxgloveSink {
 }
 
 impl PacketSink for FoxgloveSink {
-    fn key(&self) -> &'static str {
-        "foxglove"
+    fn key(&self) -> SinkKey {
+        SinkKey::Foxglove
     }
 
     fn sync(
@@ -259,7 +259,7 @@ pub struct OutputManager {
     desired: OutputState,
     context: Option<SinkContext>,
     sinks: Vec<RegisteredSink>,
-    sink_index_by_key: HashMap<&'static str, usize>,
+    sink_index_by_key: HashMap<SinkKey, usize>,
     failure_tx: broadcast::Sender<SinkFailure>,
     unhealthy_sinks: BTreeSet<usize>,
 }
@@ -336,7 +336,7 @@ impl OutputManager {
         self.failure_tx.subscribe()
     }
 
-    pub fn unhealthy_sink_keys(&self) -> Vec<&'static str> {
+    pub fn unhealthy_sink_keys(&self) -> Vec<SinkKey> {
         let mut keys = self
             .unhealthy_sinks
             .iter()
@@ -358,16 +358,16 @@ impl OutputManager {
         }
     }
 
-    pub fn mark_sink_unhealthy(&mut self, sink_key: &'static str) -> bool {
-        let Some(index) = self.sink_index_by_key.get(sink_key).copied() else {
-            return false;
-        };
-        self.unhealthy_sinks.insert(index);
-        true
+    pub fn mark_sink_unhealthy(&mut self, sink_key: SinkKey) {
+        if let Some(index) = self.sink_index_by_key.get(&sink_key).copied() {
+            self.unhealthy_sinks.insert(index);
+            return;
+        }
+        debug_assert!(false, "unknown sink key in OutputManager: {sink_key}");
     }
 
-    pub fn recover_sink_after_failure(&mut self, sink_key: &str) -> Result<()> {
-        let Some(index) = self.sink_index_by_key.get(sink_key).copied() else {
+    pub fn recover_sink_after_failure(&mut self, sink_key: SinkKey) -> Result<()> {
+        let Some(index) = self.sink_index_by_key.get(&sink_key).copied() else {
             return Err(anyhow!("unknown sink key in OutputManager: {}", sink_key));
         };
         let Some(entry) = self.sinks.get_mut(index) else {
@@ -460,7 +460,7 @@ fn default_sinks() -> Vec<Box<dyn PacketSink>> {
 
 fn build_registered_sinks(
     sinks: Vec<Box<dyn PacketSink>>,
-) -> Result<(Vec<RegisteredSink>, HashMap<&'static str, usize>)> {
+) -> Result<(Vec<RegisteredSink>, HashMap<SinkKey, usize>)> {
     let mut registered = Vec::new();
     let mut sink_index_by_key = HashMap::new();
     for sink in sinks {
@@ -471,7 +471,7 @@ fn build_registered_sinks(
 
 fn register_sink(
     sinks: &mut Vec<RegisteredSink>,
-    sink_index_by_key: &mut HashMap<&'static str, usize>,
+    sink_index_by_key: &mut HashMap<SinkKey, usize>,
     sink: Box<dyn PacketSink>,
 ) -> Result<()> {
     let key = sink.key();

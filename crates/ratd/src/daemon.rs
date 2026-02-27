@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use rat_config::RatitudeConfig;
-use rat_core::{RuntimeSignal, SinkFailure};
+use rat_core::{RuntimeSignal, SinkFailure, SinkKey};
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
@@ -339,17 +339,11 @@ fn process_output_failure(
     match sink_failure {
         Ok(failure) => {
             warn!(
-                sink = failure.sink_key,
+                sink = %failure.sink_key,
                 reason = %failure.reason,
                 "output sink failed; daemon keeps running"
             );
-            if !output_manager.mark_sink_unhealthy(failure.sink_key) {
-                warn!(
-                    sink = failure.sink_key,
-                    "output sink failure reported for unknown sink key; skip recovery"
-                );
-                return Ok(true);
-            }
+            output_manager.mark_sink_unhealthy(failure.sink_key);
             attempt_sink_recovery(
                 output_manager,
                 recovery_backoff,
@@ -388,7 +382,7 @@ fn process_periodic_sink_recovery(
 fn attempt_sink_recovery(
     output_manager: &mut OutputManager,
     recovery_backoff: &mut SinkRecoveryBackoff,
-    sink_key: &'static str,
+    sink_key: SinkKey,
     now: Instant,
 ) {
     if !recovery_backoff.should_attempt(sink_key, now) {
@@ -396,7 +390,7 @@ fn attempt_sink_recovery(
     }
     if let Err(err) = output_manager.recover_sink_after_failure(sink_key) {
         warn!(
-            sink = sink_key,
+            sink = %sink_key,
             error = %err,
             "failed to recover output sink after failure"
         );
@@ -406,7 +400,7 @@ fn attempt_sink_recovery(
 #[derive(Debug)]
 struct SinkRecoveryBackoff {
     cooldown: Duration,
-    next_retry_at: HashMap<&'static str, Instant>,
+    next_retry_at: HashMap<SinkKey, Instant>,
 }
 
 impl SinkRecoveryBackoff {
@@ -417,7 +411,7 @@ impl SinkRecoveryBackoff {
         }
     }
 
-    fn should_attempt(&mut self, sink_key: &'static str, now: Instant) -> bool {
+    fn should_attempt(&mut self, sink_key: SinkKey, now: Instant) -> bool {
         if let Some(next_retry) = self.next_retry_at.get(&sink_key) {
             if now < *next_retry {
                 return false;

@@ -29,6 +29,77 @@ fn identifier_tokens_ascii_lowercase(value: &str) -> Vec<String> {
     out
 }
 
+fn identifier_tokens_without_literals_ascii_lowercase(value: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut token = String::new();
+    let mut in_single_quoted = false;
+    let mut in_double_quoted = false;
+    let mut escaped = false;
+
+    for ch in value.chars() {
+        if in_single_quoted {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == '\'' {
+                in_single_quoted = false;
+            }
+            continue;
+        }
+
+        if in_double_quoted {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == '"' {
+                in_double_quoted = false;
+            }
+            continue;
+        }
+
+        if ch == '\'' {
+            if !token.is_empty() {
+                out.push(std::mem::take(&mut token));
+            }
+            in_single_quoted = true;
+            escaped = false;
+            continue;
+        }
+        if ch == '"' {
+            if !token.is_empty() {
+                out.push(std::mem::take(&mut token));
+            }
+            in_double_quoted = true;
+            escaped = false;
+            continue;
+        }
+
+        if ch == '_' || ch.is_ascii_alphanumeric() {
+            token.push(ch.to_ascii_lowercase());
+            continue;
+        }
+        if !token.is_empty() {
+            out.push(std::mem::take(&mut token));
+        }
+    }
+
+    if !token.is_empty() {
+        out.push(token);
+    }
+
+    out
+}
+
 fn parse_parenthesized(raw: &str, open_idx: usize) -> Option<(usize, String)> {
     let bytes = raw.as_bytes();
     if bytes.get(open_idx) != Some(&b'(') {
@@ -64,7 +135,7 @@ fn attribute_tokens_ascii_lowercase(compact: &str) -> Vec<String> {
         let Some((next, args)) = parse_parenthesized(compact, start) else {
             break;
         };
-        out.extend(identifier_tokens_ascii_lowercase(&args));
+        out.extend(identifier_tokens_without_literals_ascii_lowercase(&args));
         cursor = next;
     }
     out

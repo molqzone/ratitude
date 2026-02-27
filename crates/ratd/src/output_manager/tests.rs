@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use rat_core::{PacketEnvelope, PacketPayload, SinkFailure};
+use rat_core::{PacketEnvelope, PacketPayload, SinkFailure, SinkKey};
 use tokio::sync::broadcast::error::TryRecvError;
 
 use super::*;
@@ -32,8 +32,8 @@ struct FlakySink {
 }
 
 impl PacketSink for FailOnceSink {
-    fn key(&self) -> &'static str {
-        "jsonl"
+    fn key(&self) -> SinkKey {
+        SinkKey::Jsonl
     }
 
     fn sync(
@@ -56,8 +56,8 @@ impl PacketSink for FailOnceSink {
 }
 
 impl PacketSink for NoopSink {
-    fn key(&self) -> &'static str {
-        "jsonl"
+    fn key(&self) -> SinkKey {
+        SinkKey::Jsonl
     }
 
     fn sync(
@@ -73,8 +73,8 @@ impl PacketSink for NoopSink {
 }
 
 impl PacketSink for UnhealthyProbeSink {
-    fn key(&self) -> &'static str {
-        "probe"
+    fn key(&self) -> SinkKey {
+        SinkKey::Custom("probe")
     }
 
     fn sync(
@@ -94,8 +94,8 @@ impl PacketSink for UnhealthyProbeSink {
 }
 
 impl PacketSink for RecoverProbeSink {
-    fn key(&self) -> &'static str {
-        "probe"
+    fn key(&self) -> SinkKey {
+        SinkKey::Custom("probe")
     }
 
     fn sync(
@@ -114,8 +114,8 @@ impl PacketSink for RecoverProbeSink {
 }
 
 impl PacketSink for FlakySink {
-    fn key(&self) -> &'static str {
-        "flaky"
+    fn key(&self) -> SinkKey {
+        SinkKey::Custom("flaky")
     }
 
     fn sync(
@@ -152,7 +152,7 @@ fn failure_subscription_receives_sink_error_once() {
     manager.reload_from_config(&cfg).expect("reload");
 
     let first = failures.try_recv().expect("first failure");
-    assert_eq!(first.sink_key, "jsonl");
+    assert_eq!(first.sink_key, SinkKey::Jsonl);
     assert!(first.reason.contains("sink failed"));
     assert!(matches!(failures.try_recv(), Err(TryRecvError::Empty)));
 }
@@ -277,7 +277,7 @@ fn recover_after_sink_failure_forces_shutdown_then_reconcile() {
     .expect("build output manager");
 
     manager
-        .recover_sink_after_failure("probe")
+        .recover_sink_after_failure(SinkKey::Custom("probe"))
         .expect("recover sinks after failure");
 
     assert_eq!(shutdown_calls.load(Ordering::SeqCst), 1);
@@ -298,12 +298,15 @@ fn recover_sink_failure_tracks_unhealthy_state_until_success() {
     .expect("build output manager");
 
     manager
-        .recover_sink_after_failure("flaky")
+        .recover_sink_after_failure(SinkKey::Custom("flaky"))
         .expect_err("first recovery should fail");
-    assert_eq!(manager.unhealthy_sink_keys(), vec!["flaky"]);
+    assert_eq!(
+        manager.unhealthy_sink_keys(),
+        vec![SinkKey::Custom("flaky")]
+    );
 
     manager
-        .recover_sink_after_failure("flaky")
+        .recover_sink_after_failure(SinkKey::Custom("flaky"))
         .expect("second recovery should succeed");
     assert!(
         manager.unhealthy_sink_keys().is_empty(),
@@ -329,7 +332,10 @@ fn refresh_unhealthy_sinks_marks_runtime_unhealthy_probe() {
         "precondition: unhealthy should start empty"
     );
     manager.refresh_unhealthy_sinks();
-    assert_eq!(manager.unhealthy_sink_keys(), vec!["probe"]);
+    assert_eq!(
+        manager.unhealthy_sink_keys(),
+        vec![SinkKey::Custom("probe")]
+    );
 }
 
 #[tokio::test]
@@ -355,7 +361,7 @@ async fn apply_reports_sink_failure_without_stopping_runtime_path() {
     let failure = failures
         .try_recv()
         .expect("sink failure should be reported");
-    assert_eq!(failure.sink_key, "jsonl");
+    assert_eq!(failure.sink_key, SinkKey::Jsonl);
     assert!(failure.reason.contains("output sink apply failed"));
     assert!(failure.reason.contains("failed to open jsonl file"));
 
@@ -381,16 +387,22 @@ async fn apply_marks_sync_failure_sink_as_unhealthy_for_periodic_retry() {
         .await
         .expect("apply should degrade");
     let failure = failures.try_recv().expect("failure should be emitted");
-    assert_eq!(failure.sink_key, "flaky");
-    assert_eq!(manager.unhealthy_sink_keys(), vec!["flaky"]);
+    assert_eq!(failure.sink_key, SinkKey::Custom("flaky"));
+    assert_eq!(
+        manager.unhealthy_sink_keys(),
+        vec![SinkKey::Custom("flaky")]
+    );
 
     manager
-        .recover_sink_after_failure("flaky")
+        .recover_sink_after_failure(SinkKey::Custom("flaky"))
         .expect_err("first retry should still fail");
-    assert_eq!(manager.unhealthy_sink_keys(), vec!["flaky"]);
+    assert_eq!(
+        manager.unhealthy_sink_keys(),
+        vec![SinkKey::Custom("flaky")]
+    );
 
     manager
-        .recover_sink_after_failure("flaky")
+        .recover_sink_after_failure(SinkKey::Custom("flaky"))
         .expect("second retry should recover");
     assert!(manager.unhealthy_sink_keys().is_empty());
 }
