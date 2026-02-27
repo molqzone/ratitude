@@ -26,6 +26,14 @@ pub async fn discover_sources(config: &RatdSourceConfig) -> Vec<SourceCandidate>
             }
         }
     }
+    if addresses.is_empty() {
+        for addr in &config.seed_addrs {
+            let trimmed = addr.trim();
+            if !trimmed.is_empty() {
+                addresses.insert(trimmed.to_string());
+            }
+        }
+    }
 
     let timeout = Duration::from_millis(config.scan_timeout_ms.max(1));
     let mut probe_tasks = JoinSet::new();
@@ -192,5 +200,23 @@ mod tests {
         assert!(addresses.contains(&"127.0.0.1:20001".to_string()));
         assert!(addresses.contains(&"127.0.0.1:20002".to_string()));
         assert!(!addresses.contains(&"127.0.0.1:19021".to_string()));
+    }
+
+    #[tokio::test]
+    async fn auto_scan_false_falls_back_to_seed_addresses_when_last_selected_missing() {
+        let config = RatdSourceConfig {
+            auto_scan: false,
+            scan_timeout_ms: 1,
+            last_selected_addr: String::new(),
+            seed_addrs: vec!["127.0.0.1:20001".to_string(), "127.0.0.1:20002".to_string()],
+        };
+        let candidates = discover_sources(&config).await;
+        let addresses = candidates
+            .into_iter()
+            .map(|item| item.addr)
+            .collect::<Vec<_>>();
+
+        assert!(addresses.contains(&"127.0.0.1:20001".to_string()));
+        assert!(addresses.contains(&"127.0.0.1:20002".to_string()));
     }
 }
