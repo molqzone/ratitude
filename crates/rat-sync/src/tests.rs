@@ -7,7 +7,7 @@ use rat_config::{FieldDef, PacketDef, PacketType};
 use crate::ast::align_up;
 use crate::generated::GeneratedMeta;
 use crate::ids::{compute_signature_hash, fnv1a64, select_fresh_packet_id};
-use crate::layout::detect_packed_layout;
+use crate::layout::{detect_packed_layout, validate_layout_modifiers};
 use crate::model::{DiscoveredPacket, SyncPipelineInput};
 use crate::parser::normalize_packet_type;
 use crate::pipeline::{run_sync_pipeline, run_sync_pipeline_with_previous_packets};
@@ -277,6 +277,18 @@ fn packed_detection_is_explicit() {
     let packed_keyword_in_string =
         "typedef struct { const char* tag = \"__packed\"; int32_t value; } Foo;";
     assert!(!detect_packed_layout(packed_keyword_in_string));
+}
+
+#[test]
+fn layout_modifier_detection_ignores_aligned_hint_inside_comments() {
+    let raw_typedef = r#"
+typedef struct {
+  int32_t value;
+  /* aligned(16) should not be treated as layout modifier */
+} RatSample;
+"#;
+    validate_layout_modifiers(raw_typedef, Path::new("mem://demo.c"), 1, "RatSample")
+        .expect("comment-only aligned hint should be ignored");
 }
 
 #[test]

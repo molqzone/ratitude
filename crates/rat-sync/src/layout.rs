@@ -3,14 +3,6 @@ use std::path::Path;
 use crate::model::DiscoveredPacket;
 use crate::SyncError;
 
-fn compact_ascii_lowercase(value: &str) -> String {
-    value
-        .chars()
-        .filter(|ch| !ch.is_ascii_whitespace())
-        .map(|ch| ch.to_ascii_lowercase())
-        .collect()
-}
-
 fn identifier_tokens_without_literals_and_comments_ascii_lowercase(value: &str) -> Vec<String> {
     let bytes = value.as_bytes();
     let mut out = Vec::new();
@@ -298,12 +290,20 @@ pub(crate) fn validate_layout_modifiers(
     line: usize,
     struct_name: &str,
 ) -> Result<(), SyncError> {
-    let compact = compact_ascii_lowercase(raw_typedef);
-    let has_custom_alignment = compact.contains("aligned(")
-        || compact.contains("__align(")
-        || compact.contains("alignas(")
-        || compact.contains("#pragmapack")
-        || compact.contains("pragmapack(");
+    let lowered = raw_typedef.to_ascii_lowercase();
+    let attribute_tokens = attribute_tokens_ascii_lowercase(&lowered);
+    let tokens = identifier_tokens_without_literals_and_comments_ascii_lowercase(raw_typedef);
+
+    let has_aligned_attribute = attribute_tokens
+        .iter()
+        .any(|token| token == "aligned" || token == "__aligned" || token == "__aligned__");
+    let has_align_keywords = tokens
+        .iter()
+        .any(|token| token == "alignas" || token == "__align" || token == "__align__");
+    let has_pragma_pack = tokens
+        .windows(2)
+        .any(|window| window[0] == "pragma" && window[1] == "pack");
+    let has_custom_alignment = has_aligned_attribute || has_align_keywords || has_pragma_pack;
     if has_custom_alignment {
         return Err(SyncError::Validation(format!(
             "unsupported layout modifier in {} ({}) at line {}: aligned/pragma-pack is not supported for @rat structs; use natural layout or packed only",
