@@ -95,7 +95,7 @@ impl PacketSink for JsonlSink {
             path: desired.jsonl_path.clone(),
             runtime_generation: context.map(|ctx| ctx.key.runtime_generation),
         };
-        if self.last_state.as_ref() == Some(&next_state) {
+        if self.last_state.as_ref() == Some(&next_state) && self.is_healthy(desired, context) {
             return Ok(());
         }
 
@@ -196,7 +196,7 @@ impl PacketSink for FoxgloveSink {
             ws_addr: desired.foxglove_ws_addr.clone(),
             context_key: context.map(|ctx| ctx.key),
         };
-        if self.last_state.as_ref() == Some(&next_state) {
+        if self.last_state.as_ref() == Some(&next_state) && self.is_healthy(desired, context) {
             return Ok(());
         }
 
