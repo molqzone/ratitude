@@ -86,10 +86,8 @@ pub(crate) fn scan_source_files(
 }
 
 fn load_ratignore(config_path: &Path) -> Result<Option<RatIgnoreMatcher>, SyncError> {
-    let root = config_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .to_path_buf();
+    let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+    let root = resolve_ignore_root(config_dir);
 
     let ignore_path = root.join(".ratignore");
     if !ignore_path.exists() {
@@ -163,4 +161,62 @@ fn load_ratignore(config_path: &Path) -> Result<Option<RatIgnoreMatcher>, SyncEr
     }
 
     Ok(Some(RatIgnoreMatcher { root, patterns }))
+}
+
+fn resolve_ignore_root(config_dir: &Path) -> PathBuf {
+    let joined = if config_dir.is_absolute() {
+        config_dir.to_path_buf()
+    } else {
+        match std::env::current_dir() {
+            Ok(cwd) => cwd.join(config_dir),
+            Err(_) => config_dir.to_path_buf(),
+        }
+    };
+
+    joined.canonicalize().unwrap_or(joined)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+
+    fn unique_rel_dir(prefix: &str) -> (String, PathBuf) {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let rel = format!("target/{prefix}_{unique}");
+        let abs = std::env::current_dir().expect("cwd").join(&rel);
+        (rel, abs)
+    }
+
+    #[test]
+    fn ratignore_works_when_config_path_is_relative() {
+        let (base_rel, base_abs) = unique_rel_dir("rat_sync_ignore_relative_config");
+        let _ = fs::remove_dir_all(&base_abs);
+        fs::create_dir_all(base_abs.join("src")).expect("mkdir src");
+
+        fs::write(base_abs.join(".ratignore"), "src/skip.c\n").expect("write .ratignore");
+        fs::write(base_abs.join("src").join("keep.c"), "int keep = 1;\n").expect("write keep");
+        fs::write(base_abs.join("src").join("skip.c"), "int skip = 1;\n").expect("write skip");
+
+        let mut extension_set = HashSet::new();
+        extension_set.insert(".c".to_string());
+
+        let config_rel = PathBuf::from(&base_rel).join("rat.toml");
+        let files = scan_source_files(
+            &base_abs.join("src"),
+            true,
+            &extension_set,
+            config_rel.as_path(),
+        )
+        .expect("scan files");
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0], base_abs.join("src").join("keep.c"));
+
+        let _ = fs::remove_dir_all(base_abs);
+    }
 }
