@@ -73,6 +73,6 @@ pub(crate) fn align_up(value: usize, align: usize) -> usize {
     if remainder == 0 {
         value
     } else {
-        value + (align - remainder)
+        value.saturating_add(align - remainder)
     }
 }

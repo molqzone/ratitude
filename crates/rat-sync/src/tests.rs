@@ -36,6 +36,7 @@ fn alignment_works() {
     assert_eq!(align_up(5, 4), 8);
     assert_eq!(align_up(8, 4), 8);
     assert_eq!(align_up(9, 1), 9);
+    assert_eq!(align_up(usize::MAX - 1, 4), usize::MAX);
 }
 
 #[test]
