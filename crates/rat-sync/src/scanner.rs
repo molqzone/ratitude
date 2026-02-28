@@ -120,7 +120,12 @@ fn load_ratignore(config_path: &Path) -> Result<Option<RatIgnoreMatcher>, SyncEr
             )));
         }
 
-        let pattern = Pattern::new(trimmed).map_err(|err| {
+        let normalized_pattern = trimmed.strip_prefix('/').unwrap_or(trimmed);
+        if normalized_pattern.is_empty() {
+            continue;
+        }
+
+        let pattern = Pattern::new(normalized_pattern).map_err(|err| {
             SyncError::Validation(format!(
                 "invalid .ratignore pattern in {}:{} ({})",
                 ignore_path.display(),
