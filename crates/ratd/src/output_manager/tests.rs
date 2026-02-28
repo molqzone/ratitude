@@ -184,6 +184,27 @@ fn reload_from_config_replaces_desired_state() {
 }
 
 #[test]
+fn reload_from_config_trims_foxglove_ws_addr() {
+    let mut manager = OutputManager::with_sinks_for_test(
+        OutputState {
+            jsonl_enabled: false,
+            jsonl_path: None,
+            foxglove_enabled: false,
+            foxglove_ws_addr: "127.0.0.1:8765".to_string(),
+        },
+        vec![Box::new(FailOnceSink { sent: true })],
+    )
+    .expect("build output manager");
+    let mut cfg = RatitudeConfig::default();
+    cfg.ratd.outputs.foxglove.enabled = true;
+    cfg.ratd.outputs.foxglove.ws_addr = " 127.0.0.1:9000 ".to_string();
+
+    manager.reload_from_config(&cfg).expect("reload");
+    let snapshot = manager.snapshot();
+    assert_eq!(snapshot.foxglove_ws_addr, "127.0.0.1:9000");
+}
+
+#[test]
 fn with_sinks_for_test_rejects_duplicate_sink_keys() {
     let result = OutputManager::with_sinks_for_test(
         OutputState {

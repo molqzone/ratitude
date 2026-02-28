@@ -452,6 +452,7 @@ fn reconcile_sink(
 
 fn output_state_from_config(cfg: &RatitudeConfig) -> OutputState {
     let jsonl_path = cfg.ratd.outputs.jsonl.path.trim();
+    let foxglove_ws_addr = cfg.ratd.outputs.foxglove.ws_addr.trim();
     OutputState {
         jsonl_enabled: cfg.ratd.outputs.jsonl.enabled,
         jsonl_path: if jsonl_path.is_empty() {
@@ -460,7 +461,7 @@ fn output_state_from_config(cfg: &RatitudeConfig) -> OutputState {
             Some(jsonl_path.to_string())
         },
         foxglove_enabled: cfg.ratd.outputs.foxglove.enabled,
-        foxglove_ws_addr: cfg.ratd.outputs.foxglove.ws_addr.clone(),
+        foxglove_ws_addr: foxglove_ws_addr.to_string(),
     }
 }
 
