@@ -36,8 +36,8 @@ pub(crate) fn handle_control_payload(
             total_len,
             schema_hash,
         } => {
-            protocol.clear_dynamic_registry();
             let assembly = SchemaAssembly::new(total_len, schema_hash)?;
+            protocol.clear_dynamic_registry();
             schema_state.begin_assembly(assembly);
             info!(
                 schema_hash = format!("0x{:016X}", schema_hash),
@@ -191,5 +191,60 @@ impl SchemaState {
             .ok_or_else(|| RuntimeError::ControlProtocol {
                 reason: "schema commit received before hello".to_string(),
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use rat_protocol::{DynamicFieldDef, DynamicPacketDef};
+
+    use super::*;
+    use crate::protocol_engine::ProtocolEngineError;
+
+    fn encode_hello(total_len: u32, schema_hash: u64) -> Vec<u8> {
+        let mut payload = vec![CONTROL_HELLO];
+        payload.extend_from_slice(CONTROL_MAGIC);
+        payload.push(CONTROL_VERSION);
+        payload.extend_from_slice(&total_len.to_le_bytes());
+        payload.extend_from_slice(&schema_hash.to_le_bytes());
+        payload
+    }
+
+    #[test]
+    fn invalid_hello_does_not_clear_existing_dynamic_registry() {
+        let mut protocol = RatProtocolEngine::new();
+        protocol
+            .register_dynamic(DynamicPacketDef {
+                id: 0x21,
+                struct_name: "DemoPacket".to_string(),
+                packed: true,
+                byte_size: 4,
+                fields: vec![DynamicFieldDef {
+                    name: "value".to_string(),
+                    c_type: "uint32_t".to_string(),
+                    offset: 0,
+                    size: 4,
+                }],
+            })
+            .expect("register dynamic packet");
+
+        let mut schema_state = SchemaState::new(Duration::from_secs(1));
+        let err = match handle_control_payload(
+            &encode_hello(70_000, 0x1122_3344_5566_7788),
+            &mut schema_state,
+            &mut protocol,
+        ) {
+            Err(err) => err,
+            Ok(_) => panic!("oversized hello should fail"),
+        };
+        assert!(matches!(err, RuntimeError::SchemaTooLarge { .. }));
+
+        let parsed = protocol.parse_packet(0x21, &1_u32.to_le_bytes());
+        if let Err(ProtocolEngineError::UnknownPacketId(_)) = parsed {
+            panic!("dynamic registry should remain available after invalid hello");
+        }
+        assert!(parsed.is_ok(), "dynamic packet parse should still work");
     }
 }
