@@ -159,6 +159,12 @@ fn parse_foxglove_ws_addr_supports_bracketed_ipv6() {
 }
 
 #[test]
+fn parse_foxglove_ws_addr_rejects_port_zero() {
+    let err = parse_foxglove_ws_addr("127.0.0.1:0").expect_err("port 0 should be invalid");
+    assert!(err.to_string().contains("port must be > 0"));
+}
+
+#[test]
 fn normalize_restores_seed_addrs_when_empty() {
     let mut cfg = RatitudeConfig::default();
     cfg.ratd.source.seed_addrs.clear();

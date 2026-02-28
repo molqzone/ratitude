@@ -193,11 +193,17 @@ pub fn parse_foxglove_ws_addr(raw_addr: &str) -> Result<(String, u16), ConfigErr
 }
 
 fn parse_ws_port(raw_port: &str, raw_addr: &str) -> Result<u16, ConfigError> {
-    raw_port.parse::<u16>().map_err(|err| {
+    let port = raw_port.parse::<u16>().map_err(|err| {
         ConfigError::Validation(format!(
             "ratd.outputs.foxglove.ws_addr has invalid port in {raw_addr}: {err}"
         ))
-    })
+    })?;
+    if port == 0 {
+        return Err(ConfigError::Validation(format!(
+            "ratd.outputs.foxglove.ws_addr port must be > 0 in {raw_addr}"
+        )));
+    }
+    Ok(port)
 }
 
 fn invalid_foxglove_ws_addr_error(raw_addr: &str) -> ConfigError {
