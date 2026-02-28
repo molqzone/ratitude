@@ -4,7 +4,7 @@ use std::path::Path;
 
 use rat_config::{FieldDef, PacketDef, PacketType};
 
-use crate::ast::align_up;
+use crate::ast::{align_up, resolve_scan_root};
 use crate::generated::GeneratedMeta;
 use crate::ids::{compute_signature_hash, fnv1a64, select_fresh_packet_id};
 use crate::layout::{detect_packed_layout, validate_layout_modifiers};
@@ -37,6 +37,14 @@ fn alignment_works() {
     assert_eq!(align_up(8, 4), 8);
     assert_eq!(align_up(9, 1), 9);
     assert_eq!(align_up(usize::MAX - 1, 4), usize::MAX);
+}
+
+#[test]
+fn resolve_scan_root_normalizes_parent_segments() {
+    let root = std::env::temp_dir().join("rat_sync_resolve_scan_root");
+    let config_path = root.join("rat.toml");
+    let resolved = resolve_scan_root(&config_path, Path::new("src/../src"));
+    assert_eq!(resolved, root.join("src"));
 }
 
 #[test]

@@ -1,16 +1,52 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use tree_sitter::Node;
 
 use crate::SyncError;
 
 pub(crate) fn resolve_scan_root(config_path: &Path, scan_root_override: &Path) -> PathBuf {
-    if scan_root_override.is_absolute() {
-        return scan_root_override.to_path_buf();
+    let resolved = if scan_root_override.is_absolute() {
+        scan_root_override.to_path_buf()
+    } else {
+        let base_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+        base_dir.join(scan_root_override)
+    };
+    normalize_path_lexical(&resolved)
+}
+
+fn normalize_path_lexical(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    let mut has_absolute_root = false;
+
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => {
+                normalized.push(component.as_os_str());
+                has_absolute_root = true;
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let can_pop_normal = normalized
+                    .components()
+                    .next_back()
+                    .map(|last| matches!(last, Component::Normal(_)))
+                    .unwrap_or(false);
+                if can_pop_normal {
+                    normalized.pop();
+                } else if !has_absolute_root {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            Component::Normal(segment) => normalized.push(segment),
+        }
     }
 
-    let base_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
-    base_dir.join(scan_root_override)
+    if normalized.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        normalized
+    }
 }
 
 pub(crate) fn walk_nodes(
