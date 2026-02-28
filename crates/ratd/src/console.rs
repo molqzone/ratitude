@@ -46,8 +46,10 @@ impl CommandRouter {
             }
             let mut parts = rest.split_whitespace();
             match (parts.next(), parts.next(), parts.next()) {
-                (Some("list"), None, None) => return Some(ConsoleCommand::SourceList),
-                (Some("use"), Some(index), None) => {
+                (Some(command), None, None) if command.eq_ignore_ascii_case("list") => {
+                    return Some(ConsoleCommand::SourceList);
+                }
+                (Some(command), Some(index), None) if command.eq_ignore_ascii_case("use") => {
                     if let Ok(parsed_index) = index.parse::<usize>() {
                         return Some(ConsoleCommand::SourceUse(parsed_index));
                     }
@@ -178,6 +180,18 @@ mod tests {
     #[test]
     fn parse_source_use_accepts_flexible_whitespace() {
         let cmd = CommandRouter::parse("$source   use\t3").expect("command");
+        assert_eq!(cmd, ConsoleCommand::SourceUse(3));
+    }
+
+    #[test]
+    fn parse_source_list_is_case_insensitive() {
+        let cmd = CommandRouter::parse("$source LIST").expect("command");
+        assert_eq!(cmd, ConsoleCommand::SourceList);
+    }
+
+    #[test]
+    fn parse_source_use_is_case_insensitive() {
+        let cmd = CommandRouter::parse("$source USE 3").expect("command");
         assert_eq!(cmd, ConsoleCommand::SourceUse(3));
     }
 
