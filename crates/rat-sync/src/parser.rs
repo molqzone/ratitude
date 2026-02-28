@@ -21,12 +21,12 @@ pub(crate) fn collect_comment_tags(
     static TAG_START_RE: OnceLock<Regex> = OnceLock::new();
     static STRICT_TAG_RE: OnceLock<Regex> = OnceLock::new();
     let tag_start_re = TAG_START_RE.get_or_init(|| {
-        Regex::new(r"(?s)^\s*(?://+\s*@rat\b|/\*(?:\s|\*)*@rat\b)")
+        Regex::new(r"(?is)^\s*(?://+\s*@rat\b|/\*(?:\s|\*)*@rat\b)")
             .expect("compile @rat tag start regex")
     });
     let strict_tag_re = STRICT_TAG_RE.get_or_init(|| {
         Regex::new(
-            r"(?s)^\s*(?://+\s*@rat(?:\s*,\s*([A-Za-z_][A-Za-z0-9_]*))?\s*|/\*(?:\s|\*)*@rat(?:\s*,\s*([A-Za-z_][A-Za-z0-9_]*))?(?:\s|\*)*\*/\s*)$",
+            r"(?is)^\s*(?://+\s*@rat(?:\s*,\s*([A-Za-z_][A-Za-z0-9_]*))?\s*|/\*(?:\s|\*)*@rat(?:\s*,\s*([A-Za-z_][A-Za-z0-9_]*))?(?:\s|\*)*\*/\s*)$",
         )
             .expect("compile @rat tag regex")
     });
@@ -41,7 +41,7 @@ pub(crate) fn collect_comment_tags(
             SyncError::Validation(format!("invalid utf8 comment in {}: {err}", path.display()))
         })?;
 
-        if !text.contains("@rat") {
+        if !text.to_ascii_lowercase().contains("@rat") {
             return Ok(());
         }
         if !tag_start_re.is_match(text) {
