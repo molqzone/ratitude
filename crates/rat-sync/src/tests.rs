@@ -722,6 +722,43 @@ typedef struct {
 }
 
 #[test]
+fn sync_packets_fs_ratignore_supports_windows_root_anchored_pattern() {
+    let temp = std::env::temp_dir().join(format!(
+        "rat_sync_ignore_windows_root_anchor_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&temp);
+    fs::create_dir_all(temp.join("src")).expect("mkdir");
+
+    let config_path = temp.join("rat.toml");
+    write_test_config(&config_path, "src");
+    fs::write(temp.join(".ratignore"), "\\src\\skip.c\n").expect("write .ratignore");
+
+    let keep = r#"
+// @rat, plot
+typedef struct {
+  int32_t value;
+  uint32_t tick;
+} KeepPacket;
+"#;
+    let skip = r#"
+// @rat, plot
+typedef struct {
+  int32_t value;
+  uint32_t tick;
+} SkipPacket;
+"#;
+    fs::write(temp.join("src").join("keep.c"), keep).expect("write keep");
+    fs::write(temp.join("src").join("skip.c"), skip).expect("write skip");
+
+    let result = sync_packets_fs(&config_path, None).expect("sync should pass");
+    assert_eq!(result.packet_defs.len(), 1);
+    assert_eq!(result.packet_defs[0].struct_name, "KeepPacket");
+
+    let _ = fs::remove_dir_all(&temp);
+}
+
+#[test]
 fn sync_packets_fs_ratignore_supports_directory_glob() {
     let temp =
         std::env::temp_dir().join(format!("rat_sync_ignore_dir_glob_{}", std::process::id()));
