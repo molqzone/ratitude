@@ -36,18 +36,25 @@ impl CommandRouter {
         if trimmed == "$status" {
             return Some(ConsoleCommand::Status);
         }
-        if trimmed == "$source list" {
-            return Some(ConsoleCommand::SourceList);
-        }
         if trimmed == "$quit" {
             return Some(ConsoleCommand::Quit);
         }
 
-        if let Some(rest) = trimmed.strip_prefix("$source use ") {
-            if let Ok(index) = rest.trim().parse::<usize>() {
-                return Some(ConsoleCommand::SourceUse(index));
+        if let Some(rest) = trimmed.strip_prefix("$source") {
+            if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
+                return Some(ConsoleCommand::Unknown(trimmed.to_string()));
             }
-            return Some(ConsoleCommand::Unknown(trimmed.to_string()));
+            let mut parts = rest.split_whitespace();
+            match (parts.next(), parts.next(), parts.next()) {
+                (Some("list"), None, None) => return Some(ConsoleCommand::SourceList),
+                (Some("use"), Some(index), None) => {
+                    if let Ok(parsed_index) = index.parse::<usize>() {
+                        return Some(ConsoleCommand::SourceUse(parsed_index));
+                    }
+                    return Some(ConsoleCommand::Unknown(trimmed.to_string()));
+                }
+                _ => return Some(ConsoleCommand::Unknown(trimmed.to_string())),
+            }
         }
 
         if let Some(rest) = trimmed.strip_prefix("$foxglove ") {
@@ -149,6 +156,18 @@ mod tests {
     #[test]
     fn parse_source_use() {
         let cmd = CommandRouter::parse("$source use 3").expect("command");
+        assert_eq!(cmd, ConsoleCommand::SourceUse(3));
+    }
+
+    #[test]
+    fn parse_source_list_accepts_flexible_whitespace() {
+        let cmd = CommandRouter::parse("$source\tlist").expect("command");
+        assert_eq!(cmd, ConsoleCommand::SourceList);
+    }
+
+    #[test]
+    fn parse_source_use_accepts_flexible_whitespace() {
+        let cmd = CommandRouter::parse("$source   use\t3").expect("command");
         assert_eq!(cmd, ConsoleCommand::SourceUse(3));
     }
 
