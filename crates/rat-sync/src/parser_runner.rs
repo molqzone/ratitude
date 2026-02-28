@@ -114,6 +114,21 @@ typedef struct {
     }
 
     #[test]
+    fn parse_tagged_source_ignores_non_annotation_comment_mentions_atrat() {
+        let src = br#"
+// this note mentions @rat but is not an annotation
+typedef struct {
+  int32_t value;
+} RatSample;
+"#;
+        let parsed = parse_tagged_source(Path::new("mem://demo.c"), src).expect("parse");
+        assert!(
+            parsed.is_none(),
+            "non-annotation comments mentioning @rat should be ignored"
+        );
+    }
+
+    #[test]
     fn parse_tagged_source_accepts_whitespace_around_type_separator() {
         let src = br#"
 //     @rat   ,    quat    

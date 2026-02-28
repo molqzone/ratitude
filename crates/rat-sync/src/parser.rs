@@ -18,7 +18,11 @@ pub(crate) fn collect_comment_tags(
     source: &[u8],
     path: &Path,
 ) -> Result<Vec<TagMatch>, SyncError> {
+    static TAG_START_RE: OnceLock<Regex> = OnceLock::new();
     static STRICT_TAG_RE: OnceLock<Regex> = OnceLock::new();
+    let tag_start_re = TAG_START_RE.get_or_init(|| {
+        Regex::new(r"^\s*(?://+|/\*)\s*@rat\b").expect("compile @rat tag start regex")
+    });
     let strict_tag_re = STRICT_TAG_RE.get_or_init(|| {
         Regex::new(r"(?s)^\s*(?://+|/\*)\s*@rat(?:\s*,\s*([A-Za-z_][A-Za-z0-9_]*))?\s*(?:\*/)?\s*$")
             .expect("compile @rat tag regex")
@@ -35,6 +39,9 @@ pub(crate) fn collect_comment_tags(
         })?;
 
         if !text.contains("@rat") {
+            return Ok(());
+        }
+        if !tag_start_re.is_match(text) {
             return Ok(());
         }
 
