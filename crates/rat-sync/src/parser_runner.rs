@@ -145,4 +145,23 @@ typedef struct {
         assert_eq!(parsed.tags.len(), 1);
         assert_eq!(parsed.tags[0].packet_type, PacketType::Quat);
     }
+
+    #[test]
+    fn parse_tagged_source_accepts_block_comment_annotation_with_star_prefix() {
+        let src = br#"
+/*
+ * @rat, plot
+ */
+typedef struct {
+  int32_t value;
+} RatSample;
+"#;
+        let parsed = parse_tagged_source(Path::new("mem://demo.c"), src)
+            .expect("parse")
+            .expect("tagged file");
+        assert_eq!(parsed.tags.len(), 1);
+        assert_eq!(parsed.tags[0].packet_type, PacketType::Plot);
+        assert_eq!(parsed.structs.len(), 1);
+        assert_eq!(parsed.structs[0].name, "RatSample");
+    }
 }

@@ -21,10 +21,13 @@ pub(crate) fn collect_comment_tags(
     static TAG_START_RE: OnceLock<Regex> = OnceLock::new();
     static STRICT_TAG_RE: OnceLock<Regex> = OnceLock::new();
     let tag_start_re = TAG_START_RE.get_or_init(|| {
-        Regex::new(r"^\s*(?://+|/\*)\s*@rat\b").expect("compile @rat tag start regex")
+        Regex::new(r"(?s)^\s*(?://+\s*@rat\b|/\*(?:\s|\*)*@rat\b)")
+            .expect("compile @rat tag start regex")
     });
     let strict_tag_re = STRICT_TAG_RE.get_or_init(|| {
-        Regex::new(r"(?s)^\s*(?://+|/\*)\s*@rat(?:\s*,\s*([A-Za-z_][A-Za-z0-9_]*))?\s*(?:\*/)?\s*$")
+        Regex::new(
+            r"(?s)^\s*(?://+\s*@rat(?:\s*,\s*([A-Za-z_][A-Za-z0-9_]*))?\s*|/\*(?:\s|\*)*@rat(?:\s*,\s*([A-Za-z_][A-Za-z0-9_]*))?(?:\s|\*)*\*/\s*)$",
+        )
             .expect("compile @rat tag regex")
     });
 
@@ -53,7 +56,11 @@ pub(crate) fn collect_comment_tags(
             )));
         };
 
-        let raw_packet_type = cap.get(1).map(|value| value.as_str()).unwrap_or("plot");
+        let raw_packet_type = cap
+            .get(1)
+            .or_else(|| cap.get(2))
+            .map(|value| value.as_str())
+            .unwrap_or("plot");
         let packet_type = normalize_packet_type(raw_packet_type).map_err(|reason| {
             SyncError::Validation(format!(
                 "invalid @rat type in {}:{} ({})",
