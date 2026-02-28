@@ -51,6 +51,9 @@ impl ProtocolContext {
         }
 
         let packet_id = def.id;
+        if self.dynamic_registry.contains_key(&packet_id) {
+            return Err(ProtocolError::DuplicateDynamicPacketId(packet_id));
+        }
         let mut seen_field_names = HashSet::with_capacity(def.fields.len());
         let mut occupied_ranges: Vec<(usize, usize, String)> = Vec::with_capacity(def.fields.len());
 

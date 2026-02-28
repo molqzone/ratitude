@@ -147,6 +147,40 @@ mod tests {
     }
 
     #[test]
+    fn register_dynamic_rejects_duplicate_packet_id() {
+        let mut ctx = ProtocolContext::new();
+        ctx.register_dynamic(DynamicPacketDef {
+            id: 0x23,
+            struct_name: "DemoA".to_string(),
+            packed: true,
+            byte_size: 4,
+            fields: vec![DynamicFieldDef {
+                name: "value".to_string(),
+                c_type: "uint32_t".to_string(),
+                offset: 0,
+                size: 4,
+            }],
+        })
+        .expect("first packet id should register");
+
+        let err = ctx
+            .register_dynamic(DynamicPacketDef {
+                id: 0x23,
+                struct_name: "DemoB".to_string(),
+                packed: true,
+                byte_size: 4,
+                fields: vec![DynamicFieldDef {
+                    name: "other".to_string(),
+                    c_type: "uint32_t".to_string(),
+                    offset: 0,
+                    size: 4,
+                }],
+            })
+            .expect_err("duplicate packet id should fail");
+        assert!(matches!(err, ProtocolError::DuplicateDynamicPacketId(0x23)));
+    }
+
+    #[test]
     fn unknown_packet_id_returns_error() {
         let ctx = ProtocolContext::new();
         let err = ctx
