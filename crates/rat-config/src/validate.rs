@@ -17,6 +17,16 @@ impl RatitudeConfig {
                 "project.scan_root must not be empty".to_string(),
             ));
         }
+        let has_extension = self
+            .project
+            .extensions
+            .iter()
+            .any(|ext| !ext.trim().is_empty());
+        if !has_extension {
+            return Err(ConfigError::Validation(
+                "project.extensions must contain at least one non-empty extension".to_string(),
+            ));
+        }
         if self.generation.header_name.trim().is_empty() {
             return Err(ConfigError::Validation(
                 "generation.header_name must not be empty".to_string(),

@@ -96,6 +96,17 @@ fn validate_rejects_zero_scan_timeout() {
 }
 
 #[test]
+fn validate_rejects_effective_empty_extensions() {
+    let mut cfg = RatitudeConfig::default();
+    cfg.project.extensions = vec![" ".to_string(), "\t".to_string()];
+    cfg.normalize();
+    let err = cfg.validate().expect_err("validation should fail");
+    assert!(err
+        .to_string()
+        .contains("project.extensions must contain at least one non-empty extension"));
+}
+
+#[test]
 fn validate_rejects_zero_reconnect_duration() {
     let mut cfg = RatitudeConfig::default();
     cfg.ratd.behavior.reconnect = "0s".to_string();
