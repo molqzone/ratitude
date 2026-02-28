@@ -187,6 +187,17 @@ fn parse_foxglove_ws_addr_rejects_whitespace_in_host() {
 }
 
 #[test]
+fn parse_foxglove_ws_addr_rejects_path_separators_in_host() {
+    let err = parse_foxglove_ws_addr("localhost/path:8765")
+        .expect_err("path separator in hostname should be invalid");
+    assert!(err.to_string().contains("host:port or [ipv6]:port"));
+
+    let err = parse_foxglove_ws_addr("[::1\\tmp]:8765")
+        .expect_err("path separator in ipv6 host should be invalid");
+    assert!(err.to_string().contains("host:port or [ipv6]:port"));
+}
+
+#[test]
 fn normalize_restores_seed_addrs_when_empty() {
     let mut cfg = RatitudeConfig::default();
     cfg.ratd.source.seed_addrs.clear();

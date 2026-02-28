@@ -183,7 +183,12 @@ pub fn parse_foxglove_ws_addr(raw_addr: &str) -> Result<(String, u16), ConfigErr
             .split_once(']')
             .ok_or_else(|| invalid_foxglove_ws_addr_error(raw_addr))?;
         let host = host_raw.trim();
-        if host.is_empty() || host_raw != host || host.chars().any(|ch| ch.is_ascii_whitespace()) {
+        if host.is_empty()
+            || host_raw != host
+            || host.chars().any(|ch| ch.is_ascii_whitespace())
+            || host.contains('/')
+            || host.contains('\\')
+        {
             return Err(invalid_foxglove_ws_addr_error(raw_addr));
         }
         let port_raw = suffix
@@ -201,6 +206,8 @@ pub fn parse_foxglove_ws_addr(raw_addr: &str) -> Result<(String, u16), ConfigErr
         || host_raw != host
         || host.contains(':')
         || host.chars().any(|ch| ch.is_ascii_whitespace())
+        || host.contains('/')
+        || host.contains('\\')
     {
         return Err(invalid_foxglove_ws_addr_error(raw_addr));
     }
