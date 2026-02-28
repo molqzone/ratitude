@@ -92,6 +92,8 @@ pub(crate) async fn handle_console_command(
                 next.ratd.outputs.jsonl.enabled = enabled;
                 if let Some(path) = path {
                     next.ratd.outputs.jsonl.path = path;
+                } else if enabled {
+                    next.ratd.outputs.jsonl.path.clear();
                 }
             })
             .await?;

@@ -361,6 +361,46 @@ async fn output_commands_apply_without_runtime_restart() {
 }
 
 #[tokio::test]
+async fn jsonl_on_without_path_clears_persisted_jsonl_path() {
+    let dir = unique_temp_dir("ratd_jsonl_on_without_path");
+    let config_path = dir.join("rat.toml");
+    let config_path_str = config_path.to_string_lossy().to_string();
+
+    let mut cfg = RatitudeConfig::default();
+    cfg.ratd.outputs.jsonl.enabled = true;
+    cfg.ratd.outputs.jsonl.path = "logs/out.jsonl".to_string();
+    ConfigStore::new(&config_path)
+        .save(&cfg)
+        .expect("save config");
+
+    let mut state = DaemonState::new(
+        config_path_str.clone(),
+        cfg.clone(),
+        SourceDomainState::new(Vec::new(), "127.0.0.1:19021".to_string()),
+    );
+    let mut output_manager = OutputManager::from_config(&cfg).expect("build output manager");
+    let action = handle_console_command(
+        ConsoleCommand::Jsonl {
+            enabled: true,
+            path: None,
+        },
+        &mut state,
+        &mut output_manager,
+    )
+    .await
+    .expect("jsonl command");
+    assert!(!action.should_quit);
+    assert!(!action.restart_runtime);
+    assert_eq!(state.config().ratd.outputs.jsonl.path, "");
+
+    let saved = ConfigStore::new(&config_path).load().expect("load config");
+    assert_eq!(saved.ratd.outputs.jsonl.path, "");
+
+    let _ = fs::remove_file(&config_path);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
 async fn output_noop_command_does_not_rewrite_config_file() {
     let dir = unique_temp_dir("ratd_output_noop_read_only");
     let config_path = dir.join("rat.toml");
