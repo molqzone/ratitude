@@ -165,6 +165,17 @@ fn parse_foxglove_ws_addr_rejects_port_zero() {
 }
 
 #[test]
+fn parse_foxglove_ws_addr_rejects_whitespace_in_host() {
+    let err = parse_foxglove_ws_addr("localhost :8765")
+        .expect_err("whitespace around host should be invalid");
+    assert!(err.to_string().contains("host:port or [ipv6]:port"));
+
+    let err = parse_foxglove_ws_addr("[:: 1]:8765")
+        .expect_err("whitespace inside ipv6 host should be invalid");
+    assert!(err.to_string().contains("host:port or [ipv6]:port"));
+}
+
+#[test]
 fn normalize_restores_seed_addrs_when_empty() {
     let mut cfg = RatitudeConfig::default();
     cfg.ratd.source.seed_addrs.clear();

@@ -169,10 +169,11 @@ fn validate_foxglove_ws_addr(raw_addr: &str) -> Result<(), ConfigError> {
 pub fn parse_foxglove_ws_addr(raw_addr: &str) -> Result<(String, u16), ConfigError> {
     let normalized = raw_addr.trim();
     if let Some(rest) = normalized.strip_prefix('[') {
-        let (host, suffix) = rest
+        let (host_raw, suffix) = rest
             .split_once(']')
             .ok_or_else(|| invalid_foxglove_ws_addr_error(raw_addr))?;
-        if host.is_empty() {
+        let host = host_raw.trim();
+        if host.is_empty() || host_raw != host || host.chars().any(|ch| ch.is_ascii_whitespace()) {
             return Err(invalid_foxglove_ws_addr_error(raw_addr));
         }
         let port_raw = suffix
@@ -182,10 +183,15 @@ pub fn parse_foxglove_ws_addr(raw_addr: &str) -> Result<(String, u16), ConfigErr
         return Ok((host.to_string(), port));
     }
 
-    let (host, port_raw) = normalized
+    let (host_raw, port_raw) = normalized
         .rsplit_once(':')
         .ok_or_else(|| invalid_foxglove_ws_addr_error(raw_addr))?;
-    if host.is_empty() || host.contains(':') {
+    let host = host_raw.trim();
+    if host.is_empty()
+        || host_raw != host
+        || host.contains(':')
+        || host.chars().any(|ch| ch.is_ascii_whitespace())
+    {
         return Err(invalid_foxglove_ws_addr_error(raw_addr));
     }
     let port = parse_ws_port(port_raw, raw_addr)?;
