@@ -5,7 +5,7 @@ use std::path::Path;
 use rat_config::{FieldDef, PacketDef, PacketType};
 
 use crate::ast::{align_up, resolve_scan_root};
-use crate::generated::GeneratedMeta;
+use crate::generated::{GeneratedConfig, GeneratedMeta};
 use crate::ids::{compute_signature_hash, fnv1a64, select_fresh_packet_id};
 use crate::layout::{detect_packed_layout, validate_layout_modifiers};
 use crate::model::{DiscoveredPacket, SyncPipelineInput};
@@ -310,6 +310,20 @@ fingerprint = "0x1122334455667788"
     let msg = err.to_string();
     assert!(msg.contains("unknown field"));
     assert!(msg.contains("fingerprint"));
+}
+
+#[test]
+fn generated_config_rejects_unknown_top_level_key() {
+    let raw = r#"
+meta = { project = "demo", schema_hash = "0x1122334455667788" }
+packets = []
+legacy_packets = true
+"#;
+    let err =
+        toml::from_str::<GeneratedConfig>(raw).expect_err("unknown top-level key should fail");
+    let msg = err.to_string();
+    assert!(msg.contains("unknown field"));
+    assert!(msg.contains("legacy_packets"));
 }
 
 fn write_test_config(path: &Path, scan_root: &str) {

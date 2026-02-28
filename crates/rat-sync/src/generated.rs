@@ -11,7 +11,7 @@ pub struct GeneratedMeta {
 pub type GeneratedPacketDef = PacketDef;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct GeneratedConfig {
     pub meta: GeneratedMeta,
     pub packets: Vec<GeneratedPacketDef>,
