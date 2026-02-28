@@ -10,7 +10,7 @@ use crate::schema::build_runtime_schema_toml;
 use crate::SyncError;
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct RuntimeSchemaToml {
     packets: Vec<PacketDef>,
 }
@@ -348,6 +348,45 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("incompatible"));
         assert!(msg.contains("rat_gen_schema_bytes"));
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn read_generated_header_packets_rejects_unknown_runtime_schema_top_level_key() {
+        let dir = std::env::temp_dir().join(format!(
+            "rat_sync_header_schema_unknown_key_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join("rat_gen.h");
+
+        let schema = r#"
+legacy_mode = true
+[[packets]]
+id = 33
+struct_name = "DemoPacket"
+type = "plot"
+packed = true
+byte_size = 4
+"#;
+        let schema_bytes = schema
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("0x{byte:02X}u"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let raw = format!(
+            "#ifndef RAT_GEN_H\n#define RAT_GEN_H\nstatic const uint8_t rat_gen_schema_bytes[] = {{ {schema_bytes} }};\n#endif\n"
+        );
+        fs::write(&path, raw).expect("write header");
+
+        let err = read_generated_header_packets(&path).expect_err("unknown key should fail");
+        let msg = err.to_string();
+        assert!(msg.contains("unknown field"));
+        assert!(msg.contains("legacy_mode"));
 
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir_all(dir);
