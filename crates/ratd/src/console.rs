@@ -122,7 +122,7 @@ impl CommandRouter {
             return Some(ConsoleCommand::Unknown(trimmed.to_string()));
         }
 
-        if let Some(route) = trimmed.strip_prefix("/packet/") {
+        if let Some(route) = strip_prefix_ignore_ascii_case(trimmed, "/packet/") {
             let mut parts = route.split('/');
             if let (Some(struct_name), Some(field_name), None) =
                 (parts.next(), parts.next(), parts.next())
@@ -271,6 +271,18 @@ mod tests {
     #[test]
     fn parse_packet_lookup() {
         let cmd = CommandRouter::parse("/packet/GyroSample/value").expect("command");
+        assert_eq!(
+            cmd,
+            ConsoleCommand::PacketLookup {
+                struct_name: "GyroSample".to_string(),
+                field_name: "value".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn parse_packet_prefix_is_case_insensitive() {
+        let cmd = CommandRouter::parse("/PACKET/GyroSample/value").expect("command");
         assert_eq!(
             cmd,
             ConsoleCommand::PacketLookup {
