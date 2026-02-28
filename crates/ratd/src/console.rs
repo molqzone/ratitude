@@ -57,16 +57,26 @@ impl CommandRouter {
             }
         }
 
-        if let Some(rest) = trimmed.strip_prefix("$foxglove ") {
-            let mode = rest.trim().to_ascii_lowercase();
-            return match mode.as_str() {
-                "on" => Some(ConsoleCommand::Foxglove(true)),
-                "off" => Some(ConsoleCommand::Foxglove(false)),
+        if let Some(rest) = trimmed.strip_prefix("$foxglove") {
+            if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
+                return Some(ConsoleCommand::Unknown(trimmed.to_string()));
+            }
+            let mut parts = rest.split_whitespace();
+            return match (parts.next(), parts.next(), parts.next()) {
+                (Some(mode), None, None) if mode.eq_ignore_ascii_case("on") => {
+                    Some(ConsoleCommand::Foxglove(true))
+                }
+                (Some(mode), None, None) if mode.eq_ignore_ascii_case("off") => {
+                    Some(ConsoleCommand::Foxglove(false))
+                }
                 _ => Some(ConsoleCommand::Unknown(trimmed.to_string())),
             };
         }
 
-        if let Some(rest) = trimmed.strip_prefix("$jsonl ") {
+        if let Some(rest) = trimmed.strip_prefix("$jsonl") {
+            if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
+                return Some(ConsoleCommand::Unknown(trimmed.to_string()));
+            }
             let rest = rest.trim();
             let mut parts = rest.splitn(2, char::is_whitespace);
             let mode = parts.next().unwrap_or_default();
@@ -193,6 +203,24 @@ mod tests {
                 path: Some("out.jsonl".to_string())
             }
         );
+    }
+
+    #[test]
+    fn parse_jsonl_on_with_path_accepts_flexible_whitespace() {
+        let cmd = CommandRouter::parse("$jsonl\tON\tout.jsonl").expect("command");
+        assert_eq!(
+            cmd,
+            ConsoleCommand::Jsonl {
+                enabled: true,
+                path: Some("out.jsonl".to_string())
+            }
+        );
+    }
+
+    #[test]
+    fn parse_foxglove_accepts_flexible_whitespace() {
+        let cmd = CommandRouter::parse("$foxglove\toff").expect("command");
+        assert_eq!(cmd, ConsoleCommand::Foxglove(false));
     }
 
     #[test]
