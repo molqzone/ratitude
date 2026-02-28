@@ -115,6 +115,38 @@ mod tests {
     }
 
     #[test]
+    fn register_dynamic_rejects_overlapping_field_ranges() {
+        let mut ctx = ProtocolContext::new();
+        let err = ctx
+            .register_dynamic(DynamicPacketDef {
+                id: 0x22,
+                struct_name: "Demo".to_string(),
+                packed: true,
+                byte_size: 8,
+                fields: vec![
+                    DynamicFieldDef {
+                        name: "value".to_string(),
+                        c_type: "uint32_t".to_string(),
+                        offset: 0,
+                        size: 4,
+                    },
+                    DynamicFieldDef {
+                        name: "alias".to_string(),
+                        c_type: "uint32_t".to_string(),
+                        offset: 2,
+                        size: 4,
+                    },
+                ],
+            })
+            .expect_err("overlapping field ranges should fail");
+        assert!(matches!(
+            err,
+            ProtocolError::DynamicFieldOverlap { current, previous }
+                if current == "alias" && previous == "value"
+        ));
+    }
+
+    #[test]
     fn unknown_packet_id_returns_error() {
         let ctx = ProtocolContext::new();
         let err = ctx

@@ -29,6 +29,8 @@ pub enum ProtocolError {
     },
     #[error("dynamic field {name} exceeds packet size")]
     DynamicFieldOutOfRange { name: String },
+    #[error("dynamic field {current} overlaps with {previous}")]
+    DynamicFieldOverlap { current: String, previous: String },
     #[error("dynamic field {name} has invalid offset {offset}")]
     DynamicFieldOffset { name: String, offset: usize },
     #[error("unknown packet id: 0x{0:02X}")]

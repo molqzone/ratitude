@@ -52,6 +52,7 @@ impl ProtocolContext {
 
         let packet_id = def.id;
         let mut seen_field_names = HashSet::with_capacity(def.fields.len());
+        let mut occupied_ranges: Vec<(usize, usize, String)> = Vec::with_capacity(def.fields.len());
 
         let mut normalized = DynamicPacketDef {
             id: packet_id,
@@ -84,6 +85,16 @@ impl ProtocolContext {
             if field_end > normalized.byte_size {
                 return Err(ProtocolError::DynamicFieldOutOfRange { name: field.name });
             }
+            if let Some((_, _, previous_name)) = occupied_ranges
+                .iter()
+                .find(|(start, end, _)| field.offset < *end && *start < field_end)
+            {
+                return Err(ProtocolError::DynamicFieldOverlap {
+                    current: field.name,
+                    previous: previous_name.clone(),
+                });
+            }
+            occupied_ranges.push((field.offset, field_end, field.name.clone()));
             normalized.fields.push(DynamicFieldDef {
                 name: field.name,
                 c_type,
