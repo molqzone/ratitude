@@ -37,7 +37,6 @@ pub(crate) fn handle_control_payload(
             schema_hash,
         } => {
             let assembly = SchemaAssembly::new(total_len, schema_hash)?;
-            protocol.clear_dynamic_registry();
             schema_state.begin_assembly(assembly);
             info!(
                 schema_hash = format!("0x{:016X}", schema_hash),
@@ -82,7 +81,8 @@ fn register_runtime_schema(
     protocol: &mut RatProtocolEngine,
     packets: &[RuntimePacketDef],
 ) -> Result<(), RuntimeError> {
-    protocol.clear_dynamic_registry();
+    let mut staged_protocol = protocol.clone();
+    staged_protocol.clear_dynamic_registry();
     let mut seen_ids = HashSet::with_capacity(packets.len());
 
     debug!(
@@ -111,7 +111,7 @@ fn register_runtime_schema(
             })
             .collect::<Vec<DynamicFieldDef>>();
 
-        protocol
+        staged_protocol
             .register_dynamic(DynamicPacketDef {
                 id: packet.id as u8,
                 struct_name: packet.struct_name.clone(),
@@ -126,6 +126,7 @@ fn register_runtime_schema(
             })?;
     }
 
+    *protocol = staged_protocol;
     Ok(())
 }
 
@@ -212,6 +213,21 @@ mod tests {
         payload
     }
 
+    fn encode_chunk(offset: u32, chunk: &[u8]) -> Vec<u8> {
+        assert!(u16::try_from(chunk.len()).is_ok(), "chunk length overflow");
+        let mut payload = vec![CONTROL_SCHEMA_CHUNK];
+        payload.extend_from_slice(&offset.to_le_bytes());
+        payload.extend_from_slice(&(chunk.len() as u16).to_le_bytes());
+        payload.extend_from_slice(chunk);
+        payload
+    }
+
+    fn encode_commit(schema_hash: u64) -> Vec<u8> {
+        let mut payload = vec![CONTROL_SCHEMA_COMMIT];
+        payload.extend_from_slice(&schema_hash.to_le_bytes());
+        payload
+    }
+
     #[test]
     fn invalid_hello_does_not_clear_existing_dynamic_registry() {
         let mut protocol = RatProtocolEngine::new();
@@ -244,6 +260,66 @@ mod tests {
         let parsed = protocol.parse_packet(0x21, &1_u32.to_le_bytes());
         if let Err(ProtocolEngineError::UnknownPacketId(_)) = parsed {
             panic!("dynamic registry should remain available after invalid hello");
+        }
+        assert!(parsed.is_ok(), "dynamic packet parse should still work");
+    }
+
+    #[test]
+    fn invalid_schema_commit_does_not_clear_existing_dynamic_registry() {
+        let mut protocol = RatProtocolEngine::new();
+        protocol
+            .register_dynamic(DynamicPacketDef {
+                id: 0x22,
+                struct_name: "StablePacket".to_string(),
+                packed: true,
+                byte_size: 4,
+                fields: vec![DynamicFieldDef {
+                    name: "value".to_string(),
+                    c_type: "uint32_t".to_string(),
+                    offset: 0,
+                    size: 4,
+                }],
+            })
+            .expect("register dynamic packet");
+
+        let schema = br#"
+[[packets]]
+id = 0
+struct_name = "BadPacket"
+type = "plot"
+packed = true
+byte_size = 4
+fields = [{ name = "value", c_type = "uint32_t", offset = 0, size = 4 }]
+"#;
+        let schema_hash = rat_protocol::hash_schema_bytes(schema);
+        let mut schema_state = SchemaState::new(Duration::from_secs(1));
+
+        let hello = handle_control_payload(
+            &encode_hello(schema.len() as u32, schema_hash),
+            &mut schema_state,
+            &mut protocol,
+        )
+        .expect("hello should pass");
+        assert!(matches!(hello, ControlOutcome::SchemaReset));
+
+        let chunk =
+            handle_control_payload(&encode_chunk(0, schema), &mut schema_state, &mut protocol)
+                .expect("schema chunk should pass");
+        assert!(matches!(chunk, ControlOutcome::Noop));
+
+        let err = match handle_control_payload(
+            &encode_commit(schema_hash),
+            &mut schema_state,
+            &mut protocol,
+        ) {
+            Err(err) => err,
+            Ok(_) => panic!("schema commit should fail"),
+        };
+        assert!(matches!(err, RuntimeError::ReservedPacketId { id: 0 }));
+
+        let parsed = protocol.parse_packet(0x22, &1_u32.to_le_bytes());
+        if let Err(ProtocolEngineError::UnknownPacketId(_)) = parsed {
+            panic!("dynamic registry should remain available after invalid schema commit");
         }
         assert!(parsed.is_ok(), "dynamic packet parse should still work");
     }
