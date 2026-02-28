@@ -23,6 +23,19 @@ pub enum ConsoleCommand {
 
 pub struct CommandRouter;
 
+fn strip_prefix_ignore_ascii_case<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
+    let prefix_len = prefix.len();
+    if value.len() < prefix_len {
+        return None;
+    }
+    let head = &value[..prefix_len];
+    if head.eq_ignore_ascii_case(prefix) {
+        Some(&value[prefix_len..])
+    } else {
+        None
+    }
+}
+
 impl CommandRouter {
     pub fn parse(line: &str) -> Option<ConsoleCommand> {
         let trimmed = line.trim();
@@ -30,17 +43,17 @@ impl CommandRouter {
             return None;
         }
 
-        if trimmed == "$help" {
+        if trimmed.eq_ignore_ascii_case("$help") {
             return Some(ConsoleCommand::Help);
         }
-        if trimmed == "$status" {
+        if trimmed.eq_ignore_ascii_case("$status") {
             return Some(ConsoleCommand::Status);
         }
-        if trimmed == "$quit" {
+        if trimmed.eq_ignore_ascii_case("$quit") {
             return Some(ConsoleCommand::Quit);
         }
 
-        if let Some(rest) = trimmed.strip_prefix("$source") {
+        if let Some(rest) = strip_prefix_ignore_ascii_case(trimmed, "$source") {
             if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
                 return Some(ConsoleCommand::Unknown(trimmed.to_string()));
             }
@@ -59,7 +72,7 @@ impl CommandRouter {
             }
         }
 
-        if let Some(rest) = trimmed.strip_prefix("$foxglove") {
+        if let Some(rest) = strip_prefix_ignore_ascii_case(trimmed, "$foxglove") {
             if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
                 return Some(ConsoleCommand::Unknown(trimmed.to_string()));
             }
@@ -75,7 +88,7 @@ impl CommandRouter {
             };
         }
 
-        if let Some(rest) = trimmed.strip_prefix("$jsonl") {
+        if let Some(rest) = strip_prefix_ignore_ascii_case(trimmed, "$jsonl") {
             if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
                 return Some(ConsoleCommand::Unknown(trimmed.to_string()));
             }
@@ -196,6 +209,12 @@ mod tests {
     }
 
     #[test]
+    fn parse_source_prefix_is_case_insensitive() {
+        let cmd = CommandRouter::parse("$SOURCE use 3").expect("command");
+        assert_eq!(cmd, ConsoleCommand::SourceUse(3));
+    }
+
+    #[test]
     fn parse_jsonl_on_with_path() {
         let cmd = CommandRouter::parse("$jsonl on out.jsonl").expect("command");
         assert_eq!(
@@ -222,6 +241,18 @@ mod tests {
     #[test]
     fn parse_jsonl_on_with_path_accepts_flexible_whitespace() {
         let cmd = CommandRouter::parse("$jsonl\tON\tout.jsonl").expect("command");
+        assert_eq!(
+            cmd,
+            ConsoleCommand::Jsonl {
+                enabled: true,
+                path: Some("out.jsonl".to_string())
+            }
+        );
+    }
+
+    #[test]
+    fn parse_jsonl_prefix_is_case_insensitive() {
+        let cmd = CommandRouter::parse("$JSONL on out.jsonl").expect("command");
         assert_eq!(
             cmd,
             ConsoleCommand::Jsonl {
