@@ -103,7 +103,12 @@ fn load_ratignore(config_path: &Path) -> Result<Option<RatIgnoreMatcher>, SyncEr
     let mut patterns = Vec::new();
     for (idx, line) in raw.lines().enumerate() {
         let line_no = idx + 1;
-        let trimmed = line.trim();
+        let normalized = if idx == 0 {
+            line.strip_prefix('\u{feff}').unwrap_or(line)
+        } else {
+            line
+        };
+        let trimmed = normalized.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
