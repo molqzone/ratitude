@@ -206,6 +206,22 @@ fn normalize_restores_seed_addrs_when_empty() {
 }
 
 #[test]
+fn normalize_trims_last_selected_source_addr() {
+    let mut cfg = RatitudeConfig::default();
+    cfg.ratd.source.last_selected_addr = " 127.0.0.1:19021 ".to_string();
+    cfg.normalize();
+    assert_eq!(cfg.ratd.source.last_selected_addr, "127.0.0.1:19021");
+}
+
+#[test]
+fn normalize_trims_foxglove_ws_addr() {
+    let mut cfg = RatitudeConfig::default();
+    cfg.ratd.outputs.foxglove.ws_addr = " 127.0.0.1:8765 ".to_string();
+    cfg.normalize();
+    assert_eq!(cfg.ratd.outputs.foxglove.ws_addr, "127.0.0.1:8765");
+}
+
+#[test]
 fn removed_ratd_sections_are_rejected() {
     let dir = unique_temp_dir("ratitude_cfg_removed_sections");
     let path = dir.join("rat.toml");

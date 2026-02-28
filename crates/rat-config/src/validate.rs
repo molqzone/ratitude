@@ -101,6 +101,9 @@ impl RatitudeConfig {
 
         if self.ratd.source.last_selected_addr.trim().is_empty() {
             self.ratd.source.last_selected_addr = RatdSourceConfig::default().last_selected_addr;
+        } else {
+            self.ratd.source.last_selected_addr =
+                self.ratd.source.last_selected_addr.trim().to_string();
         }
         if self.ratd.source.seed_addrs.is_empty() {
             self.ratd.source.seed_addrs = RatdSourceConfig::default().seed_addrs;
@@ -113,6 +116,9 @@ impl RatitudeConfig {
         }
         if self.ratd.outputs.foxglove.ws_addr.trim().is_empty() {
             self.ratd.outputs.foxglove.ws_addr = FoxgloveOutputConfig::default().ws_addr;
+        } else {
+            self.ratd.outputs.foxglove.ws_addr =
+                self.ratd.outputs.foxglove.ws_addr.trim().to_string();
         }
 
         self.project.extensions = self
