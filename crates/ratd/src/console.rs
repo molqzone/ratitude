@@ -61,27 +61,30 @@ impl CommandRouter {
 
         if let Some(rest) = trimmed.strip_prefix("$jsonl ") {
             let rest = rest.trim();
-            if rest.eq_ignore_ascii_case("off") {
-                return Some(ConsoleCommand::Jsonl {
-                    enabled: false,
-                    path: None,
-                });
+            let mut parts = rest.splitn(2, char::is_whitespace);
+            let mode = parts.next().unwrap_or_default();
+            let tail = parts.next().map(str::trim);
+
+            if mode.eq_ignore_ascii_case("off") {
+                if tail.is_none() || tail == Some("") {
+                    return Some(ConsoleCommand::Jsonl {
+                        enabled: false,
+                        path: None,
+                    });
+                }
+                return Some(ConsoleCommand::Unknown(trimmed.to_string()));
             }
-            if rest.eq_ignore_ascii_case("on") {
+
+            if mode.eq_ignore_ascii_case("on") {
                 return Some(ConsoleCommand::Jsonl {
                     enabled: true,
-                    path: None,
-                });
-            }
-            if let Some(path) = rest.strip_prefix("on ") {
-                let path = path.trim();
-                return Some(ConsoleCommand::Jsonl {
-                    enabled: true,
-                    path: if path.is_empty() {
-                        None
-                    } else {
-                        Some(path.to_string())
-                    },
+                    path: tail.and_then(|path| {
+                        if path.is_empty() {
+                            None
+                        } else {
+                            Some(path.to_string())
+                        }
+                    }),
                 });
             }
             return Some(ConsoleCommand::Unknown(trimmed.to_string()));
@@ -152,6 +155,18 @@ mod tests {
     #[test]
     fn parse_jsonl_on_with_path() {
         let cmd = CommandRouter::parse("$jsonl on out.jsonl").expect("command");
+        assert_eq!(
+            cmd,
+            ConsoleCommand::Jsonl {
+                enabled: true,
+                path: Some("out.jsonl".to_string())
+            }
+        );
+    }
+
+    #[test]
+    fn parse_jsonl_on_with_path_is_case_insensitive() {
+        let cmd = CommandRouter::parse("$jsonl ON out.jsonl").expect("command");
         assert_eq!(
             cmd,
             ConsoleCommand::Jsonl {
