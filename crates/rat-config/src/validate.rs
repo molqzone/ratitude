@@ -54,10 +54,18 @@ impl RatitudeConfig {
                 "ratd.source.last_selected_addr must not be empty".to_string(),
             ));
         }
+        validate_source_addr(
+            "ratd.source.last_selected_addr",
+            &self.ratd.source.last_selected_addr,
+        )?;
         if self.ratd.source.auto_scan && self.ratd.source.seed_addrs.is_empty() {
             return Err(ConfigError::Validation(
                 "ratd.source.seed_addrs must not be empty when auto_scan=true".to_string(),
             ));
+        }
+        for (idx, addr) in self.ratd.source.seed_addrs.iter().enumerate() {
+            let field = format!("ratd.source.seed_addrs[{idx}]");
+            validate_source_addr(&field, addr)?;
         }
 
         if self.ratd.behavior.buf == 0 {
@@ -182,12 +190,20 @@ fn validate_foxglove_ws_addr(raw_addr: &str) -> Result<(), ConfigError> {
     parse_foxglove_ws_addr(raw_addr).map(|_| ())
 }
 
+fn validate_source_addr(field: &str, raw_addr: &str) -> Result<(), ConfigError> {
+    parse_host_port_addr(raw_addr, field).map(|_| ())
+}
+
 pub fn parse_foxglove_ws_addr(raw_addr: &str) -> Result<(String, u16), ConfigError> {
+    parse_host_port_addr(raw_addr, "ratd.outputs.foxglove.ws_addr")
+}
+
+fn parse_host_port_addr(raw_addr: &str, field: &str) -> Result<(String, u16), ConfigError> {
     let normalized = raw_addr.trim();
     if let Some(rest) = normalized.strip_prefix('[') {
         let (host_raw, suffix) = rest
             .split_once(']')
-            .ok_or_else(|| invalid_foxglove_ws_addr_error(raw_addr))?;
+            .ok_or_else(|| invalid_host_port_error(field, raw_addr))?;
         let host = host_raw.trim();
         if host.is_empty()
             || host_raw != host
@@ -195,18 +211,18 @@ pub fn parse_foxglove_ws_addr(raw_addr: &str) -> Result<(String, u16), ConfigErr
             || host.contains('/')
             || host.contains('\\')
         {
-            return Err(invalid_foxglove_ws_addr_error(raw_addr));
+            return Err(invalid_host_port_error(field, raw_addr));
         }
         let port_raw = suffix
             .strip_prefix(':')
-            .ok_or_else(|| invalid_foxglove_ws_addr_error(raw_addr))?;
-        let port = parse_ws_port(port_raw, raw_addr)?;
+            .ok_or_else(|| invalid_host_port_error(field, raw_addr))?;
+        let port = parse_ws_port(port_raw, field, raw_addr)?;
         return Ok((host.to_string(), port));
     }
 
     let (host_raw, port_raw) = normalized
         .rsplit_once(':')
-        .ok_or_else(|| invalid_foxglove_ws_addr_error(raw_addr))?;
+        .ok_or_else(|| invalid_host_port_error(field, raw_addr))?;
     let host = host_raw.trim();
     if host.is_empty()
         || host_raw != host
@@ -215,28 +231,26 @@ pub fn parse_foxglove_ws_addr(raw_addr: &str) -> Result<(String, u16), ConfigErr
         || host.contains('/')
         || host.contains('\\')
     {
-        return Err(invalid_foxglove_ws_addr_error(raw_addr));
+        return Err(invalid_host_port_error(field, raw_addr));
     }
-    let port = parse_ws_port(port_raw, raw_addr)?;
+    let port = parse_ws_port(port_raw, field, raw_addr)?;
     Ok((host.to_string(), port))
 }
 
-fn parse_ws_port(raw_port: &str, raw_addr: &str) -> Result<u16, ConfigError> {
+fn parse_ws_port(raw_port: &str, field: &str, raw_addr: &str) -> Result<u16, ConfigError> {
     let port = raw_port.parse::<u16>().map_err(|err| {
-        ConfigError::Validation(format!(
-            "ratd.outputs.foxglove.ws_addr has invalid port in {raw_addr}: {err}"
-        ))
+        ConfigError::Validation(format!("{field} has invalid port in {raw_addr}: {err}"))
     })?;
     if port == 0 {
         return Err(ConfigError::Validation(format!(
-            "ratd.outputs.foxglove.ws_addr port must be > 0 in {raw_addr}"
+            "{field} port must be > 0 in {raw_addr}"
         )));
     }
     Ok(port)
 }
 
-fn invalid_foxglove_ws_addr_error(raw_addr: &str) -> ConfigError {
+fn invalid_host_port_error(field: &str, raw_addr: &str) -> ConfigError {
     ConfigError::Validation(format!(
-        "ratd.outputs.foxglove.ws_addr must be host:port or [ipv6]:port: {raw_addr}"
+        "{field} must be host:port or [ipv6]:port: {raw_addr}"
     ))
 }

@@ -138,6 +138,26 @@ fn validate_rejects_empty_seed_addrs_when_auto_scan_enabled() {
 }
 
 #[test]
+fn validate_rejects_invalid_last_selected_source_addr() {
+    let mut cfg = RatitudeConfig::default();
+    cfg.ratd.source.last_selected_addr = "not-an-addr".to_string();
+    let err = cfg.validate().expect_err("validation should fail");
+    assert!(err
+        .to_string()
+        .contains("ratd.source.last_selected_addr must be host:port or [ipv6]:port"));
+}
+
+#[test]
+fn validate_rejects_invalid_seed_source_addr() {
+    let mut cfg = RatitudeConfig::default();
+    cfg.ratd.source.seed_addrs = vec!["127.0.0.1:19021".to_string(), "bad".to_string()];
+    let err = cfg.validate().expect_err("validation should fail");
+    assert!(err
+        .to_string()
+        .contains("ratd.source.seed_addrs[1] must be host:port or [ipv6]:port"));
+}
+
+#[test]
 fn validate_rejects_reserved_text_id() {
     let mut cfg = RatitudeConfig::default();
     cfg.ratd.text_id = 0;
