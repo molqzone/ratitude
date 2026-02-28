@@ -15,6 +15,8 @@ pub enum ProtocolError {
     PayloadSizeMismatch { id: u8, got: usize, expected: usize },
     #[error("dynamic packet requires at least one field")]
     MissingDynamicFields,
+    #[error("duplicate dynamic field name: {0}")]
+    DuplicateDynamicFieldName(String),
     #[error("dynamic packet has invalid byte size: {0}")]
     InvalidDynamicByteSize(usize),
     #[error("unsupported c type: {0}")]

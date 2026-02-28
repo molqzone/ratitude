@@ -84,6 +84,37 @@ mod tests {
     }
 
     #[test]
+    fn register_dynamic_rejects_duplicate_field_names() {
+        let mut ctx = ProtocolContext::new();
+        let err = ctx
+            .register_dynamic(DynamicPacketDef {
+                id: 0x21,
+                struct_name: "Demo".to_string(),
+                packed: true,
+                byte_size: 8,
+                fields: vec![
+                    DynamicFieldDef {
+                        name: "value".to_string(),
+                        c_type: "uint32_t".to_string(),
+                        offset: 0,
+                        size: 4,
+                    },
+                    DynamicFieldDef {
+                        name: "value".to_string(),
+                        c_type: "uint32_t".to_string(),
+                        offset: 4,
+                        size: 4,
+                    },
+                ],
+            })
+            .expect_err("duplicate field names should fail");
+        assert!(matches!(
+            err,
+            ProtocolError::DuplicateDynamicFieldName(name) if name == "value"
+        ));
+    }
+
+    #[test]
     fn unknown_packet_id_returns_error() {
         let ctx = ProtocolContext::new();
         let err = ctx

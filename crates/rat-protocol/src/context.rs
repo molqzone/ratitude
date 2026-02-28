@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use nom::number::complete::{
     le_f32, le_f64, le_i16, le_i32, le_i64, le_i8, le_u16, le_u32, le_u64, le_u8,
@@ -51,6 +51,7 @@ impl ProtocolContext {
         }
 
         let packet_id = def.id;
+        let mut seen_field_names = HashSet::with_capacity(def.fields.len());
 
         let mut normalized = DynamicPacketDef {
             id: packet_id,
@@ -61,6 +62,9 @@ impl ProtocolContext {
         };
 
         for field in def.fields {
+            if !seen_field_names.insert(field.name.clone()) {
+                return Err(ProtocolError::DuplicateDynamicFieldName(field.name));
+            }
             let c_type = normalize_c_type(&field.c_type);
             let expected_size = c_type_size(&c_type)
                 .ok_or_else(|| ProtocolError::UnsupportedCType(field.c_type.clone()))?;
