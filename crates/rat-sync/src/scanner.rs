@@ -125,6 +125,31 @@ fn load_ratignore(config_path: &Path) -> Result<Option<RatIgnoreMatcher>, SyncEr
         if normalized_pattern.is_empty() {
             continue;
         }
+        if normalized_pattern.ends_with('/') {
+            let base_pattern = normalized_pattern.trim_end_matches('/');
+            if base_pattern.is_empty() {
+                continue;
+            }
+            let direct = Pattern::new(base_pattern).map_err(|err| {
+                SyncError::Validation(format!(
+                    "invalid .ratignore pattern in {}:{} ({})",
+                    ignore_path.display(),
+                    line_no,
+                    err
+                ))
+            })?;
+            let recursive = Pattern::new(&format!("{base_pattern}/**")).map_err(|err| {
+                SyncError::Validation(format!(
+                    "invalid .ratignore pattern in {}:{} ({})",
+                    ignore_path.display(),
+                    line_no,
+                    err
+                ))
+            })?;
+            patterns.push(direct);
+            patterns.push(recursive);
+            continue;
+        }
 
         let pattern = Pattern::new(normalized_pattern).map_err(|err| {
             SyncError::Validation(format!(

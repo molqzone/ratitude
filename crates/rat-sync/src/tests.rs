@@ -795,6 +795,44 @@ typedef struct {
 }
 
 #[test]
+fn sync_packets_fs_ratignore_supports_directory_pattern_with_trailing_slash() {
+    let temp = std::env::temp_dir().join(format!(
+        "rat_sync_ignore_dir_trailing_slash_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&temp);
+    fs::create_dir_all(temp.join("src").join("generated")).expect("mkdir generated");
+    fs::create_dir_all(temp.join("src").join("live")).expect("mkdir live");
+
+    let config_path = temp.join("rat.toml");
+    write_test_config(&config_path, "src");
+    fs::write(temp.join(".ratignore"), "src/generated/\n").expect("write .ratignore");
+
+    let keep = r#"
+// @rat, plot
+typedef struct {
+  int32_t value;
+  uint32_t tick;
+} LivePacket;
+"#;
+    let skip = r#"
+// @rat, plot
+typedef struct {
+  int32_t value;
+  uint32_t tick;
+} GeneratedPacket;
+"#;
+    fs::write(temp.join("src").join("live").join("keep.c"), keep).expect("write keep");
+    fs::write(temp.join("src").join("generated").join("skip.c"), skip).expect("write skip");
+
+    let result = sync_packets_fs(&config_path, None).expect("sync should pass");
+    assert_eq!(result.packet_defs.len(), 1);
+    assert_eq!(result.packet_defs[0].struct_name, "LivePacket");
+
+    let _ = fs::remove_dir_all(&temp);
+}
+
+#[test]
 fn sync_packets_fs_rejects_ratignore_negate_pattern() {
     let temp = std::env::temp_dir().join(format!("rat_sync_ignore_negate_{}", std::process::id()));
     let _ = fs::remove_dir_all(&temp);
