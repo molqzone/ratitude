@@ -182,6 +182,7 @@ impl Default for FoxgloveOutputConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct PacketDef {
     pub id: u16,
     pub struct_name: String,
@@ -196,6 +197,7 @@ pub struct PacketDef {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct FieldDef {
     pub name: String,
     pub c_type: String,

@@ -4,7 +4,6 @@ schema_hash = "0x6DC228D8526C7443"
 
 [[packets]]
 id = 116
-signature_hash = "0x9DA9E86895C83F6F"
 struct_name = "Attitude"
 type = "quat"
 packed = false
@@ -37,7 +36,6 @@ size = 4
 
 [[packets]]
 id = 34
-signature_hash = "0xF5A76B438F2F04CB"
 struct_name = "Temperature"
 type = "plot"
 packed = false
@@ -58,7 +56,6 @@ size = 4
 
 [[packets]]
 id = 118
-signature_hash = "0x0A01715AEE3396BB"
 struct_name = "Waveform"
 type = "plot"
 packed = false
@@ -79,7 +76,6 @@ size = 4
 
 [[packets]]
 id = 217
-signature_hash = "0x2594BCBFB090629C"
 struct_name = "ImageStats"
 type = "image"
 packed = true

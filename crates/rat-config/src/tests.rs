@@ -367,3 +367,20 @@ fn load_missing_file_returns_not_found_error() {
 
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn packet_def_rejects_unknown_fields() {
+    let raw = r#"
+id = 33
+type = "plot"
+struct_name = "DemoPacket"
+packed = true
+byte_size = 4
+source = "src/main.c"
+signature_hash = "0x1122334455667788"
+"#;
+    let err = toml::from_str::<PacketDef>(raw).expect_err("unknown field should fail");
+    let msg = err.to_string();
+    assert!(msg.contains("unknown field"));
+    assert!(msg.contains("signature_hash"));
+}
