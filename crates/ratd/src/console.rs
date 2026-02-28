@@ -25,12 +25,9 @@ pub struct CommandRouter;
 
 fn strip_prefix_ignore_ascii_case<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
     let prefix_len = prefix.len();
-    if value.len() < prefix_len {
-        return None;
-    }
-    let head = &value[..prefix_len];
+    let head = value.get(..prefix_len)?;
     if head.eq_ignore_ascii_case(prefix) {
-        Some(&value[prefix_len..])
+        value.get(prefix_len..)
     } else {
         None
     }
@@ -290,6 +287,13 @@ mod tests {
                 field_name: "value".to_string()
             }
         );
+    }
+
+    #[test]
+    fn parse_non_ascii_input_does_not_panic() {
+        let raw = "你好你好你好";
+        let cmd = CommandRouter::parse(raw).expect("command");
+        assert_eq!(cmd, ConsoleCommand::Unknown(raw.to_string()));
     }
 
     #[test]
